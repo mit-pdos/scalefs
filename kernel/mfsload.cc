@@ -60,6 +60,7 @@ mnode_alloc(u64 inum, u8 mtype)
 static sref<mnode>
 load_inum(u64 inum)
 {
+  //cprintf("MFSLOAD: loading Inode %ld\n", (long int)inum);
   sref<mnode> m;
   if (inum_to_mnode->lookup(inum, &m))
     return m;
@@ -69,11 +70,17 @@ load_inum(u64 inum)
   case T_DIR:
     m = mnode_alloc(inum, mnode::types::dir);
     load_dir(i, m);
+    mnode_to_inode->insert(m->inum_, inum);
+    /*cprintf("MFSLOAD: created mapping between mnode# %ld and inode# %ld\n",
+              m->inum_, inum);*/
     break;
 
   case T_FILE:
     m = mnode_alloc(inum, mnode::types::file);
     load_file(i, m);
+    mnode_to_inode->insert(m->inum_, inum);
+    /*cprintf("MFSLOAD: created mapping between mnode# %ld and inode# %ld\n",
+              m->inum_, inum);*/
     break;
 
   default:
@@ -90,6 +97,7 @@ mfsload()
   anon_fs = new mfs();
 
   inum_to_mnode = new linearhash<u64, sref<mnode>>(4099);
+  mnode_to_inode = new linearhash<u64, u64>(4099);
   root_inum = load_inum(1)->inum_;
   /* the root inode gets an extra reference because of its own ".." */
   delete inum_to_mnode;

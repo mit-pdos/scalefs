@@ -9,6 +9,15 @@ u64 root_inum;
 mfs* root_fs;
 mfs* anon_fs;
 
+/* This hash stores mappings from mnode numbers to inode numbers on disk.
+ * It is initialized during boot, and updated when operations from fs_log
+ * are flushed out to disk.
+ */
+linearhash<u64, u64> *mnode_to_inode;
+
+fs_flush_op *fs_log;
+spinlock fs_log_lock;
+
 // Copy the next path element from path into name.
 // Update the pointer to the element following the copied one.
 // The returned path has no leading slashes,
@@ -219,6 +228,8 @@ writei(sref<mnode> m, const char* buf, u64 start, u64 nbytes,
     off += (pgend - pgoff);
   }
 
+  fs_flush_op *op = new fs_flush_op(1, m->inum_, buf, start, nbytes);
+  op->log_insert();
   return off ?: -1;
 }
 

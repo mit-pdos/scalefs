@@ -92,20 +92,33 @@ balloc(u32 dev)
 {
   superblock sb;
   readsb(dev, &sb);
+  bool found = false;
+  sref<buf> bp;
+  int b, bi;
 
-  for(int b = 0; b < sb.size; b += BPB){
-    sref<buf> bp = buf::get(dev, BBLOCK(b, sb.ninodes));
+  for(b = 0; b < sb.size; b += BPB){
+    bp = buf::get(dev, BBLOCK(b, sb.ninodes));
     auto locked = bp->write();
 
-    for(int bi = 0; bi < BPB && bi < (sb.size - b); bi++){
+    for(bi = 0; bi < BPB && bi < (sb.size - b); bi++){
       int m = 1 << (bi % 8);
       if((locked->data[bi/8] & m) == 0){  // Is block free?
         locked->data[bi/8] |= m;  // Mark block in use on disk.
-        return b + bi;
+        found = true;
+        break;
       }
     }
+    if(found)
+      break;
   }
   
+  if(found) {
+    bp = buf::get(dev, BBLOCK(b, sb.ninodes));
+    if(bp->dirty())
+      bp->writeback();
+    return b + bi;
+  }
+
   throw_out_of_blocks();
   // Unreachable
   return 0;
@@ -120,15 +133,21 @@ bfree(int dev, u64 x)
 
   struct superblock sb;
   readsb(dev, &sb);
+  sref<buf> bp;
 
-  sref<buf> bp = buf::get(dev, BBLOCK(b, sb.ninodes));
-  auto locked = bp->write();
+  {
+    bp = buf::get(dev, BBLOCK(b, sb.ninodes));
+    auto locked = bp->write();
 
-  int bi = b % BPB;
-  int m = 1 << (bi % 8);
-  if((locked->data[bi/8] & m) == 0)
-    panic("freeing free block");
-  locked->data[bi/8] &= ~m;  // Mark block free on disk.
+    int bi = b % BPB;
+    int m = 1 << (bi % 8);
+    if((locked->data[bi/8] & m) == 0)
+      panic("freeing free block");
+    locked->data[bi/8] &= ~m;  // Mark block free on disk.
+  }
+  bp = buf::get(dev, BBLOCK(b, sb.ninodes));
+  if(bp->dirty())
+    bp->writeback();
 }
 
 // Inodes.
@@ -355,8 +374,10 @@ ialloc(u32 dev, short type)
   // Try the local cache first..
   while ((inum = the_inode_cache.alloc()) > 0) {
     ip = try_ialloc(inum, dev, type);
-    if (ip)
+    if (ip) {
+      ip->link();
       return ip;
+    }
   }
 
   // search through this core's inodes
@@ -366,8 +387,10 @@ ialloc(u32 dev, short type)
       if (inum == 0)
         continue;
       ip = try_ialloc(inum, dev, type);
-      if (ip)
+      if (ip) {
+        ip->link();
         return ip;
+      }
     }
   }
 
@@ -376,8 +399,10 @@ ialloc(u32 dev, short type)
     if (inum == 0)
       continue;
     ip = try_ialloc(inum, dev, type);
-    if (ip)
+    if (ip) {
+      ip->link();
       return ip;
+    }
   }
 
   cprintf("ialloc: 0/%u inodes\n", sb.ninodes);
@@ -386,15 +411,16 @@ ialloc(u32 dev, short type)
 
 // Copy inode, which has changed, from memory to disk.
 void
-iupdate(struct inode *ip)
+iupdate(sref<inode> ip)
 {
   // XXX call iupdate to flush in-memory inode state to
   // buffer cache.  use seq value to detect updates.
 
   scoped_gc_epoch e;
 
+  sref<buf> bp;
   {
-    sref<buf> bp = buf::get(ip->dev, IBLOCK(ip->inum));
+    bp = buf::get(ip->dev, IBLOCK(ip->inum));
     auto locked = bp->write();
 
     dinode *dip = (struct dinode*)locked->data + ip->inum%IPB;
@@ -409,9 +435,19 @@ iupdate(struct inode *ip)
 
   if (ip->addrs[NDIRECT] != 0) {
     assert(ip->iaddrs.load() != nullptr);
-    sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+    bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto locked = bp->write();
     memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
+  }
+
+  bp = buf::get(ip->dev, IBLOCK(ip->inum));
+  if(bp->dirty())
+    bp->writeback();
+  if (ip->addrs[NDIRECT] != 0) {
+    assert(ip->iaddrs.load() != nullptr);
+    bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+    if(bp->dirty())
+      bp->writeback();
   }
 }
 
@@ -572,7 +608,7 @@ inode::onzero(void)
   // XXX: use gc_delayed() to truncate the inode later.
   // flag it as a victim in the meantime.
 
-  itrunc(this);
+  itrunc(sref<inode>::transfer(this));
 
   {
     auto w = seq.write_begin();
@@ -773,7 +809,7 @@ class diskblock : public rcu_freed {
 };
 
 void
-itrunc(struct inode *ip)
+itrunc(sref<inode> ip)
 {
   scoped_gc_epoch e;
 
@@ -883,11 +919,15 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n)
   if(ip->type == T_DEV)
     return -1;
 
-  if(off > ip->size || off + n < off)
+  auto r = ip->seq.read_begin();
+  
+  //if(off > ip->size || off + n < off)
+  if(off + n < off)
     return -1;
   if(off + n > MAXFILE*BSIZE)
     n = MAXFILE*BSIZE - off;
 
+  u32 oldoff = off;
   for(tot=0; tot<n; tot+=m, off+=m, src+=m){
     try {
       bp = buf::get(ip->dev, bmap(ip, off/BSIZE));
@@ -903,10 +943,25 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n)
     memmove(locked->data + off%BSIZE, src, m);
   }
 
+  for(tot=0; tot<n; tot+=m, oldoff+=m) {
+    m = min(n - tot, BSIZE - oldoff%BSIZE);
+    bp = buf::get(ip->dev, bmap(ip, oldoff/BSIZE));
+    if(!bp->dirty())
+      continue;
+    /*cprintf("WRITEI: writing back to Dev %ld, Sector %ld\n",
+            (long int)ip->dev, (long int)bmap(ip, oldoff/BSIZE));*/
+    bp->writeback();
+  }
+
   if(tot > 0 && off > ip->size){
     auto w = ip->seq.write_begin();
     ip->size = off;
   }
+
+  while(r.do_retry()) {
+    iupdate(ip);
+  }
+
   return tot;
 }
 
@@ -972,7 +1027,7 @@ void
 dir_flush(sref<inode> dp)
 {
   // assume already locked
-
+  //cprintf("Calling dir_flush on dp with inum %d\n", dp->inum);
   if (!dp->dir)
     return;
 
@@ -1013,6 +1068,19 @@ dirlink(sref<inode> dp, const char *name, u32 inum)
 
   //cprintf("dirlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
   if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name), inum))
+    return -1;
+
+  return 0;
+}
+
+// Remove a directory entry (name, inum) from the directory dp.
+int
+dirunlink(sref<inode> dp, const char *name, u32 inum)
+{
+  dir_init(dp);
+
+  //cprintf("dirunlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
+  if (!dp->dir.load()->remove(strbuf<DIRSIZ>(name), &inum))
     return -1;
 
   return 0;

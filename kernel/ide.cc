@@ -75,6 +75,8 @@ ideread(u32 dev, u64 sector, char* data)
 
   assert(idewait(1) >= 0);
   insl(0x1f0, data, 512/4);
+  //cprintf("IDE read successful Dev no. %ld, Sector no.%ld\n",
+  //          (long int)dev, (long int)sector);
 }
 
 void
@@ -89,6 +91,8 @@ idewrite(u32 dev, u64 sector, const char* data)
   outsl(0x1f0, data, 512/4);
 
   assert(idewait(1) >= 0);
+  //cprintf("IDE write successful Dev no. %ld, Sector no.%ld\n",
+  //          (long int)dev, (long int)sector);
 }
 
 void

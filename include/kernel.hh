@@ -104,12 +104,13 @@ sref<inode>     iget(u32 dev, u32 inum);
 void            ilock(sref<inode>, int writer);
 void            iupdate(sref<inode>);
 void            iunlock(sref<inode>);
-void            itrunc(inode*);
+void            itrunc(sref<inode>);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);
 int             writei(sref<inode>, const char*, u32, u32);
 sref<inode>     nameiparent(sref<inode> cwd, const char*, char*);
 int             dirlink(sref<inode>, const char*, u32);
+int             dirunlink(sref<inode>, const char*, u32);
 void            dir_init(sref<inode> dp);
 void	        dir_flush(sref<inode> dp);
 
