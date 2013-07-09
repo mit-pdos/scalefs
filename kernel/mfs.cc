@@ -15,7 +15,7 @@ mfs* anon_fs;
  */
 linearhash<u64, u64> *mnode_to_inode;
 
-fs_flush_op *fs_log;
+fs_sync_op *fs_log;
 spinlock fs_log_lock;
 
 // Copy the next path element from path into name.
@@ -228,7 +228,7 @@ writei(sref<mnode> m, const char* buf, u64 start, u64 nbytes,
     off += (pgend - pgoff);
   }
 
-  fs_flush_op *op = new fs_flush_op(1, m->inum_, buf, start, nbytes);
+  fs_sync_op *op = new fs_sync_op(1, m->inum_, buf, start, nbytes);
   op->log_insert();
   return off ?: -1;
 }

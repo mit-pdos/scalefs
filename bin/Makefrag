@@ -61,7 +61,7 @@ UPROGS_BIN= \
 	mail-enqueue \
 	mail-qman \
 	mail-deliver \
-  fsflush \
+  fssync \
 
 ifeq ($(HAVE_LWIP),y)
 UPROGS_BIN += \

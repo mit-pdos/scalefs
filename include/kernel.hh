@@ -233,6 +233,15 @@ int             fdalloc(sref<file>&& f, int omode);
 sref<file>      getfile(int fd);
 sref<mnode>     create(sref<mnode>, const char *, short, short, short, bool);
 
+typedef struct fs_sync_op fs_sync_op;
+typedef int (*fssync_func)(fs_sync_op *);
+int             fssync_write(fs_sync_op *op);
+int             fssync_create(fs_sync_op *op);
+int             fssync_link(fs_sync_op *op);
+int             fssync_unlink(fs_sync_op *op);
+int             fssync_replace(fs_sync_op *op);
+int             fssync_truncate(fs_sync_op *op);
+
 // swtch.S
 void            swtch(struct context**, struct context*);
 

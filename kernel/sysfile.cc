@@ -21,6 +21,9 @@
 
 extern struct proc *bootproc;
 
+fssync_func fsfuncs[] = {fssync_write, fssync_create, fssync_link,
+                         fssync_unlink, fssync_replace, fssync_truncate};
+
 sref<file>
 getfile(int fd)
 {
@@ -107,158 +110,159 @@ sys_close(int fd)
   return 0;
 }
 
+int fssync_write(fs_sync_op *op) {
+  sref<inode> i;
+  u64 inum = 0;
+  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+    cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
+    return -1;
+  }
+  i = iget(1, inum);
+  writei(i, op->buf, op->start, op->nbytes);
+  return 0;
+}
+
+int fssync_create(fs_sync_op *op) {
+  sref<inode> i, parenti;
+  u64 inum = 0, parent = 0;
+  if (mnode_to_inode->lookup(op->mnode, &inum)) {
+    cprintf("Mapping from mnode %ld to inode %ld already present\n", op->mnode, inum);
+    return -1;
+  }
+  i = ialloc(1, op->create_type);
+  mnode_to_inode->insert(op->mnode, i->inum); //XXX check if you run out of slots
+  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+    cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
+    return -1;
+  }
+  if(op->create_type == T_DIR) {
+    dirlink(i, "..", parent);
+    iupdate(i);
+    dir_flush(i);
+  } else
+    iupdate(i);
+  iunlock(i);
+  parenti = iget(1, parent);
+  ilock(parenti, 1);
+  dirlink(parenti, op->name, i->inum);
+  iupdate(parenti);
+  dir_flush(parenti);
+  iunlock(parenti);
+  return 0;
+}
+
+int fssync_link(fs_sync_op *op) {
+  sref<inode> i, parenti;
+  u64 inum = 0, parent = 0;
+  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+    cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
+    return -1;
+  }
+  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+    cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
+    return -1;
+  }
+  i = iget(1, inum);
+  parenti = iget(1, parent);
+  ilock(parenti, 1);
+  dirlink(parenti, op->name, i->inum);
+  iupdate(parenti);
+  dir_flush(parenti);
+  iunlock(parenti);
+  return 0;
+}
+
+int fssync_unlink(fs_sync_op *op) {
+  sref<inode> i, parenti;
+  u64 inum = 0, parent = 0;
+  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+    cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
+    return -1;
+  }
+  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+    cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
+    return -1;
+  }
+  i = iget(1, inum);
+  parenti = iget(1, parent);
+  ilock(parenti, 1);
+  dirunlink(parenti, op->name, i->inum);
+  iupdate(parenti);
+  dir_flush(parenti);
+  iunlock(parenti);
+  return 0;
+}
+
+int fssync_replace(fs_sync_op *op) {
+  sref<inode> i, parenti, new_i, new_parenti;
+  u64 inum = 0, parent = 0, new_inum = 0, new_parent = 0;
+  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+    cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
+    return -1;
+  }
+  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+    cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
+    return -1;
+  }
+  if (!mnode_to_inode->lookup(op->new_mnode, &new_inum)) {
+    new_i = ialloc(1, op->create_type);
+    mnode_to_inode->insert(op->new_mnode, new_i->inum);
+    //XXX check if you run out of slots
+  }
+  if (!mnode_to_inode->lookup(op->new_parent, &new_parent)) {
+    cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n",
+        op->new_parent);
+    return -1;
+  }
+  i = iget(1, inum);
+  parenti = iget(1, parent);
+  ilock(parenti, 1);
+  dirunlink(parenti, op->name, i->inum);
+  iupdate(parenti);
+  dir_flush(parenti);
+  iunlock(parenti);
+
+  new_i = iget(1, new_inum);
+  new_parenti = iget(1, new_parent);
+  ilock(new_parenti, 1);
+  dirlink(new_parenti, op->newname, new_i->inum);
+  iupdate(new_parenti);
+  dir_flush(new_parenti);
+  iunlock(new_parenti);
+  return 0;
+}
+
+int fssync_truncate(fs_sync_op *op) {
+  sref<inode> i;
+  u64 inum = 0;
+  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+    cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
+    return -1;
+  }
+  i = iget(1, inum);
+  itrunc(i);
+  return 0;
+}
+
 //SYSCALL
 int
-sys_fs_flush(void)
+sys_fs_sync(void)
 {
   /* This function flushes to disk all the new file system operations that were
    * logged after the last call. Exposed via the fsflush command line tool.
    */
 
-  //cprintf("System call to fs_flush\n");
   fs_log_lock.acquire();
-  fs_flush_op *op = fs_log;
-  sref<inode> i, parenti, new_i, new_parenti;
-  u64 inum = 0, parent = 0, new_inum = 0, new_parent = 0;
+  fs_sync_op *op = fs_log;
   scoped_gc_epoch e;
 
   while(op) {
-    switch(op->op_type) {
-      case 1:
-        //cprintf("File system operation: file write\n");
-        if (!mnode_to_inode->lookup(op->mnode, &inum)) {
-          cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
-          return -1;
-        }
-        //cprintf("File mnode: %ld *** Content: %s\n", inum, op->buf);
-        //cprintf("Start: %d, Size: %d\n", op->start, op->nbytes);
-        i = iget(1, inum);
-        writei(i, op->buf, op->start, op->nbytes);
-        break;
-
-      case 2:
-        //cprintf("File system operation: file/dir creation\n");
-        if (mnode_to_inode->lookup(op->mnode, &inum)) {
-          cprintf("Mapping from mnode %ld to inode %ld already present\n", op->mnode, inum);
-          return -1;
-        }
-        i = ialloc(1, op->create_type);
-        /*cprintf("Allocated inode %d on disk for %s (type %d)\n", i->inum,
-            op->name, op->create_type);*/
-        mnode_to_inode->insert(op->mnode, i->inum); //XXX check if you run out of slots
-        //cprintf("Created new mapping between mnode %ld and inode %d\n", op->mnode, i->inum);
-        if(!mnode_to_inode->lookup(op->parent, &parent)) {
-          cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
-          return -1;
-        }
-        if(op->create_type == T_DIR) {
-          dirlink(i, "..", parent);
-          iupdate(i);
-          dir_flush(i);
-        } else
-          iupdate(i);
-        iunlock(i);
-        parenti = iget(1, parent);
-        ilock(parenti, 1);
-        dirlink(parenti, op->name, i->inum);
-        iupdate(parenti);
-        dir_flush(parenti);
-        iunlock(parenti);
-        break;
-
-      case 3:
-        //cprintf("File system operation: link\n");
-        if (!mnode_to_inode->lookup(op->mnode, &inum)) {
-          cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
-          return -1;
-        }
-        if(!mnode_to_inode->lookup(op->parent, &parent)) {
-          cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
-          return -1;
-        }
-        i = iget(1, inum);
-        parenti = iget(1, parent);
-        ilock(parenti, 1);
-        dirlink(parenti, op->name, i->inum);
-        iupdate(parenti);
-        dir_flush(parenti);
-        iunlock(parenti);
-        break;
-
-      case 4:
-        //cprintf("File system operation: unlink\n");
-        if (!mnode_to_inode->lookup(op->mnode, &inum)) {
-          cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
-          return -1;
-        }
-        if(!mnode_to_inode->lookup(op->parent, &parent)) {
-          cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
-          return -1;
-        }
-        i = iget(1, inum);
-        parenti = iget(1, parent);
-        ilock(parenti, 1);
-        dirunlink(parenti, op->name, i->inum);
-        iupdate(parenti);
-        dir_flush(parenti);
-        iunlock(parenti);
-        break;
-
-      case 5:
-        //cprintf("File system operation: replace\n");
-        if (!mnode_to_inode->lookup(op->mnode, &inum)) {
-          cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
-          return -1;
-        }
-        if(!mnode_to_inode->lookup(op->parent, &parent)) {
-          cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
-          return -1;
-        }
-        if (!mnode_to_inode->lookup(op->new_mnode, &new_inum)) {
-          new_i = ialloc(1, op->create_type);
-          /*cprintf("Allocated inode %d on disk for %s (type %d)\n", new_i->inum,
-              op->newname, op->create_type);*/
-          mnode_to_inode->insert(op->new_mnode, new_i->inum);
-          //XXX check if you run out of slots
-          /*cprintf("Created new mapping between mnode %ld and inode %d\n",
-                  op->new_mnode, new_i->inum);*/
-        }
-        if (!mnode_to_inode->lookup(op->new_parent, &new_parent)) {
-          cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n",
-              op->new_parent);
-          return -1;
-        }
-        i = iget(1, inum);
-        parenti = iget(1, parent);
-        ilock(parenti, 1);
-        dirunlink(parenti, op->name, i->inum);
-        iupdate(parenti);
-        dir_flush(parenti);
-        iunlock(parenti);
-
-        new_i = iget(1, new_inum);
-        new_parenti = iget(1, new_parent);
-        ilock(new_parenti, 1);
-        dirlink(new_parenti, op->newname, new_i->inum);
-        iupdate(new_parenti);
-        dir_flush(new_parenti);
-        iunlock(new_parenti);
-        break;
-
-      case 6:
-        //cprintf("File system operation: truncate\n");
-        if (!mnode_to_inode->lookup(op->mnode, &inum)) {
-          cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
-          return -1;
-        }
-        i = iget(1, inum);
-        itrunc(i);
-        break;
-
-      default:
-        cprintf("Invalid file system operation\n");
-        break;
+    if(op->op_type > 0 && op->op_type < 7) {
+      if(fsfuncs[op->op_type-1](op) != 0)
+        return -1;
     }
+    else
+      cprintf("Invalid file system operation\n");
     fs_log = fs_log->next;
     delete op;
     op = fs_log;
@@ -401,7 +405,7 @@ sys_link(userptr_str old_path, userptr_str new_path)
     return -1;
   else {
     if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
-      fs_flush_op *op = new fs_flush_op(3, mflink.mn()->inum_, md->inum_, name.buf_);
+      fs_sync_op *op = new fs_sync_op(3, mflink.mn()->inum_, md->inum_, name.buf_);
       op->log_insert();
       //cprintf("Logged link for mnode %ld\n", op->mnode);
     }
@@ -462,7 +466,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
     if (mfroadblock == mfold) {
       if (mdold->as_dir()->remove(oldname, mfold)) {
         if (myproc() != bootproc && mdold->fs_ == root_fs) { // IDE disk
-          fs_flush_op *op = new fs_flush_op(4, mfold->inum_, mdold->inum_, oldname.buf_);
+          fs_sync_op *op = new fs_sync_op(4, mfold->inum_, mdold->inum_, oldname.buf_);
           op->log_insert();
           //cprintf("Logged unlink for mnode %ld\n", op->mnode);
         }
@@ -473,7 +477,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
             mdold->as_dir(), oldname, mfold)) {
         if (myproc() != bootproc && mdnew->fs_ == root_fs) { // IDE disk
           mfroadblock = mdnew->as_dir()->lookup(newname);
-          fs_flush_op *op = new fs_flush_op(5, oldname.buf_, mfold->inum_, mdold->inum_,
+          fs_sync_op *op = new fs_sync_op(5, oldname.buf_, mfold->inum_, mdold->inum_,
                       newname.buf_, mfroadblock->inum_, mdnew->inum_, mfroadblock->type());
           op->log_insert();
           //cprintf("Logged replace for mnode %ld\n", op->mnode);
@@ -525,7 +529,7 @@ sys_unlink(userptr_str path)
      */
     assert(md->as_dir()->remove(name, mf));
     if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
-      fs_flush_op *op = new fs_flush_op(4, mf->inum_, md->inum_, name.buf_);
+      fs_sync_op *op = new fs_sync_op(4, mf->inum_, md->inum_, name.buf_);
       op->log_insert();
       //cprintf("Logged unlink for mnode %ld\n", op->mnode);
     }
@@ -536,7 +540,7 @@ sys_unlink(userptr_str path)
     return -1;
   else {
     if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
-      fs_flush_op *op = new fs_flush_op(4, mf->inum_, md->inum_, name.buf_);
+      fs_sync_op *op = new fs_sync_op(4, mf->inum_, md->inum_, name.buf_);
       op->log_insert();
       //cprintf("Logged unlink for mnode %ld\n", op->mnode);
     }
@@ -593,7 +597,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       assert(mf->as_dir()->insert("..", &parentlink));
       if (md->as_dir()->insert(name, &ilink)) {
         if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
-          fs_flush_op *op = new fs_flush_op(2, mf->inum_, md->inum_, name.buf_, type);
+          fs_sync_op *op = new fs_sync_op(2, mf->inum_, md->inum_, name.buf_, type);
           op->log_insert();
           //cprintf("Logged file create for mnode %ld\n", mf->inum_);
         }
@@ -613,7 +617,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
     if (md->as_dir()->insert(name, &ilink)) {
       if (myproc() != bootproc && md->fs_ == root_fs) {
-        fs_flush_op *op = new fs_flush_op(2, mf->inum_, md->inum_, name.buf_, type);
+        fs_sync_op *op = new fs_sync_op(2, mf->inum_, md->inum_, name.buf_, type);
         op->log_insert();
         //cprintf("Logged file create for mnode %ld\n", mf->inum_);
       }
@@ -663,7 +667,7 @@ sys_openat(int dirfd, userptr_str path, int omode, ...)
     if (*m->as_file()->read_size()) {
       m->as_file()->write_size().resize_nogrow(0);
       if (myproc() != bootproc && m->fs_ == root_fs) { // IDE disk
-        fs_flush_op *op = new fs_flush_op(6, m->inum_);
+        fs_sync_op *op = new fs_sync_op(6, m->inum_);
         op->log_insert();
         //cprintf("Logged truncate for mnode %ld\n", m->inum_);
       }
