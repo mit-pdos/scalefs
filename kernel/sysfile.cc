@@ -246,7 +246,7 @@ int fssync_truncate(fs_sync_op *op) {
 
 //SYSCALL
 int
-sys_fs_sync(void)
+sys_sync(void)
 {
   /* This function flushes to disk all the new file system operations that were
    * logged after the last call. Exposed via the fsflush command line tool.

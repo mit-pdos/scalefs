@@ -3,6 +3,6 @@
 int
 main(int argc, char *argv[])
 {
-  fs_sync();
+  sync();
   return 0;
 }
