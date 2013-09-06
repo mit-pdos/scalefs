@@ -17,6 +17,11 @@ class msock;
 class mlinkref;
 class mfs;
 
+extern mfs *root_fs;
+extern void initialize_file(sref<mnode> m);
+extern void initialize_dir(sref<mnode> m);
+extern int load_file_page(sref<mnode> m, char *p, size_t pos, size_t nbytes);
+
 class mnode : public refcache::weak_referenced
 {
 private:
@@ -51,6 +56,7 @@ public:
 
   void cache_pin(bool flag);
   u8 type() const { return inumber(inum_).type(); }
+  void initialized(bool flag) { initialized_ = flag; }
 
   mdir* as_dir();
   const mdir* as_dir() const;
@@ -74,6 +80,7 @@ public:
 
 protected:
   mnode(mfs* fs, u64 inum);
+  std::atomic<bool> initialized_;
 
 private:
   void onzero() override;
@@ -305,7 +312,12 @@ inline mdir*
 mnode::as_dir()
 {
   assert(type() == types::dir);
-  return static_cast<mdir*>(this);
+  auto md = static_cast<mdir*>(this);
+  if (!initialized_ && fs_ == root_fs) {
+    initialized_ = true;
+    initialize_dir(root_fs->get(inum_));
+  }
+  return md;
 }
 
 inline const mdir*
@@ -443,14 +455,21 @@ public:
     return seq_reader<u64>(&size_, &size_seq_);
   }
 
+  void ondisk_size(u64 size);
   page_state get_page(u64 pageidx);
+  void clear_pages(u64 begin, u64 size);
 };
 
 inline mfile*
 mnode::as_file()
 {
   assert(type() == types::file);
-  return static_cast<mfile*>(this);
+  auto mf = static_cast<mfile*>(this);
+  if (!initialized_ && fs_ == root_fs) {
+    initialized_ = true;
+    initialize_file(root_fs->get(inum_));
+  }
+  return mf;
 }
 
 inline const mfile*

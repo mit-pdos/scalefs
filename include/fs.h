@@ -10,7 +10,7 @@
 // Inodes start at block 2.
 
 #define ROOTINO 1  // root i-number
-#define BSIZE 4096  // block size
+#define BSIZE 512  // block size
 
 // File system super block
 struct superblock {

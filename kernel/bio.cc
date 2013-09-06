@@ -3,7 +3,8 @@
 #include "buf.hh"
 #include "weakcache.hh"
 
-static weakcache<buf::key_t, buf> bufcache(512 << 10);
+static weakcache<buf::key_t, buf> bufcache(BSIZE << 10);
+            //I don't think this was changed when BSIZE was changed from 512 to 4096
 
 sref<buf>
 buf::get(u32 dev, u64 block)

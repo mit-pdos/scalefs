@@ -66,7 +66,7 @@ mfs::alloc(u8 type)
 }
 
 mnode::mnode(mfs* fs, u64 inum)
-  : fs_(fs), inum_(inum), cache_pin_(false), valid_(false)
+  : fs_(fs), inum_(inum), initialized_(false), cache_pin_(false), valid_(false)
 {
   kstats::inc(&kstats::mnode_alloc);
 }
@@ -146,19 +146,58 @@ mfile::resizer::resize_append(u64 size, sref<page_info> pi)
   mf_->size_ = size;
 }
 
+void
+mfile::ondisk_size(u64 size)
+{
+  size_ = size;
+}
+
 mfile::page_state
 mfile::get_page(u64 pageidx)
 {
   auto it = pages_.find(pageidx);
   if (!it.is_set()) {
-    if (pageidx < PGROUNDUP(size_) / PGSIZE) {
+    if (!initialized_ && fs_ == root_fs) {
+      cprintf("Should not be happening. File not initialized from disk yet!\n");
+      initialized_ = true;
+      initialize_file(root_fs->get(inum_));
+      barrier();
+    }
+    if (pageidx < PGROUNDUP(size_) / PGSIZE && fs_ == root_fs) {
       // XXX read from disk
+      char *p = zalloc("file page");
+      assert(p);
+
+      auto pi = sref<page_info>::transfer(new (page_info::of(p)) page_info());
+      size_t pos = pageidx * PGSIZE;
+      size_t nbytes = size_ - pos;
+      if (nbytes > PGSIZE)
+        nbytes = PGSIZE;
+
+      auto lock = pages_.acquire(it);
+      assert(nbytes == load_file_page(root_fs->get(inum_), p, pos, nbytes));
+      page_state ps(pi);
+      if (PGOFFSET(nbytes))
+        ps.set_partial_page(true);
+      pages_.fill(it, ps);
     }
 
-    return mfile::page_state();
+    else
+      return mfile::page_state();
   }
 
   return it->copy_consistent();
+}
+
+void
+mfile::clear_pages(u64 begin, u64 size)
+{
+  if(PGROUNDUP(begin) > PGROUNDUP(begin+size))
+    return;
+  auto page_begin = pages_.find(PGROUNDUP(begin) / PGSIZE);
+  auto page_end = pages_.find(PGROUNDUP(begin+size) / PGSIZE);
+  auto lock = pages_.acquire(page_begin, page_end);
+  pages_.unset(page_begin, page_end);
 }
 
 void

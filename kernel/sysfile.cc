@@ -271,17 +271,16 @@ int fssync_truncate(fs_sync_op *op) {
   return 0;
 }
 
-//SYSCALL
 int
-sys_sync(void)
+fssync()
 {
   /* This function flushes to disk all the new file system operations that were
    * logged after the last call. Exposed via the fsflush command line tool.
    */
 
+  scoped_gc_epoch e;
   fs_log_lock.acquire();
   fs_sync_op *op = fs_log;
-  scoped_gc_epoch e;
 
   while(op) {
     if(op->op_type > 0 && op->op_type < 7) {
@@ -295,6 +294,45 @@ sys_sync(void)
     op = fs_log;
   }
   fs_log_lock.release();
+  return 0;
+}
+
+//SYSCALL
+int
+sys_sync(void)
+{
+  return fssync();
+}
+
+//SYSCALL
+int
+sys_free_mem_pages(int fd, size_t begin, size_t size)
+{
+  sref<file> f = getfile(fd);
+  if (!f)
+    return -1;
+  file *ff = f.get();
+  file_inode *fi = static_cast<file_inode*>(ff);
+  sref<mnode> m = fi->get_mnode();
+  if (!m)
+    return -1;
+  m->as_file()->clear_pages(begin, size);
+  return 0;
+}
+
+//SYSCALL
+int
+sys_free_mem_file(int fd)
+{
+  sref<file> f = getfile(fd);
+  if (!f)
+    return -1;
+  file *ff = f.get();
+  file_inode *fi = static_cast<file_inode*>(ff);
+  sref<mnode> m = fi->get_mnode();
+  if (!m)
+    return -1;
+  m->as_file()->clear_pages(0, *m->as_file()->read_size());
   return 0;
 }
 
@@ -431,7 +469,7 @@ sys_link(userptr_str old_path, userptr_str new_path)
   if (!md->as_dir()->insert(name, &mflink))
     return -1;
   else {
-    if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
+    if (md->fs_ == root_fs) { // IDE disk
       fs_sync_op *op = new fs_sync_op(3, mflink.mn()->inum_, md->inum_, name.buf_);
       op->log_insert();
       //cprintf("Logged link for mnode %ld\n", op->mnode);
@@ -492,7 +530,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
     if (mfroadblock == mfold) {
       if (mdold->as_dir()->remove(oldname, mfold)) {
-        if (myproc() != bootproc && mdold->fs_ == root_fs) { // IDE disk
+        if (mdold->fs_ == root_fs) { // IDE disk
           fs_sync_op *op = new fs_sync_op(4, mfold->inum_, mdold->inum_, oldname.buf_);
           op->log_insert();
           //cprintf("Logged unlink for mnode %ld\n", op->mnode);
@@ -502,7 +540,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
     } else {
       if (mdnew->as_dir()->replace_from(newname, mfroadblock,
             mdold->as_dir(), oldname, mfold)) {
-        if (myproc() != bootproc && mdnew->fs_ == root_fs) { // IDE disk
+        if (mdnew->fs_ == root_fs) { // IDE disk
           mfroadblock = mdnew->as_dir()->lookup(newname);
           fs_sync_op *op = new fs_sync_op(5, oldname.buf_, mfold->inum_, mdold->inum_,
                       newname.buf_, mfroadblock->inum_, mdnew->inum_, mfroadblock->type());
@@ -555,7 +593,7 @@ sys_unlink(userptr_str path)
      * a directory is to kill it, as we did above.
      */
     assert(md->as_dir()->remove(name, mf));
-    if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
+    if (md->fs_ == root_fs) { // IDE disk
       fs_sync_op *op = new fs_sync_op(4, mf->inum_, md->inum_, name.buf_);
       op->log_insert();
       //cprintf("Logged unlink for mnode %ld\n", op->mnode);
@@ -566,7 +604,7 @@ sys_unlink(userptr_str path)
   if (!md->as_dir()->remove(name, mf))
     return -1;
   else {
-    if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
+    if (md->fs_ == root_fs) { // IDE disk
       fs_sync_op *op = new fs_sync_op(4, mf->inum_, md->inum_, name.buf_);
       op->log_insert();
       //cprintf("Logged unlink for mnode %ld\n", op->mnode);
@@ -606,6 +644,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
     auto ilink = md->fs_->alloc(mtype);
     mf = ilink.mn();
+    mf->initialized(true);
 
     if (mtype == mnode::types::dir) {
       /*
@@ -643,7 +682,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       mf->as_dev()->init(major, minor);
 
     if (md->as_dir()->insert(name, &ilink)) {
-      if (myproc() != bootproc && md->fs_ == root_fs) {
+      if (md->fs_ == root_fs
+            && (mtype == mnode::types::dir || mtype == mnode::types::file)) {
         fs_sync_op *op = new fs_sync_op(2, mf->inum_, md->inum_, name.buf_, type);
         op->log_insert();
         //cprintf("Logged file create for mnode %ld\n", mf->inum_);
@@ -693,7 +733,7 @@ sys_openat(int dirfd, userptr_str path, int omode, ...)
   if (m->type() == mnode::types::file && (omode & O_TRUNC))
     if (*m->as_file()->read_size()) {
       m->as_file()->write_size().resize_nogrow(0);
-      if (myproc() != bootproc && m->fs_ == root_fs) { // IDE disk
+      if (m->fs_ == root_fs) { // IDE disk
         fs_sync_op *op = new fs_sync_op(6, m->inum_);
         op->log_insert();
         //cprintf("Logged truncate for mnode %ld\n", m->inum_);

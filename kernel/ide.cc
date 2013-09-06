@@ -15,6 +15,8 @@
 #define IDE_CMD_READ  0x20
 #define IDE_CMD_WRITE 0x30
 
+#define BSIZE 512
+
 #if !MEMIDE
 
 static struct spinlock idelock;
@@ -54,15 +56,15 @@ initdisk(void)
 static void
 ide_select(u32 dev, u64 count, u64 offset)
 {
-  assert(offset % 512 == 0);
+  assert(offset % BSIZE == 0);
   assert(count > 0);
-  assert(count % 512 == 0);
-  assert(count / 512 < 256);
+  assert(count % BSIZE == 0);
+  assert(count / BSIZE < 256);
 
-  u64 sector = offset / 512;
+  u64 sector = offset / BSIZE;
   idewait(0);
   outb(0x3f6, 0);  // generate interrupt
-  outb(0x1f2, count / 512);  // number of sectors
+  outb(0x1f2, count / BSIZE);  // number of sectors
   outb(0x1f3, sector & 0xff);
   outb(0x1f4, (sector >> 8) & 0xff);
   outb(0x1f5, (sector >> 16) & 0xff);

@@ -13,7 +13,7 @@ mfs* anon_fs;
  * It is initialized during boot, and updated when operations from fs_log
  * are flushed out to disk.
  */
-linearhash<u64, u64> *mnode_to_inode;
+linearhash<u64, u64> *mnode_to_inode = NULL;
 
 fs_sync_op *fs_log;
 spinlock fs_log_lock;
