@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include <algorithm>
 
 // OpLog is a technique for scaling objects that are frequently
 // written and rarely read.  It works by logging modification
@@ -57,10 +58,10 @@ namespace oplog {
       lock_guard<spinlock> lock_;
       Logger *logger_;
 
+    public:
       locked_logger(lock_guard<spinlock> &&lock, Logger *logger)
         : lock_(std::move(lock)), logger_(logger) { }
 
-    public:
       locked_logger(locked_logger &&o)
         : lock_(std::move(o.lock_)), logger_(o.logger_)
       {
@@ -150,7 +151,7 @@ namespace oplog {
           auto way_guard = way->lock_.guard();
           auto cur_obj = way->obj_.load(std::memory_order_relaxed);
           assert(cur_obj == this);
-          flush_logger(way->logger_);
+          flush_logger(&way->logger_);
           cpus_.atomic_reset(cpu);
           any = true;
         }
@@ -200,7 +201,8 @@ namespace oplog {
         wayno ^= (wayno >> 32) ^ (wayno >> 20) ^ (wayno >> 12);
         wayno ^= (wayno >> 7) ^ (wayno >> 4);
         wayno %= CACHE_SLOTS;
-        return &ways_[wayno];
+        return const_cast<way *>(&ways_[wayno]);
+        //return &ways_[wayno];
       }
     };
 
@@ -216,6 +218,9 @@ namespace oplog {
     // This lock serializes log flushes and protects clearing cpus_.
     spinlock sync_lock_;
   };
+
+  template<typename Logger>
+  percpu<typename logged_object<Logger>::cache, NO_CRITICAL> logged_object<Logger>::cache_; 
 
   // The logger class used by tsc_logged_object.
   class tsc_logger
@@ -233,6 +238,7 @@ namespace oplog {
     {
       CB cb_;
     public:
+      NEW_DELETE_OPS(op_inst);
       op_inst(uint64_t tsc, CB &&cb) : op(tsc), cb_(cb) { }
       void run() override
       {
@@ -245,8 +251,11 @@ namespace oplog {
 
     static uint64_t rdtscp() 
     {
-      uint64_t a, d, c;
-      __asm __volatile("rdtscp" : "=a" (a), "=d" (d), "=c" (c));
+      uint64_t a, d;
+      // XXX Hack for rdtscp which doesn't seem to work right now.
+      //__asm __volatile("rdtscp" : "=a" (a), "=d" (d), "=c" (c));
+      __asm __volatile("cpuid" : :);
+      __asm __volatile("rdtsc" : "=a" (a), "=d" (d));
       return a | (d << 32);
     }
 
@@ -277,6 +286,14 @@ namespace oplog {
       // the lock release.
       ops_.push_back(new op_inst<CB>(rdtscp(), std::forward<CB>(cb)));
     }
+
+    static bool compare_tsc(op *op1, op *op2) { return (op1->tsc < op2->tsc); }
+
+    void sort_ops() {
+      std::sort(ops_.begin(), ops_.end(), compare_tsc);
+    }
+
+    std::vector<op*>* ops() { return &ops_; } 
   };
 
   // A logger that applies operations in global timestamp order using
@@ -291,9 +308,87 @@ namespace oplog {
       l->reset();
     }
 
-    // XXX Not implemented.  This should heap-merge all of the loggers
+    typedef struct {
+      tsc_logger::op *op;
+      u64 logger_index;
+    }heap_element;
+
+    void min_heapify(std::vector<heap_element> *vec, int i) {
+      if (vec->size() == 1)
+        return;
+      assert(i < vec->size());
+      int left = 2*i+1, right = 2*i+2, min_index = i;
+      heap_element temp;
+      heap_element min = vec->at(i);
+      if(left < vec->size() && tsc_logger::compare_tsc(vec->at(left).op, min.op)) {
+        min = vec->at(left);
+        min_index = left;
+      }
+      if(right < vec->size() && tsc_logger::compare_tsc(vec->at(right).op, min.op)) {
+        min = vec->at(right);
+        min_index = right;
+      }
+      if(min_index == i) // No more heap properties violated.
+        return;
+      // Swap with whichever child is smaller.
+      temp = vec->at(min_index);
+      vec->at(min_index) = vec->at(i);
+      vec->at(i) = temp;
+      min_heapify(vec, min_index);
+    }
+
+    // This should heap-merge all of the loggers
     // in pending_ and apply their operations in order.
-    void flush_finish() override;
+    void flush_finish() override {
+      if (pending_.size() < 0)
+        return;
+      int size = 0, i = 0;
+      std::vector<int> indices;
+      std::vector<tsc_logger::op*> merged_ops;
+      for(auto it = pending_.begin(); it < pending_.end(); it++) {
+        it->sort_ops();  //XXX Are the inidividual loggers already in tsc order?
+        size += it->ops()->size();
+        indices.push_back(0);
+      }
+
+      if (size == 0)
+        return;
+      //Merge the operations using heaps
+      std::vector<heap_element> min_heap;
+      i = 0;
+      for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
+        heap_element temp;
+        temp.op = it->ops()->at(0);
+        temp.logger_index = i;
+        min_heap.push_back(temp);
+      }
+      for(i = min_heap.size()-1; i >= 0; i--)
+        min_heapify(&min_heap, i);
+      merged_ops.push_back(min_heap.at(0).op);
+
+      for(i = 1; i < size; i++) {
+        int index = min_heap.at(0).logger_index;
+        indices.at(index)++;
+        if (indices.at(index) < pending_.at(index).ops()->size()) {
+          heap_element temp;
+          temp.op = pending_.at(index).ops()->at(indices.at(index));
+          temp.logger_index = index;
+          min_heap.at(0) = temp;
+        } else {
+          min_heap.at(0) = min_heap.at(min_heap.size()-1);
+          min_heap.erase(min_heap.end()-1);
+        }
+        min_heapify(&min_heap, 0);
+        merged_ops.push_back(min_heap.at(0).op);
+      }
+ 
+      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++)
+        ((tsc_logger::op *)(*it))->run();
+      for(auto it = pending_.begin(); it < pending_.end(); it++)
+        it->ops()->clear();
+      pending_.clear();
+    }
+
   };
 
   // Problems with paper API:

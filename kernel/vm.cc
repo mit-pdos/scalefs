@@ -17,6 +17,8 @@
 #include <algorithm>
 #include "kstats.hh"
 
+extern struct proc *bootproc;
+
 enum { SDEBUG = false };
 static console_stream sdebug(SDEBUG);
 
@@ -292,6 +294,10 @@ vmap::willneed(uptr start, uptr len)
       cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U);
     else
       cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U | PTE_W);
+    /*if(myproc() != bootproc) {
+      std::pair<u64, uptr> rmap = std::make_pair((u64)(myproc()->pid), it.index()*PGSIZE);
+      page->add_pte(rmap);
+    }*/
   }
 
   shootdown.perform();
@@ -451,6 +457,12 @@ vmap::pagefault(uptr va, u32 err)
         cache.insert(va, &*it, page->pa() | PTE_P | PTE_U | PTE_W);
       else
         cache.insert(va, &*it, page->pa() | PTE_P | PTE_U);
+    }
+
+    if(myproc() != bootproc) {
+      // Add reverse map entry from physical page to va
+      std::pair<u64, uptr> rmap = std::make_pair((u64)(myproc()->pid), va);
+      page->add_pte(rmap);
     }
 
     shootdown.perform();

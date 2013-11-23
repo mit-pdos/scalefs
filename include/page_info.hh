@@ -5,8 +5,14 @@
 #include "snzi.hh"
 #include "gc.hh"
 #include "types.h"
+#include "oplog.hh"
 
 #include <cstddef>
+#include <vector>
+
+#define MAX_PENDING_OPS 100
+
+using namespace oplog;
 
 // Per-allocation debug information
 struct alloc_debug_info
@@ -58,10 +64,84 @@ protected:
   void onzero()
   {
     kfree(va());
+    rmap_pte->delete_rmap();
   }
 
 public:
-  page_info() { }
+  typedef std::pair<u64, uptr> rmap_entry;
+  class rmap: public tsc_logged_object {
+    public:
+      NEW_DELETE_OPS(rmap);
+      rmap() { num_pending_ops_ = 0; }
+      struct add_op {
+        add_op(rmap *p, rmap_entry map): parent(p), mapping(map) { }
+        void operator()() {
+          //cprintf("PA:(%016lX) Adding mapping for proc %ld: va %016lX\n", 
+          //            (u64)parent, mapping.first, mapping.second);
+          std::vector<rmap_entry>::iterator it;
+          it = std::find(parent->rmap_vec.begin(), parent->rmap_vec.end(), mapping);
+          if(it == parent->rmap_vec.end())
+            parent->rmap_vec.push_back(std::move(mapping));
+        }
+        private:
+        rmap *parent;
+        rmap_entry mapping;
+      };
+
+      struct rem_op {
+        rem_op(rmap *p, rmap_entry map): parent(p), mapping(map) { }
+        void operator()() {
+          if (parent->rmap_vec.size() == 0) return;
+          //cprintf("PA:(%016lX) Removing mapping for proc %ld: va %016lX\n", 
+          //            (u64)parent, mapping.first, mapping.second);
+          std::vector<rmap_entry>::iterator it;
+          it = std::find(parent->rmap_vec.begin(), parent->rmap_vec.end(), mapping);
+          if(it != parent->rmap_vec.end()) {
+            it->first = parent->rmap_vec.back().first;
+            it->second = parent->rmap_vec.back().second;
+            parent->rmap_vec.pop_back();
+          }
+        }
+        private:
+        rmap *parent;
+        rmap_entry mapping;
+      };
+
+      void add_mapping(rmap_entry map) {
+        add_op addop(this, map);
+        get_logger()->push<add_op>(std::forward<add_op>(addop));
+        num_pending_ops_++;
+        if (num_pending_ops_ > MAX_PENDING_OPS)
+          sync();
+      }
+
+      void remove_mapping(rmap_entry map) {
+        rem_op remop(this, map);
+        get_logger()->push<rem_op>(std::forward<rem_op>(remop));
+        num_pending_ops_++;
+        if (num_pending_ops_ > MAX_PENDING_OPS)
+          sync();
+      }
+
+      void delete_rmap() {
+        rmap_vec.clear();
+      }
+
+      void sync() {
+        synchronize();
+        num_pending_ops_ = 0;
+      }
+
+    protected:
+      std::vector<rmap_entry> rmap_vec;
+
+    private:
+      int num_pending_ops_;
+  };
+  
+  page_info() {
+    rmap_pte = new rmap();
+  }
 
   // Only placement new is allowed, because page_info must only be
   // constructed in the page_info_array.
@@ -104,4 +184,17 @@ public:
   {
     return p2v(pa());
   }
+
+  void add_pte(rmap_entry map) {
+    rmap_pte->add_mapping(map);
+  }
+
+  void remove_pte(rmap_entry map) {
+    rmap_pte->remove_mapping(map);
+  }
+
+private:
+  rmap *rmap_pte;
+
 };
+
