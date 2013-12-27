@@ -106,6 +106,17 @@ public:
     }
     new (&cur->pages[cur->used++]) sref<class page_info>(std::move(page));
   }
+
+  void add(sref<class page_info> &&page, std::pair<vmap*, uptr> rmap)
+  {
+    if (cur->used == curmax) {
+      cur->next = new (kalloc("page_holder::batch")) batch();
+      cur = cur->next;
+      curmax = NHEAP;
+    }
+    page->remove_pte(rmap);
+    new (&cur->pages[cur->used++]) sref<class page_info>(std::move(page));
+  }
 };
 
 /*
@@ -159,10 +170,15 @@ vmap::copy()
         it->flags |= vmdesc::FLAG_COW;
         // XXX(Austin) Should we try to invalidate in larger chunks?
         cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
+        // XXX (Rasha) Not sure if rmap needs to be modified here. Perhaps not
       }
 
       // Copy the descriptor
       nm->vpfs_.fill(out, it->dup());
+      if (myproc() != bootproc && out->page) {
+        std::pair<vmap*, uptr> rmap = std::make_pair(nm.get(), out.index()*PGSIZE);
+        out->page->add_pte(rmap);
+      }
 
       // Next page
       ++out;
@@ -214,7 +230,11 @@ again:
       // Verify unmapped region now that we hold the lock
       if (!fixed)
         goto again;
-      pages.add(std::move(it->page));
+      if (myproc() != bootproc && it->page) {
+        std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+        pages.add(std::move(it->page), rmap);
+      } else
+        pages.add(std::move(it->page));
     }
 
     cache.invalidate(start, len, begin, &shootdown);
@@ -251,9 +271,15 @@ vmap::remove(uptr start, uptr len)
     auto begin = vpfs_.find(start / PGSIZE);
     auto end = vpfs_.find((start + len) / PGSIZE);
     auto lock = vpfs_.acquire(begin, end);
-    for (auto it = begin; it < end; it += it.span())
-      if (it.is_set())
-        pages.add(std::move(it->page));
+    for (auto it = begin; it < end; it += it.span()) {
+      if (it.is_set()) {
+        if (myproc() != bootproc && it->page) {
+          std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+          pages.add(std::move(it->page), rmap);
+        } else
+          pages.add(std::move(it->page));
+      }
+    }
     cache.invalidate(start, len, begin, &shootdown);
     // XXX If this is a large unset, we could actively re-fold already
     // expanded regions.
@@ -281,7 +307,11 @@ vmap::willneed(uptr start, uptr len)
     bool writable = (it->flags & vmdesc::FLAG_WRITE);
     if (writable && (it->flags & vmdesc::FLAG_COW)) {
       sref<page_info> old_page = it->page;
-      pages.add(std::move(old_page));
+      if (myproc() != bootproc && old_page) {
+        std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+        pages.add(std::move(old_page), rmap);
+      } else
+        pages.add(std::move(old_page));
       cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
     }
 
@@ -294,10 +324,6 @@ vmap::willneed(uptr start, uptr len)
       cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U);
     else
       cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U | PTE_W);
-    /*if(myproc() != bootproc) {
-      std::pair<u64, uptr> rmap = std::make_pair((u64)(myproc()->pid), it.index()*PGSIZE);
-      page->add_pte(rmap);
-    }*/
   }
 
   shootdown.perform();
@@ -318,6 +344,7 @@ vmap::invalidate_cache(uptr start, uptr len)
       continue;
 
     cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
+    // XXX (Rasha) Should rmap be modified here?
   }
 
   shootdown.perform();
@@ -382,6 +409,10 @@ vmap::dup_page(uptr dest, uptr src)
     auto lock = vpfs_.acquire(destit);
     assert(!destit.is_set());
     vpfs_.fill(destit, desc);
+    if (myproc() != bootproc && destit->page) {
+      std::pair<vmap*, uptr> rmap = std::make_pair(&*this, destit.index()*PGSIZE);
+      destit->page->add_pte(rmap);
+    }
   }
 
   return 0;
@@ -432,6 +463,10 @@ vmap::pagefault(uptr va, u32 err)
     // down.
     if (type == access_type::WRITE && (desc.flags & vmdesc::FLAG_COW)) {
       old_page = desc.page;
+      if (myproc() != bootproc && old_page) {
+        std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+        old_page->remove_pte(rmap);
+      }
       cache.invalidate(va, PGSIZE, it, &shootdown);
     }
 
@@ -457,12 +492,6 @@ vmap::pagefault(uptr va, u32 err)
         cache.insert(va, &*it, page->pa() | PTE_P | PTE_U | PTE_W);
       else
         cache.insert(va, &*it, page->pa() | PTE_P | PTE_U);
-    }
-
-    if(myproc() != bootproc) {
-      // Add reverse map entry from physical page to va
-      std::pair<u64, uptr> rmap = std::make_pair((u64)(myproc()->pid), va);
-      page->add_pte(rmap);
     }
 
     shootdown.perform();
@@ -622,6 +651,7 @@ vmap::sbrk(ssize_t n, uptr *addr)
     sdebug.println("vm: curbrk ", shex(curbrk), " newstart ", shex(newstart),
                    " newend ", shex(newend));
 
+  // XXX (Rasha) Modify rmap here
   if (newend < newstart) {
     // Adjust break down by freeing pages
     auto begin = vpfs_.find(newend / PGSIZE),
@@ -728,6 +758,10 @@ vmap::ensure_page(const vmap::vpf_array::iterator &it, vmap::access_type type,
     // XXX(austin) Fill could do a move in this case, which would
     // save extraneous reference counting
     vpfs_.fill(it, std::move(n));
+  }
+  if (myproc() != bootproc) {
+    std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+    page->add_pte(rmap);
   }
   return page.get();
 }

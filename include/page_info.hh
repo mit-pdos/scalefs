@@ -68,7 +68,7 @@ protected:
   }
 
 public:
-  typedef std::pair<u64, uptr> rmap_entry;
+  typedef std::pair<vmap*, uptr> rmap_entry;
   class rmap: public tsc_logged_object {
     public:
       NEW_DELETE_OPS(rmap);
@@ -109,18 +109,18 @@ public:
 
       void add_mapping(rmap_entry map) {
         add_op addop(this, map);
-        get_logger()->push<add_op>(std::forward<add_op>(addop));
-        num_pending_ops_++;
+        get_logger()->push<add_op>(std::move(addop));
+        /*num_pending_ops_++;
         if (num_pending_ops_ > MAX_PENDING_OPS)
-          sync();
+          sync();*/
       }
 
       void remove_mapping(rmap_entry map) {
         rem_op remop(this, map);
-        get_logger()->push<rem_op>(std::forward<rem_op>(remop));
-        num_pending_ops_++;
+        get_logger()->push<rem_op>(std::move(remop));
+        /*num_pending_ops_++;
         if (num_pending_ops_ > MAX_PENDING_OPS)
-          sync();
+          sync();*/
       }
 
       void delete_rmap() {
