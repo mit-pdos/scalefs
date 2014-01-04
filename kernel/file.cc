@@ -60,12 +60,15 @@ file_inode::read(char *addr, size_t n)
   } else if (ip->type() != mnode::types::file) {
     return -1;
   } else {
-    if (off >= *ip->as_file()->read_size()) {
-      r = 0;
-    } else {
-      l = off_lock.guard();
-      r = readi(ip, addr, off, n);
-    }
+    mfile::page_state ps = ip->as_file()->get_page(off / PGSIZE);
+    if (!ps.get_page_info())
+      return 0;
+
+    if (ps.is_partial_page() && off >= *ip->as_file()->read_size())
+      return 0;
+
+    l = off_lock.guard();
+    r = readi(ip, addr, off, n);
   }
   if (r > 0)
     off += r;
@@ -139,6 +142,17 @@ file_inode::pwrite(const char *addr, size_t n, off_t off)
 }
 
 
+int
+file_pipe_reader::stat(struct stat *st, enum stat_flags flags)
+{
+  st->st_mode = (T_FIFO << __S_IFMT_SHIFT) | 0600;
+  st->st_dev = 0;               // XXX ?
+  st->st_ino = (uintptr_t)pipe;
+  st->st_nlink = 1;
+  st->st_size = 0;
+  return 0;
+}
+
 ssize_t
 file_pipe_reader::read(char *addr, size_t n)
 {
@@ -152,6 +166,17 @@ file_pipe_reader::onzero(void)
   delete this;
 }
 
+
+int
+file_pipe_writer::stat(struct stat *st, enum stat_flags flags)
+{
+  st->st_mode = (T_FIFO << __S_IFMT_SHIFT) | 0600;
+  st->st_dev = 0;               // XXX ?
+  st->st_ino = (uintptr_t)pipe;
+  st->st_nlink = 1;
+  st->st_size = 0;
+  return 0;
+}
 
 ssize_t
 file_pipe_writer::write(const char *addr, size_t n)

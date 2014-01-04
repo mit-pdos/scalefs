@@ -1,3 +1,5 @@
+# -*- makefile-gmake -*-
+
 OBJS = \
 	acpi.o \
 	acpidbg.o \
@@ -75,6 +77,7 @@ OBJS = \
 	ctype.o \
 	unixsock.o \
 	heapprof.o \
+	eager_refcache.o \
 
 OBJS := $(addprefix $(O)/kernel/, $(OBJS))
 

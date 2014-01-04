@@ -14,3 +14,6 @@
 #define MAP_FAILED ((void*)-1)
 
 #define MADV_WILLNEED 3
+
+// xv6 extension: invalidate all page tables
+#define MADV_INVALIDATE_CACHE 1000

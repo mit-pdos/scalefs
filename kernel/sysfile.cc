@@ -62,6 +62,32 @@ sys_dup2(int ofd, int nfd)
   return nfd;
 }
 
+static off_t
+compute_offset(file_inode *fi, off_t *fioffp, off_t offset, int whence)
+{
+  switch (whence) {
+  case SEEK_SET:
+    return offset;
+
+  case SEEK_CUR: {
+    off_t fioff = fi->off;
+    if (fioffp) *fioffp = fioff;
+    return fioff + offset;
+  }
+
+  case SEEK_END:
+    if (offset < 0) {
+      mfile::page_state ps = fi->ip->as_file()->get_page((-offset - 1) / PGSIZE);
+      if (!ps.get_page_info())
+        // Attempt to seek before the beginning of the file
+        return -1;
+    }
+
+    return offset + *fi->ip->as_file()->read_size();
+  }
+  return -1;
+}
+
 //SYSCALL
 off_t
 sys_lseek(int fd, off_t offset, int whence)
@@ -75,27 +101,28 @@ sys_lseek(int fd, off_t offset, int whence)
     return -1;
 
   file_inode* fi = static_cast<file_inode*>(ff);
-  auto l = fi->off_lock.guard();
-  switch (whence) {
-  case SEEK_SET:
-    fi->off = offset;
-    break;
+  if (fi->ip->type() != mnode::types::file)
+    return -1;                  // ESPIPE
 
-  case SEEK_CUR:
-    fi->off += offset;
-    break;
-
-  case SEEK_END:
-    if (fi->ip->type() != mnode::types::file)
-      return -1;
-    fi->off = offset + *fi->ip->as_file()->read_size();
-    break;
-
-  default:
+  // Pre-validate offset and whence.  Be careful to only read fi->off
+  // once, regardless of what code path we take.
+  off_t fioff = -1;
+  off_t orig_new_off = compute_offset(fi, &fioff, offset, whence);
+  if (orig_new_off < 0)
     return -1;
-  }
+  if (fioff == -1)
+    fioff = fi->off;
+  if (orig_new_off == fioff)
+    // No change; don't acquire the lock
+    return orig_new_off;
 
-  return fi->off;
+  auto l = fi->off_lock.guard();
+  off_t new_offset = compute_offset(fi, nullptr, offset, whence);
+  if (new_offset < 0)
+    return -1;
+  fi->off = new_offset;
+
+  return new_offset;
 }
 
 //SYSCALL
@@ -789,10 +816,10 @@ sys_execv(userptr_str upath, userptr<userptr_str> uargv)
 
 //SYSCALL
 int
-sys_pipe(userptr<int> fd)
+sys_pipe2(userptr<int> fd, int flags)
 {
   sref<file> rf, wf;
-  if (pipealloc(&rf, &wf) < 0)
+  if (pipealloc(&rf, &wf, flags) < 0)
     return -1;
 
   int fd_buf[2] = { fdalloc(std::move(rf), 0), fdalloc(std::move(wf), 0) };
@@ -804,6 +831,13 @@ sys_pipe(userptr<int> fd)
   if (fd_buf[1] >= 0)
     myproc()->ftable->close(fd_buf[1]);
   return -1;
+}
+
+//SYSCALL
+int
+sys_pipe(userptr<int> fd)
+{
+  return sys_pipe2(fd, 0);
 }
 
 //SYSCALL

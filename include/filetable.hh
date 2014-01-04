@@ -33,9 +33,10 @@ public:
         if (f && (!close_cloexec || !info.get_cloexec())) {
           // XXX f's refcount could have dropped to zero between the
           // load and here
-          f->inc();
-          t->info_[cpu][fd].store(
-            info.with_locked(false), std::memory_order_relaxed);
+          file* newf = f->dup();
+          fdinfo newinfo(newf, info.get_cloexec());
+
+          t->info_[cpu][fd].store(newinfo, std::memory_order_relaxed);
           t->cloexec_[cpu][fd].store(
             info.get_cloexec(), std::memory_order_relaxed);
         } else {
@@ -66,12 +67,14 @@ public:
     return sref<file>::newref(f);
   }
 
+  // Allocate a FD and point it to f.  This takes over the reference
+  // to f from the caller.
   int allocfd(sref<file>&& f, bool percpu = false, bool cloexec = false) {
     int cpu = percpu ? myid() : 0;
     fdinfo none(nullptr, false);
     // Transfer f to manual reference counting since we can't store
     // sref's in the info table.
-    file *fptr = f.transfer_to_ptr();
+    file *fptr = f->dup();
     fdinfo newinfo(fptr, cloexec, true);
     for (int fd = 0; fd < NOFILE; fd++) {
       // Note that we skip over locked FDs because that means they're
@@ -89,6 +92,10 @@ public:
       }
     }
     cprintf("filetable::allocfd: failed\n");
+    // The "dup" call told f that we're binding it to a FD.  That
+    // ultimately failed, but we have to tell it that we're "closing"
+    // the FD now.
+    fptr->pre_close();
     fptr->dec();
     return -1;
   }
@@ -123,10 +130,12 @@ public:
     infop->store(newinfo, std::memory_order_release);
 
     // Close old file
-    if (info.get_file())
+    if (info.get_file()) {
+      info.get_file()->pre_close();
       info.get_file()->dec();
-    else
+    } else {
       cprintf("filetable::close: bad fd %u\n", fd);
+    }
   }
 
   bool replace(int fd, sref<file>&& newf, bool cloexec = false) {
@@ -152,14 +161,17 @@ public:
     // Update to new info and unlock.  It's safe to update cloexec_
     // non-atomically with info even with concurrent lock-free readers
     // because any that care will double-check the fdinfo bit.
-    file *newfptr = newf.transfer_to_ptr();
+    file *newfptr = newf->dup();
     fdinfo newinfo(newfptr, cloexec);
     if (cloexec != cloexec_[cpu][fd])
       cloexec_[cpu][fd] = cloexec;
     infop->store(newinfo, std::memory_order_release);
 
-    if (oldinfo.get_file() && oldinfo.get_file() != newfptr)
+    // Close the old FD
+    if (oldinfo.get_file() && oldinfo.get_file() != newfptr) {
+      oldinfo.get_file()->pre_close();
       oldinfo.get_file()->dec();
+    }
     return true;
   }
 
@@ -178,11 +190,14 @@ private:
   }
 
   ~filetable() {
+    // Close all FDs
     for(int cpu = 0; cpu < NCPU; cpu++){
       for(int fd = 0; fd < NOFILE; fd++){
         fdinfo info = info_[cpu][fd].load();
-        if (info.get_file())
+        if (info.get_file()) {
+          info.get_file()->pre_close();
           info.get_file()->dec();
+        }
       }
     }
   }

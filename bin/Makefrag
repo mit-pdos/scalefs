@@ -1,4 +1,5 @@
 # -*- makefile-gmake -*-
+
 $(O)/bin/%.o: CFLAGS:=$(CFLAGS)
 $(O)/bin/%.o: CXXFLAGS:=$(CXXFLAGS)
 
@@ -71,19 +72,32 @@ endif
 
 # Binaries that are known to build on PLATFORM=native
 UPROGS_NATIVE := \
+	allocbench \
+	base64 \
 	benchhdr \
-	mapbench \
-	tee \
-        dirbench \
-	mailbench \
-	mailfilter \
-	sh \
-	linkbench \
-	forktest \
+	cat \
+	cp \
+	crwpbench \
+	dirbench \
+	echo \
 	fdbench \
+	filebench \
+	forktest \
+	halt \
+	init \
+	linkbench \
+	ls \
+	mail-deliver \
 	mail-enqueue \
 	mail-qman \
-	mail-deliver \
+	mailbench \
+	mailfilter \
+	mapbench \
+	mkdir \
+	mv \
+	sh \
+	tee \
+	vmimbalbench \
 
 ifeq ($(HAVE_TESTGEN),y)
 UPROGS_BIN    += fstest
@@ -119,6 +133,18 @@ LINK_CMD_END :=  -Wl,--start-group $(UPROGS_LIBS) -Wl,--end-group $(ULIB_END)
 else
 LINK_CMD_BEGIN := $(Q)$(LD) $(LDFLAGS) 
 LINK_CMD_END :=  --start-group $(UPROGS_LIBS) --end-group $(ULIB_END)
+endif
+
+ifeq ($(PLATFORM),native)
+# Statically link for the Linux environment so we can create a trivial
+# initramfs without libraries
+LINK_CMD_END := $(LINK_CMD_END) -static
+
+# Build an initramfs
+$(O)/initramfs: $(addprefix $(O)/bin/, $(UPROGS_NATIVE))
+	@echo "  CPIO   $@"
+	$(Q)(cd $(<D); ls -1 $(^F) | cpio -o -H newc) > $@
+ALL += $(O)/initramfs
 endif
 
 $(O)/bin/%.unstripped: $(O)/bin/%.o $(ULIB_BEGIN) $(ULIB_END) $(UPROGS_LIBS)

@@ -141,6 +141,12 @@ struct vmap : public referenced {
   // Populate vmdesc's.
   int willneed(uptr start, uptr len);
 
+  // Invalidate page caches.
+  int invalidate_cache(uptr start, uptr len);
+
+  // Modify protection on a range.  flags must be 0 or FLAG_MAPPED.
+  int mprotect(uptr start, uptr len, uint64_t flags);
+
   // XXX(Austin) HACK for benchmarking.  Used to simulate the shared
   // pages we could have if we had a unified buffer cache.
   int dup_page(uptr dest, uptr src);

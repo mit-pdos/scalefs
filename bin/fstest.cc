@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <errno.h>
 #include <sys/wait.h>
 #include <sys/mman.h>
 #include "mtrace.h"
@@ -33,12 +34,14 @@ public:
 
 struct testproc {
   double_barrier setup;
-  std::atomic<void (*)(void)> setupf;
+  std::atomic<void (*)(void)> setupf1;
+  std::atomic<void (*)(void)> setupf2;
 
-  testproc(void (*s)(void)) : setupf(s) {}
+  testproc(void (*s1)(void), void (*s2)(void)) : setupf1(s1), setupf2(s2) {}
   void run() {
     setup.enter();
-    setupf();
+    setupf1();
+    setupf2();
     setup.exit();
   }
 };
@@ -52,6 +55,9 @@ struct testfunc {
 
   testfunc(int (*f)(void)) : func(f) {}
   void run() {
+#ifndef XV6_USER
+    errno = 0;
+#endif
     start.sync();
     retval = func();
     stop.sync();
@@ -75,9 +81,11 @@ run_test(testproc* tp, testfunc* tf, fstest* t, int first_func, bool do_pin)
     setaffinity(2);
 
   for (int i = 0; i < 2; i++)
-    new (&tp[i]) testproc(t->proc[i].setup_proc);
+    new (&tp[i]) testproc(t->proc[i].setup_proc, t->setup_procfinal);
   for (int i = 0; i < 2; i++)
     new (&tf[i]) testfunc(t->func[i].call);
+
+  t->setup_common();
 
   pid_t pids[2] = { 0, 0 };
   for (int p = 0; p < 2; p++) {
@@ -88,11 +96,36 @@ run_test(testproc* tp, testfunc* tf, fstest* t, int first_func, bool do_pin)
     if (nfunc == 0)
       continue;
 
+    fflush(stdout);
+    if (do_pin) {
+      for (int f = 0; f < 2; f++) {
+        if (t->func[f].callproc == p) {
+          setaffinity(f+2);
+          break;
+        }
+      }
+    }
+
     pids[p] = fork();
     assert(pids[p] >= 0);
 
     if (pids[p] == 0) {
+      // Get all text and data structures
       madvise(0, (size_t) _end, MADV_WILLNEED);
+
+      // Prime the VM system (this must be kept in sync with
+      // fs_testgen.py)
+      void *r = mmap((void*)0x12345600000, 4 * 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+      if (r == (void*)-1)
+        setup_error("mmap (fixed)");
+      munmap(r, 4 * 4096);
+
+      r = mmap(0, 4 * 4096, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+      if (r == (void*)-1)
+        setup_error("mmap (non-fixed)");
+      munmap(r, 4 * 4096);
+
+      // Run setup
       tp[p].run();
 
       int ndone = 0;
@@ -115,7 +148,6 @@ run_test(testproc* tp, testfunc* tf, fstest* t, int first_func, bool do_pin)
     }
   }
 
-  t->setup_common();
   for (int p = 0; p < 2; p++) if (pids[p]) tp[p].setup.sync();
   t->setup_final();
 
@@ -145,33 +177,65 @@ static void
 pf_handler(int signo)
 {
   if (pf_active)
-    siglongjmp(pf_jmpbuf, 1);
+    siglongjmp(pf_jmpbuf, signo);
+  // Let the error happen
+  signal(signo, SIG_DFL);
 }
 
 static bool verbose = false;
 static bool check_commutativity = false;
 static bool run_threads = false;
+static bool check_results = false;
+static fstest *cur_test = nullptr;
+
+void
+expect_result(const char *varname, long got, long expect)
+{
+  if (!check_results) return;
+  if (got == expect) return;
+  auto name = cur_test->testname;
+#ifdef XV6_USER
+  printf("%s: expected %s == %ld, got %ld\n",
+         name, varname, expect, got);
+#else
+  printf("%s: expected %s == %ld, got %ld (errno %s)\n",
+         name, varname, expect, got, strerror(errno));
+#endif
+}
+
+void
+expect_errno(int expect)
+{
+#ifndef XV6_USER
+  if (!check_results) return;
+  if (errno == expect) return;
+  auto name = cur_test->testname;
+  printf("%s: expected errno == %s, got %s\n",
+         name, strerror(expect), strerror(errno));
+#endif
+}
 
 static void
 usage(const char* prog)
 {
-  fprintf(stderr, "Usage: %s [-v] [-c] [-t] [-n NPARTS] [-p THISPART] [min[-max]]\n", prog);
+  fprintf(stderr, "Usage: %s [-v] [-c] [-t] [-r] [-n NPARTS] [-p THISPART] [min[-max]]\n", prog);
 }
 
 int
 main(int ac, char** av)
 {
   uint32_t min = 0;
-  uint32_t max = UINT_MAX;
+  uint32_t max;
   int nparts = -1;
   int thispart = -1;
 
   uint32_t ntests = 0;
   for (ntests = min; fstests[ntests].testname; ntests++)
     ;
+  max = ntests - 1;
 
   for (;;) {
-    int opt = getopt(ac, av, "vctp:n:");
+    int opt = getopt(ac, av, "vctrp:n:");
     if (opt == -1)
       break;
 
@@ -186,6 +250,11 @@ main(int ac, char** av)
 
     case 't':
       run_threads = true;
+      break;
+
+    case 'r':
+      run_threads = true;
+      check_results = true;
       break;
 
     case 'n':
@@ -203,13 +272,25 @@ main(int ac, char** av)
   }
 
   if (optind < ac) {
-    char* dash = strchr(av[optind], '-');
-    if (!dash) {
-      min = max = atoi(av[optind]);
-    } else {
-      *dash = '\0';
-      min = atoi(av[optind]);
-      max = atoi(dash + 1);
+    bool found = false;
+    for (uint32_t t = 0; t < ntests && !found; t++) {
+      if (strcmp(av[optind], fstests[t].testname) == 0) {
+        min = max = t;
+        found = true;
+      }
+    }
+
+    if (!found) {
+      char* dash = strchr(av[optind], '-');
+      if (!dash) {
+        min = max = atoi(av[optind]);
+      } else {
+        *dash = '\0';
+        if (av[optind])
+          min = atoi(av[optind]);
+        if (*(dash + 1))
+          max = atoi(dash + 1);
+      }
     }
   } else if (nparts >= 0 || thispart >= 0) {
     if (nparts < 0 || thispart < 0) {
@@ -235,7 +316,9 @@ main(int ac, char** av)
     printf(" check");
   if (run_threads)
     printf(" threads");
-  if (min == 0 && max == UINT_MAX)
+  if (check_results)
+    printf(" results");
+  if (min == 0 && max == ntests - 1)
     printf(" all");
   else if (min == max)
     printf(" %d", min);
@@ -255,10 +338,16 @@ main(int ac, char** av)
 
   madvise(0, (size_t) _end, MADV_WILLNEED);
 
+  signal(SIGPIPE, SIG_IGN);
   signal(SIGBUS, pf_handler);
   signal(SIGSEGV, pf_handler);
 
   for (uint32_t t = min; t <= max && t < ntests; t++) {
+    cur_test = &fstests[t];
+
+    if (verbose)
+      printf("%s (test %d) starting\n", fstests[t].testname, t);
+
     if (check_commutativity) {
       run_test(tp, tf, &fstests[t], 0, false);
       int ra0 = tf[0].retval;
@@ -283,7 +372,8 @@ main(int ac, char** av)
 
     if (run_threads) {
       run_test(tp, tf, &fstests[t], 0, true);
-      printf("%s: threads done\n", fstests[t].testname);
     }
   }
+
+  printf("fstest: done\n");
 }

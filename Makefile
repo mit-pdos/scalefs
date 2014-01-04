@@ -1,22 +1,42 @@
 # Custom config file?  Otherwise use defaults.
 -include config.mk
+# Quiet.  Run "make Q=" for a verbose build.
 Q          ?= @
-TOOLPREFIX ?= x86_64-jos-elf-
-QEMU 	   ?= qemu-system-x86_64
-QEMUSMP	   ?= 8
-QEMUSRC    ?= ../mtrace
-MTRACE	   ?= $(QEMU)
-HW	   ?= qemu
+# Prefix to use for ELF build tools, if the native toolchain isn't
+# ELF.  E.g., x86_64-jos-elf-
+TOOLPREFIX ?=
+# QEMU binary
+QEMU       ?= qemu-system-x86_64
+# Number of CPUs to emulate
+QEMUSMP    ?= 8
+# RAM to simulate (in MB)
+QEMUMEM    ?= 512
+# Default hardware build target.  See param.h for others.
+HW         ?= qemu
+# Enable C++ exception handling in the kernel.
 EXCEPTIONS ?= y
-RUN	   ?= $(empty)
+# Shell command to run in VM after booting
+RUN        ?= $(empty)
+# Python binary
 PYTHON     ?= python
-O  	   = o.$(HW)
+# Directory containing mtrace-magic.h for HW=mtrace
+MTRACESRC  ?= ../mtrace
+# Mtrace-enabled QEMU binary
+MTRACE     ?= $(MTRACESRC)/x86_64-softmmu/qemu-system-x86_64
+
+O           = o.$(HW)
 
 ifeq ($(HW),linux)
 PLATFORM   := native
+TOOLPREFIX := 
 else
 ifeq ($(HW),linuxmtrace)
+# Build the user space for mtrace'ing under Linux.  This builds an
+# initramfs of xv6's user space that can be booted on a Linux kernel.
+# Make targets like qemu and mtrace.out are supported if the user
+# provides KERN=path/to/Linux/bzImage to make.
 PLATFORM   := native
+TOOLPREFIX := 
 else
 PLATFORM   := xv6
 endif
@@ -51,7 +71,7 @@ ifeq ($(PLATFORM),xv6)
 INCLUDES  = --sysroot=$(O)/sysroot \
 	-iquote include -iquote$(O)/include \
 	-iquote libutil/include \
-	-Istdinc $(CODEXINC) -I$(QEMUSRC) \
+	-Istdinc $(CODEXINC) -I$(MTRACESRC) \
 	-include param.h -include libutil/include/compiler.h
 COMFLAGS  = -static -DXV6_HW=$(HW) -DXV6 \
 	    -fno-builtin -fno-strict-aliasing -fno-omit-frame-pointer -fms-extensions \
@@ -60,7 +80,7 @@ COMFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1
 COMFLAGS  += -Wl,-m,elf_x86_64 -nostdlib
 LDFLAGS   = -m elf_x86_64
 else
-INCLUDES := -include param.h -iquote libutil/include -I$(QEMUSRC)
+INCLUDES := -include param.h -iquote libutil/include -I$(MTRACESRC)
 COMFLAGS := -pthread -Wno-unused-result
 LDFLAGS := -pthread
 endif
@@ -108,7 +128,6 @@ include libutil/Makefrag
 include bin/Makefrag
 include tools/Makefrag
 include metis/Makefrag
--include user/Makefrag.$(HW)
 
 $(O)/%.o: %.c $(O)/sysroot
 	@echo "  CC     $@"
@@ -152,8 +171,6 @@ xv6memfs.img: bootblock kernelmemfs
 	dd if=bootblock of=xv6memfs.img conv=notrunc
 	dd if=kernelmemfs of=xv6memfs.img seek=1 conv=notrunc
 
-FSEXTRA += README
-
 $(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS)
 	@echo "  MKFS   $@"
 	$(Q)$(O)/tools/mkfs $@ $(FSEXTRA) $(UPROGS)
@@ -164,46 +181,72 @@ $(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS)
 ##
 ## qemu
 ##
-QEMUOPTS = -smp $(QEMUSMP) -m 512 \
+ifeq ($(PLATFORM),native)
+override QEMUAPPEND += console=ttyS0
+endif
+
+## One NUMA node per CPU when mtrace'ing
+ifeq ($(HW),linuxmtrace)
+QEMUSMP := 4
+QEMUMEM := 1024
+else ifeq ($(HW),mtrace)
+QEMUSMP := 4
+QEMUMEM := 1024
+endif
+
+ifneq ($(RUN),)
+override QEMUAPPEND += \$$ $(RUN)
+endif
+
+QEMUOPTS = -smp $(QEMUSMP) -m $(QEMUMEM) \
 	$(if $(QEMUOUTPUT),-serial file:$(QEMUOUTPUT),-serial mon:stdio) \
 	-nographic \
 	-numa node -numa node \
 	-net user -net nic,model=e1000 \
 	$(if $(QEMUNOREDIR),,-redir tcp:2323::23 -redir tcp:8080::80) \
-	$(if $(RUN),-append "\$$ $(RUN)",)
+	$(if $(QEMUAPPEND),-append "$(QEMUAPPEND)",) \
 
-qemu: $(KERN) $(O)/fs.img
-	$(QEMU) $(QEMUOPTS) $(QEMUKVMFLAGS) -kernel $(KERN) -hdb $(O)/fs.img
+## One NUMA node per CPU when mtrace'ing
+ifeq ($(HW),linuxmtrace)
+QEMUOPTS += -numa node -numa node
+else ifeq ($(HW),mtrace)
+QEMUOPTS += -numa node -numa node
+endif
+
+ifeq ($(PLATFORM),xv6)
+QEMUOPTS += -hdb $(O)/fs.img
+qemu: $(O)/fs.img
+endif
+ifeq ($(PLATFORM),native)
+QEMUOPTS += -initrd $(O)/initramfs
+endif
+
+qemu: $(KERN)
+	$(QEMU) $(QEMUOPTS) $(QEMUKVMFLAGS) -kernel $(KERN)
 gdb: $(KERN)
-	$(QEMU) $(QEMUOPTS) $(QEMUKVMFLAGS) -kernel $(KERN) -hdb $(O)/fs.img -s
+	$(QEMU) $(QEMUOPTS) $(QEMUKVMFLAGS) -kernel $(KERN) -s
 
 codex: $(KERN)
 
 ##
 ## mtrace
 ##
-mscan.syms: $(KERN)
-	$(NM) -C -S $< > $@
-
-mscan.kern: $(KERN)
-	cp $< $@
-
 MTRACEOUT ?= mtrace.out
 MTRACEOPTS = -rtc clock=vm -mtrace-enable -mtrace-file $(MTRACEOUT) \
 	     -mtrace-calls
-$(MTRACEOUT): mscan.kern mscan.syms 
+$(MTRACEOUT): $(KERN)
 	$(Q)rm -f $(MTRACEOUT)
-	$(MTRACE) $(QEMUOPTS) $(MTRACEOPTS) -kernel mscan.kern -s
+	$(MTRACE) $(QEMUOPTS) $(MTRACEOPTS) -kernel $(KERN) -s
 $(MTRACEOUT)-scripted:
 	$(Q)rm -f $(MTRACEOUT)
-	$(MTRACE) $(QEMUOPTS) $(MTRACEOPTS) -kernel mscan.kern
+	$(MTRACE) $(QEMUOPTS) $(MTRACEOPTS) -kernel $(KERN)
 .PHONY: $(MTRACEOUT) $(MTRACEOUT)-scripted
 
-mscan.out: $(QEMUSRC)/mtrace-tools/mscan $(MTRACEOUT)
-	$(QEMUSRC)/mtrace-tools/mscan > $@ || (rm -f $@; exit 2)
+mscan.out: $(MTRACESRC)/mtrace-tools/mscan $(MTRACEOUT)
+	$(MTRACESRC)/mtrace-tools/mscan --kernel $(KERN) > $@ || (rm -f $@; exit 2)
 
-mscan.sorted: mscan.out $(QEMUSRC)/mtrace-tools/sersec-sort
-	$(QEMUSRC)/mtrace-tools/sersec-sort < $< > $@
+mscan.sorted: mscan.out $(MTRACESRC)/mtrace-tools/sersec-sort
+	$(MTRACESRC)/mtrace-tools/sersec-sort < $< > $@
 
 rsync: $(KERN)
 	rsync -avP $(KERN) amsterdam.csail.mit.edu:/tftpboot/$(HW)/kernel.xv6

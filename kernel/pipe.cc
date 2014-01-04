@@ -8,8 +8,9 @@
 #include "file.hh"
 #include "cpu.hh"
 #include "uk/unistd.h"
+#include "uk/fcntl.h"
 
-#define PIPESIZE 512
+#define PIPESIZE (16*4096)
 
 struct pipe {
   virtual ~pipe() { };
@@ -21,63 +22,105 @@ struct pipe {
 
 struct ordered : pipe {
   struct spinlock lock;
-  struct condvar  cv;
-  int readopen;   // read fd is still open
+  struct spinlock lock_close;
+  struct condvar  empty;
+  struct condvar  full;
+  std::atomic<bool> readopen;   // read fd is still open
   int writeopen;  // write fd is still open
-  u32 nread;      // number of bytes read
-  u32 nwrite;     // number of bytes written
+  std::atomic<size_t> nread;  // number of bytes read
+  std::atomic<size_t> nwrite; // number of bytes written
+  bool nonblock;
   char data[PIPESIZE];
 
-  ordered() : readopen(1), writeopen(1), nread(0), nwrite(0) {
+  ordered(int flags)
+    : readopen(true), writeopen(1), nread(0), nwrite(0),
+      nonblock(flags & O_NONBLOCK)
+  {
     lock = spinlock("pipe", LOCKSTAT_PIPE);
-    cv = condvar("pipe");
+    lock_close = spinlock("pipe:close", LOCKSTAT_PIPE);
+    empty = condvar("pipe:empty");
+    full = condvar("pipe:full");
   };
   ~ordered() override {
   };
   NEW_DELETE_OPS(ordered);
 
   virtual int write(const char *addr, int n) override {
+    if (nonblock) {
+      for (;;) {
+        size_t nr = nread;
+        size_t nw = nwrite;
+        if (nr == nread) {
+          // use nread sort-of like a seqlock
+          if (nw == nr + PIPESIZE)
+            return -1;
+          break;
+        }
+      }
+    }
+
+    if (!readopen)
+      return -1;
+
     scoped_acquire l(&lock);
     for(int i = 0; i < n; i++){
       while(nwrite == nread + PIPESIZE){ 
-        if(readopen == 0 || myproc()->killed){
+        if (nonblock || myproc()->killed)
           return -1;
-        }
-        cv.wake_all();
-        cv.sleep(&lock);
+        scoped_acquire lclose(&lock_close);
+        if (!readopen)
+          return -1;
+        full.sleep(&lock, &lock_close);
       }
       data[nwrite++ % PIPESIZE] = addr[i];
     }
-    cv.wake_all();
+    if (n > 0)
+      empty.wake_all();
     return n;
   }
 
   virtual int read(char *addr, int n) override {
-    int i;
-    scoped_acquire l(&lock);
-    while(nread == nwrite && writeopen) { 
-      if(myproc()->killed){
-        return -1;
+    if (nonblock) {
+      for (;;) {
+        size_t nr = nread;
+        size_t nw = nwrite;
+        if (nr == nread) {
+          // use nread sort-of like a seqlock
+          if (nw == nr)
+            return -1;
+          break;
+        }
       }
-      cv.sleep(&lock);
     }
+
+    scoped_acquire l(&lock);
+    while(nread == nwrite) {
+      if (nonblock || myproc()->killed)
+        return -1;
+      scoped_acquire lclose(&lock_close);
+      if (writeopen == 0)
+        return 0;
+      empty.sleep(&lock, &lock_close);
+    }
+    int i;
     for(i = 0; i < n; i++) { 
       if(nread == nwrite)
         break;
       addr[i] = data[nread++ % PIPESIZE];
     }
-    cv.wake_all();
+    if (i > 0)
+      full.wake_all();
     return i;
   }
 
   virtual int close(int writable) override {
-    scoped_acquire l(&lock);
+    scoped_acquire l(&lock_close);
     if(writable){
       writeopen = 0;
     } else {
       readopen = 0;
     }
-    cv.wake_all();
+    empty.wake_all();
     if(readopen == 0 && writeopen == 0){
       return 1;
     }
@@ -87,12 +130,12 @@ struct ordered : pipe {
 
 
 int
-pipealloc(sref<file> *f0, sref<file> *f1)
+pipealloc(sref<file> *f0, sref<file> *f1, int flags)
 {
   struct pipe *p = nullptr;
   auto cleanup = scoped_cleanup([&](){delete p;});
   try {
-    p = new ordered();
+    p = new ordered(flags);
     *f0 = make_sref<file_pipe_reader>(p);
     *f1 = make_sref<file_pipe_writer>(p);
   } catch (std::bad_alloc &e) {

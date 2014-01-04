@@ -127,8 +127,8 @@ void            inithz(void);
 // ide.c
 void            ideinit(void);
 void            ideintr(void);
-void            ideread(u32 dev, u64 sector, char* data);
-void            idewrite(u32 dev, u64 sector, const char* data);
+void            ideread(u32 dev, char* data, u64 count, u64 offset);
+void            idewrite(u32 dev, const char* data, u64 count, u64 offset);
 
 // idle.cc
 struct proc *   idleproc(void);
@@ -170,7 +170,7 @@ void            piceoi(void);
 void            picdump(void);
 
 // pipe.c
-int             pipealloc(sref<file>*, sref<file>*);
+int             pipealloc(sref<file>*, sref<file>*, int flags);
 void            pipeclose(struct pipe*, int);
 int             piperead(struct pipe*, char*, int);
 int             pipewrite(struct pipe*, const char*, int);
