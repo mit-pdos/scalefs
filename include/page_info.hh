@@ -10,8 +10,6 @@
 #include <cstddef>
 #include <vector>
 
-#define MAX_PENDING_OPS 100
-
 using namespace oplog;
 
 // Per-allocation debug information
@@ -69,15 +67,17 @@ protected:
 
 public:
   typedef std::pair<vmap*, uptr> rmap_entry;
+  // rmap is a reverse map of the vmaps that contain a mapping for the page
+  // corresponding to this page_info. Rmap is implemented using oplog and is
+  // used when a file page is no longer valid and the vmaps mapping it need to
+  // be informed of the change.
   class rmap: public tsc_logged_object {
     public:
       NEW_DELETE_OPS(rmap);
-      rmap() { num_pending_ops_ = 0; }
+      // Oplog operation that implements adding a <vmap*,va> pair to the rmap
       struct add_op {
         add_op(rmap *p, rmap_entry map): parent(p), mapping(map) { }
         void operator()() {
-          //cprintf("PA:(%016lX) Adding mapping for proc %ld: va %016lX\n", 
-          //            (u64)parent, mapping.first, mapping.second);
           std::vector<rmap_entry>::iterator it;
           it = std::find(parent->rmap_vec.begin(), parent->rmap_vec.end(), mapping);
           if(it == parent->rmap_vec.end())
@@ -88,12 +88,11 @@ public:
         rmap_entry mapping;
       };
 
+      // Oplog operation that implements removing a <vmap*,va> pair from the rmap
       struct rem_op {
         rem_op(rmap *p, rmap_entry map): parent(p), mapping(map) { }
         void operator()() {
           if (parent->rmap_vec.size() == 0) return;
-          //cprintf("PA:(%016lX) Removing mapping for proc %ld: va %016lX\n", 
-          //            (u64)parent, mapping.first, mapping.second);
           std::vector<rmap_entry>::iterator it;
           it = std::find(parent->rmap_vec.begin(), parent->rmap_vec.end(), mapping);
           if(it != parent->rmap_vec.end()) {
@@ -110,17 +109,11 @@ public:
       void add_mapping(rmap_entry map) {
         add_op addop(this, map);
         get_logger()->push<add_op>(std::move(addop));
-        /*num_pending_ops_++;
-        if (num_pending_ops_ > MAX_PENDING_OPS)
-          sync();*/
       }
 
       void remove_mapping(rmap_entry map) {
         rem_op remop(this, map);
         get_logger()->push<rem_op>(std::move(remop));
-        /*num_pending_ops_++;
-        if (num_pending_ops_ > MAX_PENDING_OPS)
-          sync();*/
       }
 
       void delete_rmap() {
@@ -129,14 +122,10 @@ public:
 
       void sync() {
         synchronize();
-        num_pending_ops_ = 0;
       }
 
     protected:
       std::vector<rmap_entry> rmap_vec;
-
-    private:
-      int num_pending_ops_;
   };
   
   page_info() {
@@ -185,10 +174,12 @@ public:
     return p2v(pa());
   }
 
+  // Add an entry to the rmap for this page
   void add_pte(rmap_entry map) {
     rmap_pte->add_mapping(map);
   }
 
+  // Remove an entry from the rmap for this page
   void remove_pte(rmap_entry map) {
     rmap_pte->remove_mapping(map);
   }

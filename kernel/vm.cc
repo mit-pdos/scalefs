@@ -107,6 +107,7 @@ public:
     new (&cur->pages[cur->used++]) sref<class page_info>(std::move(page));
   }
 
+  // Collects the page and removes the rmap entry in the corresponding page_info 
   void add(sref<class page_info> &&page, std::pair<vmap*, uptr> rmap)
   {
     if (cur->used == curmax) {
@@ -170,7 +171,6 @@ vmap::copy()
         it->flags |= vmdesc::FLAG_COW;
         // XXX(Austin) Should we try to invalidate in larger chunks?
         cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
-        // XXX (Rasha) Not sure if rmap needs to be modified here. Perhaps not
       }
 
       // Copy the descriptor
@@ -344,7 +344,6 @@ vmap::invalidate_cache(uptr start, uptr len)
       continue;
 
     cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
-    // XXX (Rasha) Should rmap be modified here?
   }
 
   shootdown.perform();
@@ -651,7 +650,6 @@ vmap::sbrk(ssize_t n, uptr *addr)
     sdebug.println("vm: curbrk ", shex(curbrk), " newstart ", shex(newstart),
                    " newend ", shex(newend));
 
-  // XXX (Rasha) Modify rmap here
   if (newend < newstart) {
     // Adjust break down by freeing pages
     auto begin = vpfs_.find(newend / PGSIZE),
