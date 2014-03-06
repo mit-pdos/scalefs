@@ -176,7 +176,7 @@ vmap::copy()
       // Copy the descriptor
       nm->vpfs_.fill(out, it->dup());
       if (myproc() != bootproc && out->page) {
-        std::pair<vmap*, uptr> rmap = std::make_pair(nm.get(), out.index()*PGSIZE);
+        std::pair<vmap*, uptr> rmap = std::make_pair(&*(nm.get()), out.index()*PGSIZE);
         out->page->add_pte(rmap);
       }
 

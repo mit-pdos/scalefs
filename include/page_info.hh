@@ -61,8 +61,8 @@ class page_info : public PAGE_REFCOUNT referenced, public alloc_debug_info
 protected:
   void onzero()
   {
-    kfree(va());
     rmap_pte->delete_rmap();
+    kfree(va());
   }
 
 public:
@@ -76,12 +76,18 @@ public:
       NEW_DELETE_OPS(rmap);
       // Oplog operation that implements adding a <vmap*,va> pair to the rmap
       struct add_op {
-        add_op(rmap *p, rmap_entry map): parent(p), mapping(map) { }
+        add_op(rmap *p, rmap_entry map): parent(p), mapping(map) {
+          assert(p);
+        }
         void operator()() {
           std::vector<rmap_entry>::iterator it;
           it = std::find(parent->rmap_vec.begin(), parent->rmap_vec.end(), mapping);
           if(it == parent->rmap_vec.end())
             parent->rmap_vec.push_back(std::move(mapping));
+        }
+        void print() {
+          cprintf("Rmap::add_op rmap:%016lX vmap:%016lX va:%016lX\n", 
+                      (u64)parent, (u64)mapping.first, mapping.second); 
         }
         private:
         rmap *parent;
@@ -90,7 +96,9 @@ public:
 
       // Oplog operation that implements removing a <vmap*,va> pair from the rmap
       struct rem_op {
-        rem_op(rmap *p, rmap_entry map): parent(p), mapping(map) { }
+        rem_op(rmap *p, rmap_entry map): parent(p), mapping(map) {
+          assert(p);
+        }
         void operator()() {
           if (parent->rmap_vec.size() == 0) return;
           std::vector<rmap_entry>::iterator it;
@@ -101,19 +109,21 @@ public:
             parent->rmap_vec.pop_back();
           }
         }
+        void print() {
+          cprintf("Rmap::rem_op rmap:%016lX vmap:%016lX va:%016lX\n", 
+                      (u64)parent, (u64)mapping.first, mapping.second);
+        }
         private:
         rmap *parent;
         rmap_entry mapping;
       };
 
       void add_mapping(rmap_entry map) {
-        add_op addop(this, map);
-        get_logger()->push<add_op>(std::move(addop));
+        get_logger()->push<add_op>(add_op(this, map));
       }
 
       void remove_mapping(rmap_entry map) {
-        rem_op remop(this, map);
-        get_logger()->push<rem_op>(std::move(remop));
+        get_logger()->push<rem_op>(rem_op(this, map));
       }
 
       void delete_rmap() {
