@@ -7,6 +7,7 @@
 #include "page_info.hh"
 #include "kalloc.hh"
 #include "fs.h"
+#include "scalefs.hh"
 
 #include <limits.h>
 
@@ -16,11 +17,10 @@ class mdev;
 class msock;
 class mlinkref;
 class mfs;
+class mfs_interface;
 
 extern mfs *root_fs;
-extern void initialize_file(sref<mnode> m);
-extern void initialize_dir(sref<mnode> m);
-extern int load_file_page(sref<mnode> m, char *p, size_t pos, size_t nbytes);
+extern mfs_interface *rootfs_interface;
 
 class mnode : public refcache::weak_referenced
 {
@@ -55,6 +55,8 @@ public:
   };
 
   void cache_pin(bool flag);
+  void dirty(bool flag);
+  bool is_dirty();
   u8 type() const { return inumber(inum_).type(); }
   void initialized(bool flag) { initialized_ = flag; }
 
@@ -315,7 +317,7 @@ mnode::as_dir()
   auto md = static_cast<mdir*>(this);
   if (!initialized_ && fs_ == root_fs) {
     initialized_ = true;
-    initialize_dir(root_fs->get(inum_));
+    rootfs_interface->initialize_dir(root_fs->get(inum_));
   }
   return md;
 }
@@ -342,6 +344,8 @@ public:
       FLAG_LOCK = 1 << FLAG_LOCK_BIT,
       FLAG_PARTIAL_PAGE_BIT = 1,
       FLAG_PARTIAL_PAGE = 1 << FLAG_PARTIAL_PAGE_BIT,
+      FLAG_DIRTY_PAGE_BIT = 2,
+      FLAG_DIRTY_PAGE = 1 << FLAG_DIRTY_PAGE_BIT,
     };
 
     /*
@@ -418,6 +422,17 @@ public:
       else
         locked_reset_bit(FLAG_PARTIAL_PAGE_BIT, &value_);
     }
+
+    bool is_dirty_page() {
+      return !!(value_ & FLAG_DIRTY_PAGE);
+    }
+
+    void set_dirty_bit(bool flag) {
+      if (flag)
+        locked_set_bit(FLAG_DIRTY_PAGE_BIT, &value_);
+      else
+        locked_reset_bit(FLAG_DIRTY_PAGE_BIT, &value_);
+    }
   };
 
 private:
@@ -448,6 +463,7 @@ public:
   };
 
   resizer write_size() {
+    dirty(true);
     return resizer(this);
   }
 
@@ -458,6 +474,8 @@ public:
   void ondisk_size(u64 size);
   page_state get_page(u64 pageidx);
   void clear_pages(u64 begin, u64 size);
+  void dirty_page(u64 pageidx);
+  void sync_file();
 };
 
 inline mfile*
@@ -467,7 +485,7 @@ mnode::as_file()
   auto mf = static_cast<mfile*>(this);
   if (!initialized_ && fs_ == root_fs) {
     initialized_ = true;
-    initialize_file(root_fs->get(inum_));
+    rootfs_interface->initialize_file(root_fs->get(inum_));
   }
   return mf;
 }

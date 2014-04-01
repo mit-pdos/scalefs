@@ -45,6 +45,7 @@ struct irq;
 class print_stream;
 class mnode;
 class buf;
+class transaction;
 
 // acpi.c
 typedef void *ACPI_HANDLE;
@@ -102,12 +103,12 @@ sref<inode>     ialloc(u32, short);
 sref<inode>     namei(sref<inode> cwd, const char*);
 sref<inode>     iget(u32 dev, u32 inum);
 void            ilock(sref<inode>, int writer);
-void            iupdate(sref<inode>);
+void            iupdate(sref<inode>, transaction *trans = NULL);
 void            iunlock(sref<inode>);
-void            itrunc(sref<inode>);
+void            itrunc(sref<inode>, transaction *trans = NULL);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);
-int             writei(sref<inode>, const char*, u32, u32);
+int             writei(sref<inode>, const char*, u32, u32, transaction *trans = NULL);
 sref<inode>     nameiparent(sref<inode> cwd, const char*, char*);
 int             dirlink(sref<inode>, const char*, u32);
 int             dirunlink(sref<inode>, const char*, u32);

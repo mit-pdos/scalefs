@@ -140,7 +140,7 @@ sys_close(int fd)
 int fssync_write(fs_sync_op *op) {
   sref<inode> i;
   u64 inum = 0;
-  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+  if (!rootfs_interface->inode_lookup(op->mnode, &inum)) {
     cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
     return -1;
   }
@@ -152,13 +152,13 @@ int fssync_write(fs_sync_op *op) {
 int fssync_create(fs_sync_op *op) {
   sref<inode> i, parenti;
   u64 inum = 0, parent = 0;
-  if (mnode_to_inode->lookup(op->mnode, &inum)) {
+  if (rootfs_interface->inode_lookup(op->mnode, &inum)) {
     cprintf("Mapping from mnode %ld to inode %ld already present\n", op->mnode, inum);
     return -1;
   }
   i = ialloc(1, op->create_type);
-  mnode_to_inode->insert(op->mnode, i->inum); //XXX check if you run out of slots
-  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+  rootfs_interface->create_mapping(op->mnode, i->inum);
+  if(!rootfs_interface->inode_lookup(op->parent, &parent)) {
     cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
     return -1;
   }
@@ -181,11 +181,11 @@ int fssync_create(fs_sync_op *op) {
 int fssync_link(fs_sync_op *op) {
   sref<inode> i, parenti;
   u64 inum = 0, parent = 0;
-  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+  if (!rootfs_interface->inode_lookup(op->mnode, &inum)) {
     cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
     return -1;
   }
-  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+  if(!rootfs_interface->inode_lookup(op->parent, &parent)) {
     cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
     return -1;
   }
@@ -202,11 +202,11 @@ int fssync_link(fs_sync_op *op) {
 int fssync_unlink(fs_sync_op *op) {
   sref<inode> i, parenti;
   u64 inum = 0, parent = 0;
-  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+  if (!rootfs_interface->inode_lookup(op->mnode, &inum)) {
     cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
     return -1;
   }
-  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+  if(!rootfs_interface->inode_lookup(op->parent, &parent)) {
     cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
     return -1;
   }
@@ -223,20 +223,19 @@ int fssync_unlink(fs_sync_op *op) {
 int fssync_replace(fs_sync_op *op) {
   sref<inode> i, parenti, new_i, new_parenti;
   u64 inum = 0, parent = 0, new_inum = 0, new_parent = 0;
-  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+  if (!rootfs_interface->inode_lookup(op->mnode, &inum)) {
     cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
     return -1;
   }
-  if(!mnode_to_inode->lookup(op->parent, &parent)) {
+  if(!rootfs_interface->inode_lookup(op->parent, &parent)) {
     cprintf("Parent (mnode %ld) does not exists on disk yet\n", op->parent);
     return -1;
   }
-  if (!mnode_to_inode->lookup(op->new_mnode, &new_inum)) {
+  if (!rootfs_interface->inode_lookup(op->new_mnode, &new_inum)) {
     new_i = ialloc(1, op->create_type);
-    mnode_to_inode->insert(op->new_mnode, new_i->inum);
-    //XXX check if you run out of slots
+    rootfs_interface->create_mapping(op->new_mnode, new_i->inum);
   }
-  if (!mnode_to_inode->lookup(op->new_parent, &new_parent)) {
+  if (!rootfs_interface->inode_lookup(op->new_parent, &new_parent)) {
     cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n",
         op->new_parent);
     return -1;
@@ -262,7 +261,7 @@ int fssync_replace(fs_sync_op *op) {
 int fssync_truncate(fs_sync_op *op) {
   sref<inode> i;
   u64 inum = 0;
-  if (!mnode_to_inode->lookup(op->mnode, &inum)) {
+  if (!rootfs_interface->inode_lookup(op->mnode, &inum)) {
     cprintf("Inode corresponding to mnode %ld does not exist on disk yet\n", op->mnode);
     return -1;
   }
@@ -301,7 +300,8 @@ fssync()
 int
 sys_sync(void)
 {
-  return fssync();
+  //return fssync();
+  return 0;
 }
 
 //SYSCALL
@@ -333,6 +333,22 @@ sys_free_mem_file(int fd)
   if (!m)
     return -1;
   m->as_file()->clear_pages(0, *m->as_file()->read_size());
+  return 0;
+}
+
+//SYSCALL
+int
+sys_fsync(int fd) 
+{
+  sref<file> f = getfile(fd);
+  if (!f)
+    return -1;
+  file *ff = f.get();
+  file_inode *fi = static_cast<file_inode*>(ff);
+  sref<mnode> m = fi->get_mnode();
+  if (!m)
+    return -1;
+  m->as_file()->sync_file();
   return 0;
 }
 

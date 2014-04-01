@@ -84,6 +84,20 @@ mnode::cache_pin(bool flag)
 }
 
 void
+mnode::dirty(bool flag)
+{
+  if (dirty_ == flag)
+    return;
+  cmpxch(&dirty_, !flag, flag);
+}
+
+bool
+mnode::is_dirty()
+{
+  return dirty_;
+}
+
+void
 mnode::onzero()
 {
   mnode_cache.cleanup(weakref_);
@@ -142,6 +156,7 @@ mfile::resizer::resize_append(u64 size, sref<page_info> pi)
   page_state ps(pi);
   if (PGOFFSET(size))
     ps.set_partial_page(true);
+  ps.set_dirty_bit(true);
   mf_->pages_.fill(it, ps);
   mf_->size_ = size;
 }
@@ -160,7 +175,7 @@ mfile::get_page(u64 pageidx)
     if (!initialized_ && fs_ == root_fs) {
       cprintf("Should not be happening. File not initialized from disk yet!\n");
       initialized_ = true;
-      initialize_file(root_fs->get(inum_));
+      rootfs_interface->initialize_file(root_fs->get(inum_));
       barrier();
     }
     if (pageidx < PGROUNDUP(size_) / PGSIZE && fs_ == root_fs) {
@@ -175,7 +190,7 @@ mfile::get_page(u64 pageidx)
         nbytes = PGSIZE;
 
       auto lock = pages_.acquire(it);
-      assert(nbytes == load_file_page(root_fs->get(inum_), p, pos, nbytes));
+      assert(nbytes == rootfs_interface->load_file_page(inum_, p, pos, nbytes));
       page_state ps(pi);
       if (PGOFFSET(nbytes))
         ps.set_partial_page(true);
@@ -198,6 +213,57 @@ mfile::clear_pages(u64 begin, u64 size)
   auto page_end = pages_.find(PGROUNDUP(begin+size) / PGSIZE);
   auto lock = pages_.acquire(page_begin, page_end);
   pages_.unset(page_begin, page_end);
+}
+
+void
+mfile::dirty_page(u64 pageidx)
+{
+  auto it = pages_.find(pageidx);
+  assert(it.is_set());
+  it->set_dirty_bit(true);
+}
+
+void
+mfile::sync_file()
+{
+  if (!is_dirty())
+    return;
+
+  bool sync_all_pages = false;
+  transaction *trans = new transaction();
+  rootfs_interface->create_file_if_new(inum_, type(), trans);
+ 
+  u64 ilen = rootfs_interface->get_file_size(inum_);
+  if (ilen > size_) {
+    // XXX support truncate to a non-zero size
+    rootfs_interface->truncate_file(inum_, trans);
+    sync_all_pages = true;
+  }
+
+  auto page_end = pages_.find(PGROUNDUP(size_) / PGSIZE);
+  for (auto it = pages_.begin(); it != page_end; ) {
+    // Skip unset spans
+    if (!it.is_set()) {
+      it += it.base_span();
+      continue;
+    }
+    if (!it->is_dirty_page() && !sync_all_pages)
+      continue;
+
+    size_t pos = it.index() * PGSIZE;
+    size_t nbytes = size_ - pos;
+    if (nbytes > PGSIZE)
+      nbytes = PGSIZE;
+    auto lock = pages_.acquire(it);
+    assert(nbytes == rootfs_interface->sync_file_page(inum_, 
+                    (char*)it->get_page_info()->va(), pos, nbytes, trans));
+    it->set_dirty_bit(false);
+    ++it;
+  }
+  
+  rootfs_interface->add_to_journal(trans);
+  rootfs_interface->flush_journal();
+  dirty(false);
 }
 
 void

@@ -8,6 +8,7 @@
 u64 root_inum;
 mfs* root_fs;
 mfs* anon_fs;
+mfs_interface* rootfs_interface;
 
 /* This hash stores mappings from mnode numbers to inode numbers on disk.
  * It is initialized during boot, and updated when operations from fs_log
@@ -227,12 +228,11 @@ writei(sref<mnode> m, const char* buf, u64 start, u64 nbytes,
       pi = sref<page_info>::transfer(new (page_info::of(p)) page_info());
       resize->resize_append(pos + pgend - pgoff, pi);
     }
+    m->as_file()->dirty_page(pgbase / PGSIZE);
 
     off += (pgend - pgoff);
   }
 
-  fs_sync_op *op = new fs_sync_op(1, m->inum_, buf, start, nbytes);
-  op->log_insert();
   return off ?: -1;
 }
 

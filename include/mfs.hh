@@ -2,7 +2,6 @@
 
 #include "mnode.hh"
 #include "spinlock.hh"
-#include "linearhash.hh"
 
 /* The log of file system operations. Currently this is global. Will support per-core later. */
 extern fs_sync_op *fs_log;
@@ -84,10 +83,10 @@ struct fs_sync_op {
       tmp->next = this;
     }
     fs_log_lock.release();
-    if (counter > 10) {
+    /*if (counter > 10) {
       fssync();
       counter = 0;
-    }
+    }*/
   }
 
 };
@@ -95,7 +94,6 @@ struct fs_sync_op {
 extern u64 root_inum;
 extern mfs* root_fs;
 extern mfs* anon_fs;
-extern linearhash<u64, u64> *mnode_to_inode;
 
 sref<mnode> namei(sref<mnode> cwd, const char* path);
 sref<mnode> nameiparent(sref<mnode> cwd, const char* path, strbuf<DIRSIZ>* buf);

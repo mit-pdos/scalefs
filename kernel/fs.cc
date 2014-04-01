@@ -34,13 +34,13 @@
 #include "condvar.hh"
 #include "proc.hh"
 #include "fs.h"
-#include "buf.hh"
 #include "file.hh"
 #include "cpu.hh"
 #include "kmtrace.hh"
 #include "dirns.hh"
 #include "kstream.hh"
 #include "lb.hh"
+#include "scalefs.hh"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static sref<inode> the_root;
@@ -58,7 +58,7 @@ readsb(int dev, struct superblock *sb)
 
 // Zero a block.
 static void
-bzero(int dev, int bno)
+bzero(int dev, int bno, transaction *trans = NULL)
 {
   sref<buf> bp = buf::get(dev, bno);
   auto locked = bp->write();
@@ -88,16 +88,18 @@ throw_out_of_blocks()
 
 // Allocate a disk block.
 static u32
-balloc(u32 dev)
+balloc(u32 dev, transaction *trans = NULL)
 {
   superblock sb;
   readsb(dev, &sb);
   bool found = false;
   sref<buf> bp;
   int b, bi;
+  u32 blocknum;
 
   for(b = 0; b < sb.size; b += BPB){
-    bp = buf::get(dev, BBLOCK(b, sb.ninodes));
+    blocknum = BBLOCK(b, sb.ninodes);
+    bp = buf::get(dev, blocknum);
     auto locked = bp->write();
 
     for(bi = 0; bi < BPB && bi < (sb.size - b); bi++){
@@ -105,6 +107,12 @@ balloc(u32 dev)
       if((locked->data[bi/8] & m) == 0){  // Is block free?
         locked->data[bi/8] |= m;  // Mark block in use on disk.
         found = true;
+        if (trans) {
+          char charbuf[512];
+          memmove(charbuf, locked->data, 512);
+          transaction_diskblock b(blocknum, charbuf);
+          trans->add_block(b);
+        }
         break;
       }
     }
@@ -112,12 +120,8 @@ balloc(u32 dev)
       break;
   }
   
-  if(found) {
-    bp = buf::get(dev, BBLOCK(b, sb.ninodes));
-    if(bp->dirty())
-      bp->writeback();
+  if(found)
     return b + bi;
-  }
 
   throw_out_of_blocks();
   // Unreachable
@@ -126,17 +130,19 @@ balloc(u32 dev)
 
 // Free a disk block.
 static void
-bfree(int dev, u64 x)
+bfree(int dev, u64 x, transaction *trans = NULL)
 {
   u32 b = x;
-  bzero(dev, b);
+  bzero(dev, b, trans);
 
   struct superblock sb;
   readsb(dev, &sb);
   sref<buf> bp;
+  u32 blocknum;
 
   {
-    bp = buf::get(dev, BBLOCK(b, sb.ninodes));
+    blocknum = BBLOCK(b, sb.ninodes);
+    bp = buf::get(dev, blocknum);
     auto locked = bp->write();
 
     int bi = b % BPB;
@@ -144,10 +150,13 @@ bfree(int dev, u64 x)
     if((locked->data[bi/8] & m) == 0)
       panic("freeing free block");
     locked->data[bi/8] &= ~m;  // Mark block free on disk.
+    if (trans) {
+      char charbuf[512];
+      memmove(charbuf, locked->data, 512);
+      transaction_diskblock b(blocknum, charbuf);
+      trans->add_block(b);
+    }
   }
-  bp = buf::get(dev, BBLOCK(b, sb.ninodes));
-  if(bp->dirty())
-    bp->writeback();
 }
 
 // Inodes.
@@ -411,7 +420,7 @@ ialloc(u32 dev, short type)
 
 // Copy inode, which has changed, from memory to disk.
 void
-iupdate(sref<inode> ip)
+iupdate(sref<inode> ip, transaction *trans)
 {
   // XXX call iupdate to flush in-memory inode state to
   // buffer cache.  use seq value to detect updates.
@@ -431,6 +440,12 @@ iupdate(sref<inode> ip)
     dip->size = ip->size;
     dip->gen = ip->gen;
     memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
+    if (trans) {
+      char charbuf[512];
+      memmove(charbuf, locked->data, 512);
+      transaction_diskblock b(IBLOCK(ip->inum), charbuf);
+      trans->add_block(b);
+    }
   }
 
   if (ip->addrs[NDIRECT] != 0) {
@@ -438,17 +453,14 @@ iupdate(sref<inode> ip)
     bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto locked = bp->write();
     memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
+    if (trans) {
+      char charbuf[512];
+      memmove(charbuf, locked->data, 512);
+      transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
+      trans->add_block(b);
+    }
   }
 
-  bp = buf::get(ip->dev, IBLOCK(ip->inum));
-  if(bp->dirty())
-    bp->writeback();
-  if (ip->addrs[NDIRECT] != 0) {
-    assert(ip->iaddrs.load() != nullptr);
-    bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
-    if(bp->dirty())
-      bp->writeback();
-  }
 }
 
 // Find the inode with number inum on device dev
@@ -681,7 +693,7 @@ iunlock(sref<inode> ip)
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
 static u32
-bmap(sref<inode> ip, u32 bn)
+bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
 {
   scoped_gc_epoch e;
 
@@ -691,9 +703,9 @@ bmap(sref<inode> ip, u32 bn)
   if(bn < NDIRECT){
   retry0:
     if((addr = ip->addrs[bn]) == 0) {
-      addr = balloc(ip->dev);
+      addr = balloc(ip->dev, trans);
       if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
-        bfree(ip->dev, addr);
+        bfree(ip->dev, addr, trans);
         goto retry0;
       }
     }
@@ -705,9 +717,9 @@ bmap(sref<inode> ip, u32 bn)
   retry1:
     if (ip->iaddrs == nullptr) {
       if((addr = ip->addrs[NDIRECT]) == 0) {
-        addr = balloc(ip->dev);
+        addr = balloc(ip->dev, trans);
         if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
-          bfree(ip->dev, addr);
+          bfree(ip->dev, addr, trans);
           goto retry1;
         }
       }
@@ -718,7 +730,7 @@ bmap(sref<inode> ip, u32 bn)
       memmove((void*)iaddrs, copy->data, IADDRSSZ);
 
       if (!cmpxch(&ip->iaddrs, (volatile u32*)nullptr, iaddrs)) {
-        bfree(ip->dev, addr);
+        bfree(ip->dev, addr, trans);
         kmfree((void*)iaddrs, IADDRSSZ);
         goto retry1;
       }
@@ -726,9 +738,9 @@ bmap(sref<inode> ip, u32 bn)
 
   retry2:
     if ((addr = ip->iaddrs[bn]) == 0) {
-      addr = balloc(ip->dev);
+      addr = balloc(ip->dev, trans);
       if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
-        bfree(ip->dev, addr);
+        bfree(ip->dev, addr, trans);
         goto retry2;
       }
     }
@@ -745,9 +757,9 @@ bmap(sref<inode> ip, u32 bn)
 
 retry3:
   if (ip->addrs[NDIRECT+1] == 0) {
-    addr = balloc(ip->dev);
+    addr = balloc(ip->dev, trans);
     if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
-      bfree(ip->dev, addr);
+      bfree(ip->dev, addr, trans);
       goto retry3;
     }
   }
@@ -761,7 +773,7 @@ retry3:
       auto locked = wb->write();
       ap = (u32*)locked->data;
       if (ap[bn / NINDIRECT] == 0)
-        ap[bn / NINDIRECT] = balloc(ip->dev);
+        ap[bn / NINDIRECT] = balloc(ip->dev, trans);
       continue;
     }
     addr = ap[bn / NINDIRECT];
@@ -777,7 +789,7 @@ retry3:
       auto locked = wb->write();
       ap = (u32*)locked->data;
       if (ap[bn % NINDIRECT] == 0)
-        ap[bn % NINDIRECT] = balloc(ip->dev);
+        ap[bn % NINDIRECT] = balloc(ip->dev, trans);
       continue;
     }
     addr = ap[bn % NINDIRECT];
@@ -796,9 +808,12 @@ class diskblock : public rcu_freed {
   u64 _block;
 
  public:
-  diskblock(int dev, u64 block)
+  diskblock(int dev, u64 block, transaction *trans = NULL)
     : rcu_freed("diskblock", this, sizeof(*this)),
-      _dev(dev), _block(block) {}
+      _dev(dev), _block(block) {
+        if (trans)
+          trans->add_block(transaction_diskblock(block));
+        }
   virtual void do_gc() override {
     scoped_gc_epoch e;
     bfree(_dev, _block);
@@ -809,7 +824,7 @@ class diskblock : public rcu_freed {
 };
 
 void
-itrunc(sref<inode> ip)
+itrunc(sref<inode> ip, transaction *trans)
 {
   scoped_gc_epoch e;
 
@@ -820,24 +835,24 @@ itrunc(sref<inode> ip)
 
   for(int i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
-      diskblock *db = new diskblock(ip->dev, ip->addrs[i]);
+      diskblock *db = new diskblock(ip->dev, ip->addrs[i], trans);
       gc_delayed(db);
       ip->addrs[i] = 0;
     }
   }
-  
+
   if(ip->addrs[NDIRECT]){
     sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto copy = bp->read();
     u32* a = (u32*)copy->data;
     for(int i = 0; i < NINDIRECT; i++){
       if(a[i]) {
-        diskblock *db = new diskblock(ip->dev, a[i]);
+        diskblock *db = new diskblock(ip->dev, a[i], trans);
         gc_delayed(db);
       }
     }
 
-    diskblock *db = new diskblock(ip->dev, ip->addrs[NDIRECT]);
+    diskblock *db = new diskblock(ip->dev, ip->addrs[NDIRECT], trans);
     gc_delayed(db);
     ip->addrs[NDIRECT] = 0;
   }
@@ -857,20 +872,21 @@ itrunc(sref<inode> ip)
         if(!a2[j])
           continue;
 
-        diskblock* db2 = new diskblock(ip->dev, a2[j]);
+        diskblock* db2 = new diskblock(ip->dev, a2[j], trans);
         gc_delayed(db2);
       }
 
-      diskblock* db1 = new diskblock(ip->dev, a1[i]);
+      diskblock* db1 = new diskblock(ip->dev, a1[i], trans);
       gc_delayed(db1);
     }
 
-    diskblock *db = new diskblock(ip->dev, ip->addrs[NDIRECT+1]);
+    diskblock *db = new diskblock(ip->dev, ip->addrs[NDIRECT+1], trans);
     gc_delayed(db);
     ip->addrs[NDIRECT+1] = 0;
   }
 
   ip->size = 0;
+  //XXX (rasha) Use the rmap to clear mappings for truncated pages
 }
 
 //PAGEBREAK!
@@ -909,12 +925,13 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
 // PAGEBREAK!
 // Write data to inode.
 int
-writei(sref<inode> ip, const char *src, u32 off, u32 n)
+writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
 {
   scoped_gc_epoch e;
 
   int tot, m;
   sref<buf> bp;
+  char charbuf[512];
 
   if(ip->type == T_DEV)
     return -1;
@@ -927,10 +944,11 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n)
   if(off + n > MAXFILE*BSIZE)
     n = MAXFILE*BSIZE - off;
 
-  u32 oldoff = off;
+  u32 blocknum;
   for(tot=0; tot<n; tot+=m, off+=m, src+=m){
     try {
-      bp = buf::get(ip->dev, bmap(ip, off/BSIZE));
+      blocknum = bmap(ip, off/BSIZE, trans);
+      bp = buf::get(ip->dev, blocknum);
     } catch (out_of_blocks& e) {
       console.println("writei: out of blocks");
       // If we haven't written anything, return an error
@@ -941,25 +959,22 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n)
     m = min(n - tot, BSIZE - off%BSIZE);
     auto locked = bp->write();
     memmove(locked->data + off%BSIZE, src, m);
+    if (trans) {
+      memmove(charbuf, src, m);
+      transaction_diskblock b(blocknum, charbuf);
+      trans->add_block(b);
+    }
   }
 
-  for(tot=0; tot<n; tot+=m, oldoff+=m) {
-    m = min(n - tot, BSIZE - oldoff%BSIZE);
-    bp = buf::get(ip->dev, bmap(ip, oldoff/BSIZE));
-    if(!bp->dirty())
-      continue;
-    /*cprintf("WRITEI: writing back to Dev %ld, Sector %ld\n",
-            (long int)ip->dev, (long int)bmap(ip, oldoff/BSIZE));*/
-    bp->writeback();
-  }
-
+  // XXX (rasha) should probably hold off metadata updates until all the pages
+  // have been written to
   if(tot > 0 && off > ip->size){
     auto w = ip->seq.write_begin();
     ip->size = off;
   }
 
   while(r.do_retry()) {
-    iupdate(ip);
+    iupdate(ip, trans);
   }
 
   return tot;
