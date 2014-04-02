@@ -2014,6 +2014,7 @@ fsynctest(void)
   fsync(fd);   //update on disk
   close(fd);
 
+/*
   fd = open("dummyfile2", O_RDWR|O_CREAT);
   for(i = 0; i < 1024; i++) {    //write two new pages
     if(write(fd, "bbbbbbb", 8) != 8)
@@ -2021,6 +2022,7 @@ fsynctest(void)
   }
   fsync(fd);   //update on disk
   close(fd);
+*/
 
   fprintf(stdout, "fsynctest ok\n");
 }

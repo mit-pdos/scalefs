@@ -8,16 +8,16 @@ class mnode;
 
 typedef struct transaction_diskblock {
   u32 blocknum;
-  char blockdata[512];
+  char blockdata[BSIZE];
 
-  transaction_diskblock(u32 n, char buf[512]) {
+  transaction_diskblock(u32 n, char buf[BSIZE]) {
     blocknum = n;
-    memmove(blockdata, buf, 512);
+    memmove(blockdata, buf, BSIZE);
   }
 
   transaction_diskblock(u32 n) {
     blocknum = n;
-    memset(blockdata, 0, 512);
+    memset(blockdata, 0, BSIZE);
   }
 }transaction_diskblock;
 
@@ -74,7 +74,7 @@ class mfs_interface {
     int sync_file_page(u64 mnode_inum, char *p, size_t pos, size_t nbytes,
                               transaction *tr);
     void create_file_if_new(u64 mnode_inum, u8 type, transaction *tr);
-    void truncate_file(u64 mnode_inum, transaction *tr);
+    void truncate_file(u64 mnode_inum, u32 offset, transaction *tr);
     void initialize_dir(sref<mnode> m);
     void create_mapping(u64 mnode, u64 inode);
     bool inode_lookup(u64 mnode, u64 *inum);

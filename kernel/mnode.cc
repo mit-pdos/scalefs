@@ -229,15 +229,13 @@ mfile::sync_file()
   if (!is_dirty())
     return;
 
-  bool sync_all_pages = false;
   transaction *trans = new transaction();
   rootfs_interface->create_file_if_new(inum_, type(), trans);
  
   u64 ilen = rootfs_interface->get_file_size(inum_);
   if (ilen > size_) {
-    // XXX support truncate to a non-zero size
-    rootfs_interface->truncate_file(inum_, trans);
-    sync_all_pages = true;
+    rootfs_interface->truncate_file(inum_, size_, trans);
+    // XXX Use the rmap to clear mappings for truncated pages
   }
 
   auto page_end = pages_.find(PGROUNDUP(size_) / PGSIZE);
@@ -247,7 +245,7 @@ mfile::sync_file()
       it += it.base_span();
       continue;
     }
-    if (!it->is_dirty_page() && !sync_all_pages)
+    if (!it->is_dirty_page())
       continue;
 
     size_t pos = it.index() * PGSIZE;

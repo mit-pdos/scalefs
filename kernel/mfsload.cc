@@ -58,6 +58,9 @@ int mfs_interface::sync_file_page(u64 mnode_inum, char *p, size_t pos, size_t nb
 }
 
 void mfs_interface::create_file_if_new(u64 mnode_inum, u8 type, transaction *tr) {
+  u64 inum = 0;
+  if (inode_lookup(mnode_inum, &inum))
+    return;
   sref<inode> i;
   i = ialloc(1, type);
   mnode_to_inode->insert(mnode_inum, i->inum);
@@ -67,10 +70,10 @@ void mfs_interface::create_file_if_new(u64 mnode_inum, u8 type, transaction *tr)
   //XXX record creation of new file under parent dir
 }
 
-void mfs_interface::truncate_file(u64 mnode_inum, transaction *tr) {
+void mfs_interface::truncate_file(u64 mnode_inum, u32 offset, transaction *tr) {
   sref<inode> i = get_inode(mnode_inum, "truncate_file");
   if(i)
-    itrunc(i, tr);
+    itrunc(i, offset, tr);
 }
 
 void mfs_interface::initialize_dir(sref<mnode> m) {

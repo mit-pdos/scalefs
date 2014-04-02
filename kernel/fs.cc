@@ -63,6 +63,9 @@ bzero(int dev, int bno, transaction *trans = NULL)
   sref<buf> bp = buf::get(dev, bno);
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
+  if (trans) {
+    trans->add_block(transaction_diskblock(bno));
+  }
 }
 
 //
@@ -108,8 +111,8 @@ balloc(u32 dev, transaction *trans = NULL)
         locked->data[bi/8] |= m;  // Mark block in use on disk.
         found = true;
         if (trans) {
-          char charbuf[512];
-          memmove(charbuf, locked->data, 512);
+          char charbuf[BSIZE];
+          memmove(charbuf, locked->data, BSIZE);
           transaction_diskblock b(blocknum, charbuf);
           trans->add_block(b);
         }
@@ -151,8 +154,8 @@ bfree(int dev, u64 x, transaction *trans = NULL)
       panic("freeing free block");
     locked->data[bi/8] &= ~m;  // Mark block free on disk.
     if (trans) {
-      char charbuf[512];
-      memmove(charbuf, locked->data, 512);
+      char charbuf[BSIZE];
+      memmove(charbuf, locked->data, BSIZE);
       transaction_diskblock b(blocknum, charbuf);
       trans->add_block(b);
     }
@@ -441,8 +444,8 @@ iupdate(sref<inode> ip, transaction *trans)
     dip->gen = ip->gen;
     memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
     if (trans) {
-      char charbuf[512];
-      memmove(charbuf, locked->data, 512);
+      char charbuf[BSIZE];
+      memmove(charbuf, locked->data, BSIZE);
       transaction_diskblock b(IBLOCK(ip->inum), charbuf);
       trans->add_block(b);
     }
@@ -454,8 +457,8 @@ iupdate(sref<inode> ip, transaction *trans)
     auto locked = bp->write();
     memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
     if (trans) {
-      char charbuf[512];
-      memmove(charbuf, locked->data, 512);
+      char charbuf[BSIZE];
+      memmove(charbuf, locked->data, BSIZE);
       transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
       trans->add_block(b);
     }
@@ -808,12 +811,9 @@ class diskblock : public rcu_freed {
   u64 _block;
 
  public:
-  diskblock(int dev, u64 block, transaction *trans = NULL)
+  diskblock(int dev, u64 block)
     : rcu_freed("diskblock", this, sizeof(*this)),
-      _dev(dev), _block(block) {
-        if (trans)
-          trans->add_block(transaction_diskblock(block));
-        }
+      _dev(dev), _block(block) {}
   virtual void do_gc() override {
     scoped_gc_epoch e;
     bfree(_dev, _block);
@@ -824,7 +824,7 @@ class diskblock : public rcu_freed {
 };
 
 void
-itrunc(sref<inode> ip, transaction *trans)
+itrunc(sref<inode> ip, u32 offset, transaction *trans)
 {
   scoped_gc_epoch e;
 
@@ -833,10 +833,9 @@ itrunc(sref<inode> ip, transaction *trans)
 
   auto w = ip->seq.write_begin();
 
-  for(int i = 0; i < NDIRECT; i++){
+  for(int i = offset/BSIZE; i < NDIRECT; i++){
     if(ip->addrs[i]){
-      diskblock *db = new diskblock(ip->dev, ip->addrs[i], trans);
-      gc_delayed(db);
+      bfree(ip->dev, ip->addrs[i], trans);
       ip->addrs[i] = 0;
     }
   }
@@ -845,48 +844,51 @@ itrunc(sref<inode> ip, transaction *trans)
     sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto copy = bp->read();
     u32* a = (u32*)copy->data;
-    for(int i = 0; i < NINDIRECT; i++){
-      if(a[i]) {
-        diskblock *db = new diskblock(ip->dev, a[i], trans);
-        gc_delayed(db);
-      }
+    int start = (offset >= NDIRECT*BSIZE) ?
+                (offset - NDIRECT*BSIZE)/BSIZE : 0;
+    for(int i = start; i < NINDIRECT; i++){
+      if(a[i])
+        bfree(ip->dev, a[i], trans);
     }
 
-    diskblock *db = new diskblock(ip->dev, ip->addrs[NDIRECT], trans);
-    gc_delayed(db);
-    ip->addrs[NDIRECT] = 0;
+    if (start == 0) {
+      bfree(ip->dev, ip->addrs[NDIRECT], trans);
+      ip->addrs[NDIRECT] = 0;
+    }
   }
 
   if(ip->addrs[NDIRECT+1]){
     sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
     auto copy1 = bp1->read();
     u32* a1 = (u32*)copy1->data;
-    for(int i = 0; i < NINDIRECT; i++){
+    int start = (offset >= (NDIRECT+NINDIRECT)*BSIZE)?
+                ((offset-(NDIRECT+NINDIRECT)*BSIZE)/BSIZE)/NINDIRECT: 0;
+    for(int i = start; i < NINDIRECT; i++){
       if(!a1[i])
         continue;
 
       sref<buf> bp2 = buf::get(ip->dev, a1[i]);
       auto copy2 = bp2->read();
       u32* a2 = (u32*)copy2->data;
-      for(int j = 0; j < NINDIRECT; j++){
+      int start2 = (i == start)? (offset-start*NINDIRECT*BSIZE)/BSIZE: 0;
+      for(int j = start2; j < NINDIRECT; j++){
         if(!a2[j])
           continue;
 
-        diskblock* db2 = new diskblock(ip->dev, a2[j], trans);
-        gc_delayed(db2);
+        bfree(ip->dev, a2[j], trans);
       }
 
-      diskblock* db1 = new diskblock(ip->dev, a1[i], trans);
-      gc_delayed(db1);
+      if (start2 == 0) 
+        bfree(ip->dev, a1[i], trans);
     }
 
-    diskblock *db = new diskblock(ip->dev, ip->addrs[NDIRECT+1], trans);
-    gc_delayed(db);
-    ip->addrs[NDIRECT+1] = 0;
+    if (start == 0) {
+      bfree(ip->dev, ip->addrs[NDIRECT+1], trans);
+      ip->addrs[NDIRECT+1] = 0;
+    }
   }
 
-  ip->size = 0;
-  //XXX (rasha) Use the rmap to clear mappings for truncated pages
+  ip->size = offset;
 }
 
 //PAGEBREAK!
@@ -931,7 +933,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
 
   int tot, m;
   sref<buf> bp;
-  char charbuf[512];
+  char charbuf[BSIZE];
 
   if(ip->type == T_DEV)
     return -1;
