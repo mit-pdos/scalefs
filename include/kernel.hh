@@ -10,6 +10,7 @@ extern "C" {
 #include <cassert>
 #include "ref.hh"
 #include "enumbitset.hh"
+#include <vector>
 
 #define KCSEG (2<<3)  /* kernel code segment */
 #define KDSEG (3<<3)  /* kernel data segment */
@@ -109,11 +110,15 @@ void            itrunc(sref<inode>, u32 offset = 0, transaction *trans = NULL);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);
 int             writei(sref<inode>, const char*, u32, u32, transaction *trans = NULL);
+void            update_size(sref<inode>, u32, transaction *trans = NULL);
+void            update_dir(sref<inode>, transaction *trans = NULL);
 sref<inode>     nameiparent(sref<inode> cwd, const char*, char*);
-int             dirlink(sref<inode>, const char*, u32);
-int             dirunlink(sref<inode>, const char*, u32);
+int             dirlink(sref<inode>, const char*, u32, bool inc_link);
+int             dirunlink(sref<inode>, const char*, u32, bool dec_link);
 void            dir_init(sref<inode> dp);
-void	        dir_flush(sref<inode> dp);
+void            dir_flush(sref<inode> dp, transaction *trans = NULL);
+void            dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, 
+                  transaction *trans = NULL);
 
 // futex.cc
 typedef u64* futexkey_t;

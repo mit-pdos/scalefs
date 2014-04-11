@@ -64,7 +64,7 @@ bzero(int dev, int bno, transaction *trans = NULL)
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans) {
-    trans->add_block(transaction_diskblock(bno));
+    trans->add_block(transaction_diskblock(bno, rdtsc()));
   }
 }
 
@@ -113,7 +113,7 @@ balloc(u32 dev, transaction *trans = NULL)
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          transaction_diskblock b(blocknum, charbuf);
+          transaction_diskblock b(blocknum, charbuf, rdtsc());
           trans->add_block(b);
         }
         break;
@@ -156,7 +156,7 @@ bfree(int dev, u64 x, transaction *trans = NULL)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(blocknum, charbuf);
+      transaction_diskblock b(blocknum, charbuf, rdtsc());
       trans->add_block(b);
     }
   }
@@ -446,7 +446,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(IBLOCK(ip->inum), charbuf);
+      transaction_diskblock b(IBLOCK(ip->inum), charbuf, rdtsc());
       trans->add_block(b);
     }
   }
@@ -459,7 +459,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
+      transaction_diskblock b(ip->addrs[NDIRECT], charbuf, rdtsc());
       trans->add_block(b);
     }
   }
@@ -938,8 +938,6 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
   if(ip->type == T_DEV)
     return -1;
 
-  auto r = ip->seq.read_begin();
-  
   //if(off > ip->size || off + n < off)
   if(off + n < off)
     return -1;
@@ -963,23 +961,28 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
     memmove(locked->data + off%BSIZE, src, m);
     if (trans) {
       memmove(charbuf, src, m);
-      transaction_diskblock b(blocknum, charbuf);
+      transaction_diskblock b(blocknum, charbuf, rdtsc());
       trans->add_block(b);
     }
   }
-
-  // XXX (rasha) should probably hold off metadata updates until all the pages
-  // have been written to
-  if(tot > 0 && off > ip->size){
-    auto w = ip->seq.write_begin();
-    ip->size = off;
-  }
-
-  while(r.do_retry()) {
-    iupdate(ip, trans);
-  }
+  // Don't update inode yet. Wait till all the pages have been written to and then
+  // call update_size to update the inode just once.
 
   return tot;
+}
+
+void
+update_size(sref<inode> ip, u32 size, transaction *trans) {
+  auto w = ip->seq.write_begin();
+  ip->size = size;
+  iupdate(ip, trans);
+}
+
+void
+update_dir(sref<inode> ip, transaction *trans) {
+  ilock(ip, 1);
+  dir_flush(ip, trans);
+  iunlock(ip);
 }
 
 //PAGEBREAK!
@@ -1041,7 +1044,7 @@ dir_init(sref<inode> dp)
 }
 
 void
-dir_flush(sref<inode> dp)
+dir_flush(sref<inode> dp, transaction *trans)
 {
   // assume already locked
   //cprintf("Calling dir_flush on dp with inum %d\n", dp->inum);
@@ -1049,11 +1052,11 @@ dir_flush(sref<inode> dp)
     return;
 
   u32 off = 0;
-  dp->dir.load()->enumerate([dp, &off](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
+  dp->dir.load()->enumerate([&dp, &off, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
       struct dirent de;
       strncpy(de.name, name.buf_, DIRSIZ);
       de.inum = inum;
-      if(writei(dp, (char*)&de, off, sizeof(de)) != sizeof(de))
+      if(writei(dp, (char*)&de, off, sizeof(de), trans) != sizeof(de))
         panic("dir_flush_cb");
       off += sizeof(de);
       return false;
@@ -1062,6 +1065,28 @@ dir_flush(sref<inode> dp)
     auto w = dp->seq.write_begin();
     dp->size = off;
   }
+  iupdate(dp, trans);
+}
+
+void
+dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, transaction *trans) {
+  dp->dir.load()->enumerate([&names_vec, &dp, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
+      bool exists = false;
+      for (auto it = names_vec.begin(); it != names_vec.end(); it++) {
+        if (strcmp(*it, name.buf_) == 0) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists) {
+        sref<inode> ip = iget(dp->dev, inum);
+        if (ip->type == T_DIR)
+          dirunlink(dp, name.buf_, inum, true); 
+        else if (ip->type == T_FILE)
+          dirunlink(dp, name.buf_, inum, false);
+      }
+      return false;
+    });
 }
 
 // Look for a directory entry in a directory.
@@ -1079,26 +1104,30 @@ dirlookup(sref<inode> dp, char *name)
 
 // Write a new directory entry (name, inum) into the directory dp.
 int
-dirlink(sref<inode> dp, const char *name, u32 inum)
+dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link)
 {
   dir_init(dp);
 
   //cprintf("dirlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
   if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name), inum))
     return -1;
+  if (inc_link)
+    dp->link();
 
   return 0;
 }
 
 // Remove a directory entry (name, inum) from the directory dp.
 int
-dirunlink(sref<inode> dp, const char *name, u32 inum)
+dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link)
 {
   dir_init(dp);
 
   //cprintf("dirunlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
   if (!dp->dir.load()->remove(strbuf<DIRSIZ>(name), &inum))
     return -1;
+  if (dec_link)
+    dp->unlink();
 
   return 0;
 }

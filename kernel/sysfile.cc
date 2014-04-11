@@ -163,7 +163,7 @@ int fssync_create(fs_sync_op *op) {
     return -1;
   }
   if(op->create_type == T_DIR) {
-    dirlink(i, "..", parent);
+    dirlink(i, "..", parent, false);
     iupdate(i);
     dir_flush(i);
   } else
@@ -171,7 +171,7 @@ int fssync_create(fs_sync_op *op) {
   iunlock(i);
   parenti = iget(1, parent);
   ilock(parenti, 1);
-  dirlink(parenti, op->name, i->inum);
+  dirlink(parenti, op->name, i->inum, false);
   iupdate(parenti);
   dir_flush(parenti);
   iunlock(parenti);
@@ -192,7 +192,7 @@ int fssync_link(fs_sync_op *op) {
   i = iget(1, inum);
   parenti = iget(1, parent);
   ilock(parenti, 1);
-  dirlink(parenti, op->name, i->inum);
+  dirlink(parenti, op->name, i->inum, false);
   iupdate(parenti);
   dir_flush(parenti);
   iunlock(parenti);
@@ -213,7 +213,7 @@ int fssync_unlink(fs_sync_op *op) {
   i = iget(1, inum);
   parenti = iget(1, parent);
   ilock(parenti, 1);
-  dirunlink(parenti, op->name, i->inum);
+  dirunlink(parenti, op->name, i->inum, false);
   iupdate(parenti);
   dir_flush(parenti);
   iunlock(parenti);
@@ -243,7 +243,7 @@ int fssync_replace(fs_sync_op *op) {
   i = iget(1, inum);
   parenti = iget(1, parent);
   ilock(parenti, 1);
-  dirunlink(parenti, op->name, i->inum);
+  dirunlink(parenti, op->name, i->inum, false);
   iupdate(parenti);
   dir_flush(parenti);
   iunlock(parenti);
@@ -251,7 +251,7 @@ int fssync_replace(fs_sync_op *op) {
   new_i = iget(1, new_inum);
   new_parenti = iget(1, new_parent);
   ilock(new_parenti, 1);
-  dirlink(new_parenti, op->newname, new_i->inum);
+  dirlink(new_parenti, op->newname, new_i->inum, false);
   iupdate(new_parenti);
   dir_flush(new_parenti);
   iunlock(new_parenti);
@@ -348,7 +348,10 @@ sys_fsync(int fd)
   sref<mnode> m = fi->get_mnode();
   if (!m)
     return -1;
-  m->as_file()->sync_file();
+  if (m->type() == mnode::types::file)
+    m->as_file()->sync_file();
+  else if (m->type() == mnode::types::dir)
+    m->as_dir()->sync_dir();
   return 0;
 }
 
@@ -658,9 +661,10 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     default:     cprintf("unhandled type %d\n", type);
     }
 
-    auto ilink = md->fs_->alloc(mtype);
+    auto ilink = md->fs_->alloc(mtype, md->inum_);
     mf = ilink.mn();
     mf->initialized(true);
+    strcpy(mf->name_, name.buf_);
 
     if (mtype == mnode::types::dir) {
       /*
@@ -677,14 +681,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       mlinkref parentlink(md);
       parentlink.acquire();
       assert(mf->as_dir()->insert("..", &parentlink));
-      if (md->as_dir()->insert(name, &ilink)) {
-        if (myproc() != bootproc && md->fs_ == root_fs) { // IDE disk
-          fs_sync_op *op = new fs_sync_op(2, mf->inum_, md->inum_, name.buf_, type);
-          op->log_insert();
-          //cprintf("Logged file create for mnode %ld\n", mf->inum_);
-        }
+      if (md->as_dir()->insert(name, &ilink))
         return mf;
-      }
 
       /*
        * Didn't work, clean up and retry.  The expectation is that the
@@ -697,15 +695,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     if (mtype == mnode::types::dev)
       mf->as_dev()->init(major, minor);
 
-    if (md->as_dir()->insert(name, &ilink)) {
-      if (md->fs_ == root_fs
-            && (mtype == mnode::types::dir || mtype == mnode::types::file)) {
-        fs_sync_op *op = new fs_sync_op(2, mf->inum_, md->inum_, name.buf_, type);
-        op->log_insert();
-        //cprintf("Logged file create for mnode %ld\n", mf->inum_);
-      }
+    if (md->as_dir()->insert(name, &ilink))
       return mf;
-    }
 
     /* Failed to insert, retry */
   }

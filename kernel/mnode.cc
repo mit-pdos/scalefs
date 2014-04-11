@@ -28,7 +28,7 @@ mfs::get(u64 inum)
 }
 
 mlinkref
-mfs::alloc(u8 type)
+mfs::alloc(u8 type, u64 parent)
 {
   scoped_cli cli;
   auto inum = mnode::inumber(type, myid(), (*next_inum_)++).v_;
@@ -36,11 +36,11 @@ mfs::alloc(u8 type)
   sref<mnode> m;
   switch (type) {
   case mnode::types::dir:
-    m = sref<mnode>::transfer(new mdir(this, inum));
+    m = sref<mnode>::transfer(new mdir(this, inum, parent));
     break;
 
   case mnode::types::file:
-    m = sref<mnode>::transfer(new mfile(this, inum));
+    m = sref<mnode>::transfer(new mfile(this, inum, parent));
     break;
 
   case mnode::types::dev:
@@ -229,8 +229,9 @@ mfile::sync_file()
   if (!is_dirty())
     return;
 
-  transaction *trans = new transaction();
-  rootfs_interface->create_file_if_new(inum_, type(), trans);
+  transaction *trans = new transaction(rdtsc());
+  rootfs_interface->create_file_if_new(inum_, parent_, type(), name_,
+        trans, true);
  
   u64 ilen = rootfs_interface->get_file_size(inum_);
   if (ilen > size_) {
@@ -258,7 +259,45 @@ mfile::sync_file()
     it->set_dirty_bit(false);
     ++it;
   }
+  rootfs_interface->update_file_size(inum_, size_, trans);
   
+  rootfs_interface->add_to_journal(trans);
+  rootfs_interface->flush_journal();
+  dirty(false);
+}
+
+void
+mdir::sync_dir()
+{
+  if (!is_dirty())
+    return;
+
+  transaction *trans = new transaction(rdtsc());
+  rootfs_interface->create_dir_if_new(inum_, parent_, type(), name_, trans);
+
+  strbuf<DIRSIZ> prev("."), next;
+  std::vector<char*> names_vec;
+  char str[DIRSIZ];
+  strcpy(str, ".");
+  names_vec.push_back(str);
+  while (enumerate(&prev, &next)) {
+    char str[DIRSIZ];
+    strcpy(str, next.buf_);
+    names_vec.push_back(str);
+    prev = next;
+  }
+  rootfs_interface->unlink_old_inodes(inum_, names_vec, trans);
+
+  prev = strbuf<DIRSIZ>(".");
+  sref<mnode> m;
+  while (enumerate(&prev, &next)) {
+    m = lookup(next);
+    rootfs_interface->allocate_inode_for_dirent(inum_, (char*)next.buf_,
+        m->inum_, m->type(), trans); 
+    prev = next;
+  }
+  rootfs_interface->update_dir_inode(inum_, trans);
+ 
   rootfs_interface->add_to_journal(trans);
   rootfs_interface->flush_journal();
   dirty(false);

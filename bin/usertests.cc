@@ -2014,7 +2014,6 @@ fsynctest(void)
   fsync(fd);   //update on disk
   close(fd);
 
-/*
   fd = open("dummyfile2", O_RDWR|O_CREAT);
   for(i = 0; i < 1024; i++) {    //write two new pages
     if(write(fd, "bbbbbbb", 8) != 8)
@@ -2022,7 +2021,12 @@ fsynctest(void)
   }
   fsync(fd);   //update on disk
   close(fd);
-*/
+
+  if(mkdir("dummydir", 0777) < 0)
+    die("mkdir failed");
+  fd = open(".", 0);
+  fsync(fd);
+  close(fd);
 
   fprintf(stdout, "fsynctest ok\n");
 }

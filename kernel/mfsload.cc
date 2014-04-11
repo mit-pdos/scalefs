@@ -32,48 +32,150 @@ void mfs_interface::initialize_file(sref<mnode> m) {
     m->as_file()->ondisk_size(i->size);
 }
 
-int mfs_interface::load_file_page(u64 mnode_inum, char *p, size_t pos, size_t nbytes) {
+int mfs_interface::load_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes) {
   scoped_gc_epoch e;
-  sref<inode> i = get_inode(mnode_inum, "load_file_page");
+  sref<inode> i = get_inode(mfile_inum, "load_file_page");
   if(i)
     return readi(i, p, pos, nbytes);
   return -1;
 }
 
-u64 mfs_interface::get_file_size(u64 mnode_inum) {
+u64 mfs_interface::get_file_size(u64 mfile_inum) {
   scoped_gc_epoch e;
-  sref<inode> i = get_inode(mnode_inum, "get_file_size");
+  sref<inode> i = get_inode(mfile_inum, "get_file_size");
   if(i)
     return i->size;
   return 0;
 }
 
-int mfs_interface::sync_file_page(u64 mnode_inum, char *p, size_t pos, size_t nbytes,
+void mfs_interface::update_file_size(u64 mfile_inum, u32 size, transaction *tr) {
+  scoped_gc_epoch e;
+  sref<inode> i = get_inode(mfile_inum, "get_file_size");
+  if(i)
+    update_size(i, size, tr); 
+}
+
+int mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes,
     transaction *tr) {
   scoped_gc_epoch e;
-  sref<inode> i = get_inode(mnode_inum, "sync_file_page");
+  sref<inode> i = get_inode(mfile_inum, "sync_file_page");
   if(i)
     return writei(i, p, pos, nbytes, tr);
   return -1;
 }
 
-void mfs_interface::create_file_if_new(u64 mnode_inum, u8 type, transaction *tr) {
-  u64 inum = 0;
-  if (inode_lookup(mnode_inum, &inum))
-    return;
+u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
+  char *name, transaction *tr, bool sync_parent) {
+  u64 inum = 0, parent_inum = 0, returnval = 0;
+  if (inode_lookup(mfile_inum, &inum))
+    return 0;
+  if (!inode_lookup(parent, &parent_inum))
+    panic("create_file_if_new: parent %ld does not exist\n", parent);
+    // XXX what if the parent needs to be synced too
+    
   sref<inode> i;
   i = ialloc(1, type);
-  mnode_to_inode->insert(mnode_inum, i->inum);
-  inum_to_mnode->insert(i->inum, root_fs->get(mnode_inum));
+  mnode_to_inode->insert(mfile_inum, i->inum);
+  inum_to_mnode->insert(i->inum, root_fs->get(mfile_inum));
+  returnval = i->inum;
   iupdate(i, tr);
+  tr->log_new_file(i->inum);
   iunlock(i);
-  //XXX record creation of new file under parent dir
+
+  if (sync_parent) {
+    sref<inode> parenti = iget(1, parent_inum);
+    if (!parenti)
+      panic("create_file_if_new: parent %ld does not exist on disk\n",
+      parent_inum);
+    ilock(parenti, 1);
+    dirlink(parenti, name, i->inum, false);
+    dir_flush(parenti, tr);
+    iunlock(parenti);
+  }
+
+  return returnval;
 }
 
-void mfs_interface::truncate_file(u64 mnode_inum, u32 offset, transaction *tr) {
-  sref<inode> i = get_inode(mnode_inum, "truncate_file");
+void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
+  scoped_gc_epoch e;
+  sref<inode> i = get_inode(mfile_inum, "truncate_file");
   if(i)
     itrunc(i, offset, tr);
+}
+
+u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
+  char *name, transaction *tr, bool sync_parent) {
+  u64 inum = 0, parent_inum = 0, returnval = 0;
+  if (inode_lookup(mdir_inum, &inum))
+    return 0;
+  if (!inode_lookup(parent, &parent_inum))
+    panic("create_dir_if_new: parent %ld does not exist\n", parent);
+  // XXX what if the parent needs to be synced too
+
+  sref<inode> i, parenti;
+  i = ialloc(1, type);
+  mnode_to_inode->insert(mdir_inum, i->inum);
+  inum_to_mnode->insert(i->inum, root_fs->get(mdir_inum));
+  returnval = i->inum;
+  dirlink(i, "..", parent_inum, true);
+  dir_flush(i, tr);
+  iunlock(i);
+
+  if (sync_parent) {
+    parenti = iget(1, parent_inum);
+    ilock(parenti, 1);
+    dirlink(parenti, name, i->inum, true);
+    dir_flush(parenti, tr);
+    iunlock(parenti);
+  }
+
+  return returnval;
+}
+
+void mfs_interface::allocate_inode_for_dirent(u64 mdir_inum, char *name, u64
+    dirent_inum, u8 type, transaction *tr) {
+  scoped_gc_epoch e;
+  sref<inode> i = get_inode(mdir_inum, "allocate_inode_for_dirent");
+  if(!i)
+    panic("allocate_inode_for_dirent: directory %ld does not exist\n", mdir_inum);
+
+  sref<inode> di = dirlookup(i, name);
+  if (di) 
+    return;   // directory entry exists. XXX Check if the inum has changed
+
+  u64 inum = 0;
+  inode_lookup(dirent_inum, &inum);
+  if (inum) { // inode exists. Just create a dir entry. No need to allocate
+    dirlink(i, name, inum, (type == mnode::types::dir)?true:false);
+  } else {  // allocate new inode
+    // XXX create_if_new also updates the new inode that was allocated. Is this
+    // the correct design decision here? Probably yes.
+    if (type == mnode::types::file) {
+      inum = create_file_if_new(dirent_inum, mdir_inum, type, name, tr);
+      dirlink(i, name, inum, false);
+    } else if (type == mnode::types::dir) {
+      inum = create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, false);
+      dirlink(i, name, inum, true);
+    }
+  } 
+}
+
+void mfs_interface::unlink_old_inodes(u64 mdir_inum, std::vector<char*> names_vec,
+    transaction *tr) {
+  scoped_gc_epoch e;
+  sref<inode> i = get_inode(mdir_inum, "unlink_old_inodes");
+  if(!i)
+    panic("unlink_old_inodes: directory %ld does not exist\n", mdir_inum);
+
+  dir_remove_entries(i, names_vec, tr);
+  update_dir(i, tr);
+}
+
+void mfs_interface::update_dir_inode(u64 mdir_inum, transaction *tr) {
+  scoped_gc_epoch e;
+  sref<inode> i = get_inode(mdir_inum, "update_dir_inode");
+  if(i)
+    update_dir(i, tr);
 }
 
 void mfs_interface::initialize_dir(sref<mnode> m) {
@@ -144,6 +246,7 @@ void mfs_interface::load_dir(sref<inode> i, sref<mnode> m) {
 }
 
 sref<mnode> mfs_interface::load_root() {
+  scoped_gc_epoch e;
   sref<mnode> m;
   if (inum_to_mnode->lookup(1, &m))
     return m;
@@ -159,5 +262,6 @@ void mfsload() {
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
   root_inum = rootfs_interface->load_root()->inum_;
+  // XXX Check for orphan inodes and free up disk space
   /* the root inode gets an extra reference because of its own ".." */
 }

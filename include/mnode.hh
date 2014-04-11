@@ -77,6 +77,7 @@ public:
 
   mfs* const fs_;
   const u64 inum_;
+  char name_[DIRSIZ];
   linkcount nlink_ __mpalign__;
   __padout__;
 
@@ -152,17 +153,18 @@ public:
   NEW_DELETE_OPS(mfs);
 
   sref<mnode> get(u64 n);
-  mlinkref alloc(u8 type);
+  mlinkref alloc(u8 type, u64 parent = 0);
 };
 
 
 class mdir : public mnode {
 private:
   // ~32K cache
-  mdir(mfs* fs, u64 inum) : mnode(fs, inum), map_(1367) {}
+  mdir(mfs* fs, u64 inum, u64 parent) : mnode(fs, inum), parent_(parent), map_(1367) {}
   NEW_DELETE_OPS(mdir);
   friend class mnode;
   friend class mfs;
+  u64 parent_;
 
   // XXX We should deal with varying directory sizes better.  One way
   // would be to make this a resizable hash table.  Linux uses a
@@ -212,7 +214,7 @@ public:
 
     u64 iprev = -1;
     for (;;) {
-      u64 inum;
+      u64 inum = 0;
       if (!map_.lookup(name, &inum))
         return sref<mnode>();
 
@@ -308,6 +310,9 @@ public:
   bool killed() const {
     return map_.killed();
   }
+
+  void sync_dir();
+
 };
 
 inline mdir*
@@ -332,10 +337,11 @@ mnode::as_dir() const
 
 class mfile : public mnode {
 private:
-  mfile(mfs* fs, u64 inum) : mnode(fs, inum), size_(0) {}
+  mfile(mfs* fs, u64 inum, u64 parent) : mnode(fs, inum), parent_(parent), size_(0) {}
   NEW_DELETE_OPS(mfile);
   friend class mnode;
   friend class mfs;
+  u64 parent_;
 
 public:
   class page_state {
