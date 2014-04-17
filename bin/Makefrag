@@ -63,6 +63,7 @@ UPROGS_BIN= \
 	mail-qman \
 	mail-deliver \
   sync \
+  fsync \
 
 ifeq ($(HAVE_LWIP),y)
 UPROGS_BIN += \

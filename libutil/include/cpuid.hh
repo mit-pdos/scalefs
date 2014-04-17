@@ -175,6 +175,7 @@ public:
 
     // 80000001.EDX
     bool page1GB : 1;
+    bool rdtscp : 1;            // Is rdtscp supported
   };
 
   static features_info &features()

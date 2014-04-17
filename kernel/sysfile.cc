@@ -300,7 +300,10 @@ fssync()
 int
 sys_sync(void)
 {
-  //return fssync();
+  // XXX This is not enough. The journal stores only metadata updates and data
+  // upates to files on which fsync was explicitly called. Need to keep
+  // track of dirty files and flush them out too.
+  rootfs_interface->flush_journal();
   return 0;
 }
 

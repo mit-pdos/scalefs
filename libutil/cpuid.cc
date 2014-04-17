@@ -38,4 +38,5 @@ cpuid::cpuid() : basic_{}, extended_{}
 
   l = get_leaf(leafid::extended_features);
   features_.page1GB = l.d & (1<<26);
+  features_.rdtscp = l.d & (1<<27);
 }

@@ -229,7 +229,7 @@ mfile::sync_file()
   if (!is_dirty())
     return;
 
-  transaction *trans = new transaction(rdtsc());
+  transaction *trans = new transaction();
   rootfs_interface->create_file_if_new(inum_, parent_, type(), name_,
         trans, true);
  
@@ -272,7 +272,7 @@ mdir::sync_dir()
   if (!is_dirty())
     return;
 
-  transaction *trans = new transaction(rdtsc());
+  transaction *trans = new transaction();
   rootfs_interface->create_dir_if_new(inum_, parent_, type(), name_, trans);
 
   strbuf<DIRSIZ> prev("."), next;
@@ -292,7 +292,7 @@ mdir::sync_dir()
   sref<mnode> m;
   while (enumerate(&prev, &next)) {
     m = lookup(next);
-    rootfs_interface->allocate_inode_for_dirent(inum_, (char*)next.buf_,
+    rootfs_interface->create_directory_entry(inum_, (char*)next.buf_,
         m->inum_, m->type(), trans); 
     prev = next;
   }

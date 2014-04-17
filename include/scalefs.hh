@@ -2,32 +2,39 @@
 
 #include "linearhash.hh"
 #include "buf.hh"
+#include "cpuid.hh"
 #include <vector>
 
 class mnode;
+
+static u64 get_timestamp() {
+  if (cpuid::features().rdtscp)
+    return rdtscp();
+  return rdtsc_serialized();
+}
 
 typedef struct transaction_diskblock {
   u32 blocknum;
   char blockdata[BSIZE];
   u64 timestamp;
 
-  transaction_diskblock(u32 n, char buf[BSIZE], u64 t) {
+  transaction_diskblock(u32 n, char buf[BSIZE]) {
     blocknum = n;
     memmove(blockdata, buf, BSIZE);
-    timestamp = t;
+    timestamp = get_timestamp();
   }
 
-  transaction_diskblock(u32 n, u64 t) {
+  transaction_diskblock(u32 n) {
     blocknum = n;
     memset(blockdata, 0, BSIZE);
-    timestamp = t;
+    timestamp = get_timestamp();
   }
 }transaction_diskblock;
 
 class transaction {
   public:
     NEW_DELETE_OPS(transaction);
-    transaction(u64 t) : timestamp_(t) {
+    transaction() : timestamp_(get_timestamp()) {
       blocks = std::vector<transaction_diskblock>();
     }
 
@@ -37,14 +44,17 @@ class transaction {
     }
 
     void commit_transaction() {
+      // XXX Write the transaction out to disk before carrying out the
+      // corresponding filesystem operations (Two-phase commit)
+
       // All relevant blocks must have been added to the transaction at
       // this point. A try acquire must succeed.
       auto l = write_lock.try_guard();
       assert(static_cast<bool>(l));
 
       sref<buf> bp;
-      for (int i = 0; i < blocks.size(); i++) {
-        bp = buf::get(1, blocks.at(i).blocknum);
+      for (auto it = blocks.begin(); it != blocks.end(); it++) {
+        bp = buf::get(1, it->blocknum);
         if (bp->dirty())
           bp->writeback();
       }
@@ -75,9 +85,9 @@ class journal {
     }
 
     void flush_to_disk() {
-      for (int i = 0; i < transaction_log.size(); i++) {
-        transaction_log.at(i)->commit_transaction();
-        delete transaction_log.at(i);
+      for (auto it = transaction_log.begin(); it != transaction_log.end(); it++) {
+        (*it)->commit_transaction();
+        delete (*it);
       }
       transaction_log.clear();
     }
@@ -102,7 +112,7 @@ class mfs_interface {
     void initialize_dir(sref<mnode> m);
     u64 create_dir_if_new(u64 mdir_inum, u64 parent, u8 type, char *name, 
           transaction *tr, bool sync_parent = true);
-    void allocate_inode_for_dirent(u64 mdir_inum, char *name, u64 dirent_inum,
+    void create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum,
           u8 type, transaction *tr);
     void update_dir_inode(u64 mdir_inum, transaction *tr);
     void unlink_old_inodes(u64 mdir_inum, std::vector<char*> names_vec, 

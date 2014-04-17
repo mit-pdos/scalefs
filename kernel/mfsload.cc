@@ -132,7 +132,7 @@ u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
   return returnval;
 }
 
-void mfs_interface::allocate_inode_for_dirent(u64 mdir_inum, char *name, u64
+void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
     dirent_inum, u8 type, transaction *tr) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mdir_inum, "allocate_inode_for_dirent");

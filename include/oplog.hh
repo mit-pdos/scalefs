@@ -6,6 +6,7 @@
 #include "cpu.hh"
 #include "spinlock.hh"
 #include "percpu.hh"
+#include "cpuid.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -256,12 +257,9 @@ namespace oplog {
 
     static uint64_t rdtscp() 
     {
-      uint64_t a, d;
-      // XXX Hack for rdtscp which doesn't seem to work right now.
-      //__asm __volatile("rdtscp" : "=a" (a), "=d" (d), "=c" (c));
-      __asm __volatile("cpuid" : :);
-      __asm __volatile("rdtsc" : "=a" (a), "=d" (d));
-      return a | (d << 32);
+      if (cpuid::features().rdtscp)
+        return rdtscp();
+      return rdtsc_serialized();
     }
 
     void reset()

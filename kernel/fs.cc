@@ -64,7 +64,7 @@ bzero(int dev, int bno, transaction *trans = NULL)
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans) {
-    trans->add_block(transaction_diskblock(bno, rdtsc()));
+    trans->add_block(transaction_diskblock(bno));
   }
 }
 
@@ -113,7 +113,7 @@ balloc(u32 dev, transaction *trans = NULL)
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          transaction_diskblock b(blocknum, charbuf, rdtsc());
+          transaction_diskblock b(blocknum, charbuf);
           trans->add_block(b);
         }
         break;
@@ -156,7 +156,7 @@ bfree(int dev, u64 x, transaction *trans = NULL)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(blocknum, charbuf, rdtsc());
+      transaction_diskblock b(blocknum, charbuf);
       trans->add_block(b);
     }
   }
@@ -446,7 +446,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(IBLOCK(ip->inum), charbuf, rdtsc());
+      transaction_diskblock b(IBLOCK(ip->inum), charbuf);
       trans->add_block(b);
     }
   }
@@ -459,7 +459,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(ip->addrs[NDIRECT], charbuf, rdtsc());
+      transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
       trans->add_block(b);
     }
   }
@@ -961,7 +961,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
     memmove(locked->data + off%BSIZE, src, m);
     if (trans) {
       memmove(charbuf, src, m);
-      transaction_diskblock b(blocknum, charbuf, rdtsc());
+      transaction_diskblock b(blocknum, charbuf);
       trans->add_block(b);
     }
   }
@@ -1070,6 +1070,7 @@ dir_flush(sref<inode> dp, transaction *trans)
 
 void
 dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, transaction *trans) {
+  dir_init(dp);
   dp->dir.load()->enumerate([&names_vec, &dp, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
       bool exists = false;
       for (auto it = names_vec.begin(); it != names_vec.end(); it++) {

@@ -221,6 +221,27 @@ rdtsc(void)
 }
 
 static inline uint64_t
+rdtscp(void)
+{
+  uint64_t a, d, c;
+  __asm volatile("rdtscp" : "=a" (a), "=d" (d), "=c" (c));
+  return a | (d << 32);
+}
+
+// Alternative to rdtscp on processors that don't support it
+static inline uint64_t
+rdtsc_serialized(void)
+{
+  uint32_t hi, lo;
+  uint32_t eax, ebx, ecx, edx;
+  __asm volatile("cpuid"
+      : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
+      : "a" (0));
+  __asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+  return ((uint64_t)lo)|(((uint64_t)hi)<<32);
+}
+
+static inline uint64_t
 rdpmc(uint32_t ecx)
 {
   uint32_t hi, lo;
