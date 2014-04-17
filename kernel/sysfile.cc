@@ -491,10 +491,10 @@ sys_link(userptr_str old_path, userptr_str new_path)
   if (!md->as_dir()->insert(name, &mflink))
     return -1;
   else {
-    if (md->fs_ == root_fs) { // IDE disk
-      fs_sync_op *op = new fs_sync_op(3, mflink.mn()->inum_, md->inum_, name.buf_);
-      op->log_insert();
-      //cprintf("Logged link for mnode %ld\n", op->mnode);
+    if (md->fs_ == root_fs) {
+      mfs_operation *op = new mfs_operation(mfs_operation::op_link, 
+            mflink.mn()->inum_, md->inum_, name.buf_, mflink.mn()->type());
+      rootfs_interface->add_to_metadata_log(op);
     }
   }
 
@@ -552,22 +552,22 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
     if (mfroadblock == mfold) {
       if (mdold->as_dir()->remove(oldname, mfold)) {
-        if (mdold->fs_ == root_fs) { // IDE disk
-          fs_sync_op *op = new fs_sync_op(4, mfold->inum_, mdold->inum_, oldname.buf_);
-          op->log_insert();
-          //cprintf("Logged unlink for mnode %ld\n", op->mnode);
+        if (mdold->fs_ == root_fs) {
+          mfs_operation *op = new mfs_operation(mfs_operation::op_unlink, 
+                                mfold->inum_, mdold->inum_, oldname.buf_);
+          rootfs_interface->add_to_metadata_log(op);
         }
         return 0;
       }
     } else {
       if (mdnew->as_dir()->replace_from(newname, mfroadblock,
             mdold->as_dir(), oldname, mfold)) {
-        if (mdnew->fs_ == root_fs) { // IDE disk
+        if (mdnew->fs_ == root_fs) {
           mfroadblock = mdnew->as_dir()->lookup(newname);
-          fs_sync_op *op = new fs_sync_op(5, oldname.buf_, mfold->inum_, mdold->inum_,
-                      newname.buf_, mfroadblock->inum_, mdnew->inum_, mfroadblock->type());
-          op->log_insert();
-          //cprintf("Logged replace for mnode %ld\n", op->mnode);
+          mfs_operation *op = new mfs_operation(mfs_operation::op_rename, 
+                      oldname.buf_, mfold->inum_, mdold->inum_, newname.buf_, 
+                      mfroadblock->inum_, mdnew->inum_, mfroadblock->type());
+          rootfs_interface->add_to_metadata_log(op);
         }
         return 0;
       }
@@ -615,10 +615,10 @@ sys_unlink(userptr_str path)
      * a directory is to kill it, as we did above.
      */
     assert(md->as_dir()->remove(name, mf));
-    if (md->fs_ == root_fs) { // IDE disk
-      fs_sync_op *op = new fs_sync_op(4, mf->inum_, md->inum_, name.buf_);
-      op->log_insert();
-      //cprintf("Logged unlink for mnode %ld\n", op->mnode);
+    if (md->fs_ == root_fs) {
+      mfs_operation *op = new mfs_operation(mfs_operation::op_unlink, 
+                                  mf->inum_, md->inum_, name.buf_);
+      rootfs_interface->add_to_metadata_log(op);
     }
     return 0;
   }
@@ -626,10 +626,10 @@ sys_unlink(userptr_str path)
   if (!md->as_dir()->remove(name, mf))
     return -1;
   else {
-    if (md->fs_ == root_fs) { // IDE disk
-      fs_sync_op *op = new fs_sync_op(4, mf->inum_, md->inum_, name.buf_);
-      op->log_insert();
-      //cprintf("Logged unlink for mnode %ld\n", op->mnode);
+    if (md->fs_ == root_fs) {
+      mfs_operation *op = new mfs_operation(mfs_operation::op_unlink, 
+                                  mf->inum_, md->inum_, name.buf_);
+      rootfs_interface->add_to_metadata_log(op);
     }
   }
 
@@ -667,7 +667,6 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     auto ilink = md->fs_->alloc(mtype, md->inum_);
     mf = ilink.mn();
     mf->initialized(true);
-    strcpy(mf->name_, name.buf_);
 
     if (mtype == mnode::types::dir) {
       /*
@@ -684,8 +683,14 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       mlinkref parentlink(md);
       parentlink.acquire();
       assert(mf->as_dir()->insert("..", &parentlink));
-      if (md->as_dir()->insert(name, &ilink))
+      if (md->as_dir()->insert(name, &ilink)) {
+        if (myproc() != bootproc && md->fs_ == root_fs) {
+          mfs_operation *op = new mfs_operation(mfs_operation::op_create,
+                                    mf->inum_, md->inum_, name.buf_, type);
+          rootfs_interface->add_to_metadata_log(op);
+        }
         return mf;
+      }
 
       /*
        * Didn't work, clean up and retry.  The expectation is that the
@@ -698,8 +703,14 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     if (mtype == mnode::types::dev)
       mf->as_dev()->init(major, minor);
 
-    if (md->as_dir()->insert(name, &ilink))
+    if (md->as_dir()->insert(name, &ilink)) {
+      if (myproc() != bootproc && md->fs_ == root_fs) {
+        mfs_operation *op = new mfs_operation(mfs_operation::op_create,
+                                  mf->inum_, md->inum_, name.buf_, type);
+        rootfs_interface->add_to_metadata_log(op);
+      }
       return mf;
+    }
 
     /* Failed to insert, retry */
   }
@@ -743,10 +754,9 @@ sys_openat(int dirfd, userptr_str path, int omode, ...)
   if (m->type() == mnode::types::file && (omode & O_TRUNC))
     if (*m->as_file()->read_size()) {
       m->as_file()->write_size().resize_nogrow(0);
-      if (m->fs_ == root_fs) { // IDE disk
-        fs_sync_op *op = new fs_sync_op(6, m->inum_);
-        op->log_insert();
-        //cprintf("Logged truncate for mnode %ld\n", m->inum_);
+      if (m->fs_ == root_fs) {
+        mfs_operation *op = new mfs_operation(mfs_operation::op_truncate, m->inum_);
+        rootfs_interface->add_to_metadata_log(op);
       }
     }
 

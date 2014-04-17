@@ -1079,7 +1079,7 @@ dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, transaction *tr
           break;
         }
       }
-      if (!exists) {
+      if (exists) {
         sref<inode> ip = iget(dp->dev, inum);
         if (ip->type == T_DIR)
           dirunlink(dp, name.buf_, inum, true); 

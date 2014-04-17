@@ -77,7 +77,6 @@ public:
 
   mfs* const fs_;
   const u64 inum_;
-  char name_[DIRSIZ];
   linkcount nlink_ __mpalign__;
   __padout__;
 
@@ -160,7 +159,8 @@ public:
 class mdir : public mnode {
 private:
   // ~32K cache
-  mdir(mfs* fs, u64 inum, u64 parent) : mnode(fs, inum), parent_(parent), map_(1367) {}
+  mdir(mfs* fs, u64 inum, u64 parent) : mnode(fs, inum), parent_(parent),
+      map_(1367), syncing_(false) {}
   NEW_DELETE_OPS(mdir);
   friend class mnode;
   friend class mfs;
@@ -172,32 +172,53 @@ private:
   // serializing a directory much harder for us.
   chainhash<strbuf<DIRSIZ>, u64> map_;
 
+  // Seq lock to guard updates to the directory when it is being synced.
+  seqcount<u32> syncing_seq_;
+  bool syncing_;
+
 public:
   bool insert(const strbuf<DIRSIZ>& name, mlinkref* ilink) {
+    // Fail if the directory is being synced.
+    if (*seq_reader<bool>(&syncing_, &syncing_seq_))
+      return false;
     if (name == ".")
       return false;
     if (!map_.insert(name, ilink->mn()->inum_))
       return false;
     assert(ilink->held());
     ilink->mn()->nlink_.inc();
+    dirty(true);
     return true;
   }
 
   bool remove(const strbuf<DIRSIZ>& name, sref<mnode> m) {
+    // Fail if the directory is being synced.
+    if (*seq_reader<bool>(&syncing_, &syncing_seq_))
+      return false;
     if (!map_.remove(name, m->inum_))
       return false;
     m->nlink_.dec();
+    dirty(true);
     return true;
   }
 
   bool replace_from(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
                     mdir* src, const strbuf<DIRSIZ>& srcname, sref<mnode> msrc) {
+    // Fail if the directory is being synced.
+    if (*seq_reader<bool>(&syncing_, &syncing_seq_))
+      return false;
     u64 dstinum = mdst ? mdst->inum_ : 0;
     if (!map_.replace_from(dstname, mdst ? &dstinum : nullptr,
                            &src->map_, srcname, msrc->inum_))
       return false;
     if (mdst)
       mdst->nlink_.dec();
+
+    if (msrc)
+      msrc->dirty(true);
+    if (mdst)
+      mdst->dirty(true);
+
     return true;
   }
 
@@ -300,6 +321,9 @@ public:
   }
 
   bool kill(sref<mnode> parent) {
+    // Fail if the directory is being synced.
+    if (*seq_reader<bool>(&syncing_, &syncing_seq_))
+      return false;
     if (!map_.remove_and_kill("..", parent->inum_))
       return false;
 

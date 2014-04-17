@@ -120,9 +120,8 @@ namespace oplog {
         }
         // Put this object in this way's tag
         my_way->obj_.store(this, std::memory_order_relaxed);
-        cpus_.atomic_set(id);
       }
-
+      cpus_.atomic_set(id);
       return locked_logger(std::move(guard), &my_way->logger_);
     }
 
@@ -295,6 +294,11 @@ namespace oplog {
     void sort_ops() {
       std::sort(ops_.begin(), ops_.end(), compare_tsc);
     }
+    
+    void print_ops() {
+      for (auto it = ops_.begin(); it != ops_.end(); it++)
+        (*it)->print();
+    }
 
     size_t ops_size() { return ops_.size(); }
     op* op_at_index(int i) { return ops_.at(i); }
@@ -316,6 +320,11 @@ namespace oplog {
     {
       pending_.emplace_back(std::move(*l));
       l->reset();
+    }
+
+    void print_pending_loggers() {
+      for (auto it = pending_.begin(); it != pending_.end(); it++)
+        it->print_ops();
     }
 
     void min_heapify(int i) {

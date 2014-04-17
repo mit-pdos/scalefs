@@ -229,17 +229,23 @@ mfile::sync_file()
   if (!is_dirty())
     return;
 
+  // Apply pending metadata operations to the disk filesystem first.
+  // This takes care of any dependencies.
+  rootfs_interface->process_metadata_log();
+
   transaction *trans = new transaction();
-  rootfs_interface->create_file_if_new(inum_, parent_, type(), name_,
-        trans, true);
  
   u64 ilen = rootfs_interface->get_file_size(inum_);
-  if (ilen > size_) {
-    rootfs_interface->truncate_file(inum_, size_, trans);
+  auto size = read_size();
+  // If the in-memory file is shorter, truncate the file on the disk.
+  if (ilen > *size) {
+    rootfs_interface->truncate_file(inum_, *size, trans);
     // XXX Use the rmap to clear mappings for truncated pages
   }
 
-  auto page_end = pages_.find(PGROUNDUP(size_) / PGSIZE);
+  // Flush all in-memory file pages to disk.
+  auto page_end = pages_.find(PGROUNDUP(*size) / PGSIZE);
+  auto lock = pages_.acquire(pages_.begin(), page_end);
   for (auto it = pages_.begin(); it != page_end; ) {
     // Skip unset spans
     if (!it.is_set()) {
@@ -250,17 +256,17 @@ mfile::sync_file()
       continue;
 
     size_t pos = it.index() * PGSIZE;
-    size_t nbytes = size_ - pos;
+    size_t nbytes = *size - pos;
     if (nbytes > PGSIZE)
       nbytes = PGSIZE;
-    auto lock = pages_.acquire(it);
     assert(nbytes == rootfs_interface->sync_file_page(inum_, 
                     (char*)it->get_page_info()->va(), pos, nbytes, trans));
     it->set_dirty_bit(false);
     ++it;
   }
-  rootfs_interface->update_file_size(inum_, size_, trans);
+  rootfs_interface->update_file_size(inum_, *size, trans);
   
+  // Add the fsync transaction to the journal and flush the journal to disk.
   rootfs_interface->add_to_journal(trans);
   rootfs_interface->flush_journal();
   dirty(false);
@@ -271,10 +277,18 @@ mdir::sync_dir()
 {
   if (!is_dirty())
     return;
-
+  
+  // Apply pending metadata operations to the disk filesystem first.
+  // This takes care of any dependencies.
+  rootfs_interface->process_metadata_log();
+  
+  // Acquire seq lock (to protect atomic renames)
+  auto seqw = seq_writer(&syncing_seq_);
+  syncing_ = true;
   transaction *trans = new transaction();
-  rootfs_interface->create_dir_if_new(inum_, parent_, type(), name_, trans);
 
+  // Enumerate existing directory entries in names_vec, which is then used to
+  // compare and unlink any old on-disk directory entries.
   strbuf<DIRSIZ> prev("."), next;
   std::vector<char*> names_vec;
   char str[DIRSIZ];
@@ -292,15 +306,18 @@ mdir::sync_dir()
   sref<mnode> m;
   while (enumerate(&prev, &next)) {
     m = lookup(next);
+    // Create a new directory entry on disk if needed.
     rootfs_interface->create_directory_entry(inum_, (char*)next.buf_,
         m->inum_, m->type(), trans); 
     prev = next;
   }
   rootfs_interface->update_dir_inode(inum_, trans);
  
+  // Add the fsync transaction to the journal and flush the journal to disk.
   rootfs_interface->add_to_journal(trans);
   rootfs_interface->flush_journal();
   dirty(false);
+  syncing_ = false;
 }
 
 void
