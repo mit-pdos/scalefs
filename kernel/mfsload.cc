@@ -83,7 +83,6 @@ u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
   inum_to_mnode->insert(i->inum, root_fs->get(mfile_inum));
   returnval = i->inum;
   iupdate(i, tr);
-  tr->log_new_file(i->inum);
   iunlock(i);
 
   // Sync the parent too if specified. We sync the parents of all newly-created
@@ -159,7 +158,7 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
     dirlink(i, name, inum, (type == mnode::types::dir)?true:false);
   } else {  // allocate new inode
     if (type == mnode::types::file) {
-      inum = create_file_if_new(dirent_inum, mdir_inum, type, name, tr);
+      inum = create_file_if_new(dirent_inum, mdir_inum, type, name, tr, false);
       dirlink(i, name, inum, false);
     } else if (type == mnode::types::dir) {
       inum = create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, false);
@@ -347,6 +346,6 @@ void mfsload() {
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
   root_inum = rootfs_interface->load_root()->inum_;
-  // XXX Check for orphan inodes and free up disk space
+  // XXX Check the physical journal and reapply transactions if needed
   /* the root inode gets an extra reference because of its own ".." */
 }

@@ -88,12 +88,6 @@ class transaction {
       return (b1.timestamp < b2.timestamp);
     }
 
-    // Add the inode of a newly created file to the new_files list.
-    void log_new_file(u64 inum) {
-      auto l = write_lock.guard();
-      new_files.push_back(inum);
-    }
-
     // Transactions need to be applied in timestamp order too. They might not
     // have been logged in the journal in timestamp order.
     const u64 timestamp_;
@@ -101,11 +95,6 @@ class transaction {
   private:
     // List of updated diskblocks
     std::vector<transaction_diskblock> blocks;
-
-    // This vector tracks new files that were created as part of the transaction.
-    // Helpful for freeing up orphan files in the event of a system crash before
-    // an fsync on the parent directory.
-    std::vector<u64> new_files;
 
     // Guards updates to the transaction_diskblock vector.
     spinlock write_lock;
@@ -268,7 +257,7 @@ class mfs_interface {
     int sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes,
                               transaction *tr);
     u64 create_file_if_new(u64 mfile_inum, u64 parent, u8 type, char *name,
-          transaction *tr, bool sync_parent = false);
+          transaction *tr, bool sync_parent = true);
     void truncate_file(u64 mfile_inum, u32 offset, transaction *tr);
 
     // Directory functions
