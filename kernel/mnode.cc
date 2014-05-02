@@ -4,6 +4,7 @@
 #include "weakcache.hh"
 #include "atomic_util.hh"
 #include "percpu.hh"
+#include "vm.hh"
 
 namespace {
   // 32MB icache (XXX make this proportional to physical RAM)
@@ -223,6 +224,31 @@ mfile::dirty_page(u64 pageidx)
   it->set_dirty_bit(true);
 }
 
+// This function gets called when a file is truncated. Page table mappings for
+// any pages that are no longer a part of the file need to be cleared from vmaps
+// that have the file mmapped. Each page_info object keeps track of these vmaps
+// via an oplog-maintained reverse map. This rmap is now traversed to unmap the
+// truncated pages from the vmaps in question.
+void
+mfile::remove_pgtable_mappings(u64 start_offset) {
+  auto page_trunc_start = pages_.find(PGROUNDUP(start_offset) / PGSIZE);
+  for (auto it = page_trunc_start; it != pages_.end(); ) {
+    // Skip unset spans
+    if (!it.is_set()) {
+      it += it.base_span();
+      continue;
+    }
+    auto pg_info = it->get_page_info();
+    if (pg_info) {
+      std::vector<page_info::rmap_entry> rmap_vec;
+      pg_info->get_rmap_vector(rmap_vec);
+      for (auto rmap_it = rmap_vec.begin(); rmap_it != rmap_vec.end(); rmap_it++)
+        rmap_it->first->remove_mapping(rmap_it->second);
+    }
+    ++it;
+  }
+}
+
 void
 mfile::sync_file()
 {
@@ -238,10 +264,8 @@ mfile::sync_file()
   u64 ilen = rootfs_interface->get_file_size(inum_);
   auto size = read_size();
   // If the in-memory file is shorter, truncate the file on the disk.
-  if (ilen > *size) {
+  if (ilen > *size)
     rootfs_interface->truncate_file(inum_, *size, trans);
-    // XXX Use the rmap to clear mappings for truncated pages
-  }
 
   // Flush all in-memory file pages to disk.
   auto page_end = pages_.find(PGROUNDUP(*size) / PGSIZE);

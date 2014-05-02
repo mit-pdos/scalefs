@@ -106,6 +106,7 @@ void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "truncate_file");
   itrunc(i, offset, tr);
+  root_fs->get(mfile_inum)->as_file()->remove_pgtable_mappings(offset);
 }
 
 // Creates a new direcotry on the disk if an mnode (mdir) does not have a 

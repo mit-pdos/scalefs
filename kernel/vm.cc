@@ -290,6 +290,16 @@ vmap::remove(uptr start, uptr len)
   return 0;
 }
 
+void
+vmap::remove_mapping(uptr addr)
+{
+  auto vpf = vpfs_.find(addr/PGSIZE);
+  auto lock = vpfs_.acquire(vpf,vpf+1);
+  if (vpf.is_set())
+    vpfs_.unset(vpf,vpf+1);
+  cache.invalidate(addr, PGSIZE, vpf, NULL);
+}
+
 int
 vmap::willneed(uptr start, uptr len)
 {

@@ -138,6 +138,10 @@ struct vmap : public referenced {
   // Unmap from virtual addresses start to start+len.
   int remove(uptr start, uptr len);
 
+  // Unmap a single virtual page. Called when the mapped file page has been
+  // truncated (or swapped out)
+  void remove_mapping(uptr addr);
+
   // Populate vmdesc's.
   int willneed(uptr start, uptr len);
 

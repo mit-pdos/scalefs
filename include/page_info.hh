@@ -130,8 +130,10 @@ public:
         rmap_vec.clear();
       }
 
-      void sync() {
-        synchronize();
+      void sync(std::vector<rmap_entry> &vec) {
+        auto guard = synchronize();
+        for (auto it = rmap_vec.begin(); it != rmap_vec.end(); it++)
+          vec.emplace_back(*it);
       }
 
     protected:
@@ -192,6 +194,12 @@ public:
   // Remove an entry from the rmap for this page
   void remove_pte(rmap_entry map) {
     rmap_pte->remove_mapping(map);
+  }
+  
+  // Synchronizes the oplog-maintained rmap and returns the <vmap, vaddr> pairs
+  // that have this page mapped.
+  void get_rmap_vector(std::vector<rmap_entry> &vec) {
+    rmap_pte->sync(vec);
   }
 
 private:
