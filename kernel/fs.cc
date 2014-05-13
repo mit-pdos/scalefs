@@ -110,14 +110,14 @@ balloc(u32 dev, transaction *trans = NULL)
       if((locked->data[bi/8] & m) == 0){  // Is block free?
         locked->data[bi/8] |= m;  // Mark block in use on disk.
         found = true;
-        if (trans) {
-          char charbuf[BSIZE];
-          memmove(charbuf, locked->data, BSIZE);
-          transaction_diskblock b(blocknum, charbuf);
-          trans->add_block(b);
-        }
         break;
       }
+    }
+    if (trans) {
+      char charbuf[BSIZE];
+      memmove(charbuf, locked->data, BSIZE);
+      transaction_diskblock b(blocknum, charbuf);
+      trans->add_block(b);
     }
     if(found)
       break;
@@ -775,8 +775,15 @@ retry3:
     if (ap[bn / NINDIRECT] == 0) {
       auto locked = wb->write();
       ap = (u32*)locked->data;
-      if (ap[bn / NINDIRECT] == 0)
+      if (ap[bn / NINDIRECT] == 0) {
         ap[bn / NINDIRECT] = balloc(ip->dev, trans);
+        if (trans) {
+          char charbuf[BSIZE];
+          memmove(charbuf, locked->data, BSIZE);
+          transaction_diskblock b(ip->addrs[NDIRECT+1], charbuf);
+          trans->add_block(b);
+        }
+      }
       continue;
     }
     addr = ap[bn / NINDIRECT];
@@ -791,8 +798,15 @@ retry3:
     if (ap[bn % NINDIRECT] == 0) {
       auto locked = wb->write();
       ap = (u32*)locked->data;
-      if (ap[bn % NINDIRECT] == 0)
+      if (ap[bn % NINDIRECT] == 0) {
         ap[bn % NINDIRECT] = balloc(ip->dev, trans);
+        if (trans) {
+          char charbuf[BSIZE];
+          memmove(charbuf, locked->data, BSIZE);
+          transaction_diskblock b(addr, charbuf);
+          trans->add_block(b);
+        }
+      }
       continue;
     }
     addr = ap[bn % NINDIRECT];
@@ -960,7 +974,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
     auto locked = bp->write();
     memmove(locked->data + off%BSIZE, src, m);
     if (trans) {
-      memmove(charbuf, src, m);
+      memmove(charbuf, locked->data, BSIZE);
       transaction_diskblock b(blocknum, charbuf);
       trans->add_block(b);
     }

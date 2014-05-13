@@ -295,6 +295,7 @@ sref<mnode> mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent) {
 
   default:
     cprintf("unhandled inode type %d\n", i->type.load());
+    return sref<mnode>();
   }
   
   // Link to parent directory created so that the parent's link count is

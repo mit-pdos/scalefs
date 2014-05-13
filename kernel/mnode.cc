@@ -276,8 +276,10 @@ mfile::sync_file()
       it += it.base_span();
       continue;
     }
-    if (!it->is_dirty_page())
+    if (!it->is_dirty_page()) {
+      ++it;
       continue;
+    }
 
     size_t pos = it.index() * PGSIZE;
     size_t nbytes = *size - pos;

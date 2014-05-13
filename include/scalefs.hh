@@ -46,6 +46,23 @@ struct transaction_diskblock {
     memset(blockdata, 0, BSIZE);
     timestamp = get_timestamp();
   }
+
+  // Write out the block contents to disk block # blocknum.
+  void writeback() {
+    sref<buf> bp = buf::get(1, blocknum);
+    auto cmp = bp->read();
+    if (strcmp(cmp->data, blockdata) != 0)
+      cprintf("%ld: Bufcache and transaction diskblock %d don't match\n",
+        timestamp, blocknum);
+    idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
+  }
+
+  void writeback_through_bufcache() {
+    sref<buf> bp = buf::get(1, blocknum);
+    if (bp->dirty())
+      bp->writeback();
+  }
+
 };
 
 // A transaction represents all related updates that take place as the result of a
@@ -75,12 +92,17 @@ class transaction {
 
       // Sort the diskblocks in timestamp order.
       std::sort(blocks.begin(), blocks.end(), compare_timestamp_db);
-      sref<buf> bp;
+
+      // Write out the transaction blocks to the disk journal in timestamp order. 
+      // The diskblock contents are preceded by the corresponding block number.
+      /*int fd = open("scalefs_journal", O_CREAT | O_RDWR);
       for (auto it = blocks.begin(); it != blocks.end(); it++) {
-        bp = buf::get(1, it->blocknum);
-        if (bp->dirty())
-          bp->writeback();
-      }
+        write(fd, (char*)(it->blocknum), sizeof(blocknum));
+        write(fd, it->blockdata, BSIZE); 
+      }*/
+
+      for (auto it = blocks.begin(); it != blocks.end(); it++)
+        it->writeback();
     }
 
     // comparison function to order diskblock updates in timestamp order

@@ -71,7 +71,7 @@ OBJS = \
 	timemath.o \
 	mnode.o \
 	mfs.o \
-	mfsload.o \
+	scalefs.o \
 	hpet.o \
 	cpuid.o \
 	ctype.o \
