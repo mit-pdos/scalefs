@@ -68,6 +68,7 @@ struct transaction_diskblock {
 // A transaction represents all related updates that take place as the result of a
 // filesystem operation.
 class transaction {
+  friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
     transaction() : timestamp_(get_timestamp()) {
@@ -84,7 +85,7 @@ class transaction {
 
     // XXX Write the transaction out to disk before carrying out the
     // corresponding filesystem operations (Two-phase commit)
-    void commit_transaction() {
+    void prepare_for_commit() {
       // All relevant blocks must have been added to the transaction at
       // this point. A try acquire must succeed.
       auto l = write_lock.try_guard();
@@ -92,17 +93,13 @@ class transaction {
 
       // Sort the diskblocks in timestamp order.
       std::sort(blocks.begin(), blocks.end(), compare_timestamp_db);
-
-      // Write out the transaction blocks to the disk journal in timestamp order. 
-      // The diskblock contents are preceded by the corresponding block number.
-      /*int fd = open("scalefs_journal", O_CREAT | O_RDWR);
-      for (auto it = blocks.begin(); it != blocks.end(); it++) {
-        write(fd, (char*)(it->blocknum), sizeof(blocknum));
-        write(fd, it->blockdata, BSIZE); 
-      }*/
-
-      for (auto it = blocks.begin(); it != blocks.end(); it++)
-        it->writeback();
+    }
+    
+    // Write the blocks in this transaction to disk. Used to write the journal.
+    void write_to_disk() {
+      for (auto b = blocks.begin(); b != blocks.end(); b++)
+        b->writeback();
+      blocks.clear();
     }
 
     // comparison function to order diskblock updates in timestamp order
@@ -125,6 +122,7 @@ class transaction {
 // The "physical" journal is made up of transactions, which in turn are made up of
 // updated diskblocks.
 class journal {
+  friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
     journal() {
@@ -138,17 +136,16 @@ class journal {
       transaction_log.push_back(tr);
     }
 
-    void flush_to_disk() {
+    lock_guard<spinlock> prepare_for_commit() {
       auto l = write_lock.guard();
 
       // Sort the transactions in timestamp order.
       std::sort(transaction_log.begin(), transaction_log.end(), compare_timestamp_tr);
 
-      for (auto it = transaction_log.begin(); it != transaction_log.end(); it++) {
-        (*it)->commit_transaction();
-        delete (*it);
-      }
-      transaction_log.clear();
+      for (auto it = transaction_log.begin(); it != transaction_log.end(); it++)
+        (*it)->prepare_for_commit();
+
+      return l;
     }
 
     // comparison function to order journal transactions in timestamp order
@@ -268,6 +265,31 @@ class mfs_logical_log: public tsc_logged_object {
 // functions as a container for the physical and logical logs.
 class mfs_interface {
   public:
+
+    // Header used by each journal block
+    typedef struct journal_block_header {
+      u64 timestamp;          // The transaction timestamp, serves as the
+                              // transaction ID
+      u32 blocknum;           // The disk block number if this is a data block
+      u8 block_type;          // The type of the journal block
+
+      journal_block_header(u64 t, u32 n, u8 bt) {
+        timestamp = t;
+        blocknum = n;
+        block_type = bt;
+      }
+
+      journal_block_header(): timestamp(0), blocknum(0), block_type(0) {}
+
+    } journal_block_header;
+
+    // Types of journal blocks
+    enum : u8 {
+      jrnl_start = 1,     // Start transaction block
+      jrnl_data,          // Data block
+      jrnl_commit,        // Commit transaction block
+    };
+
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
@@ -306,8 +328,37 @@ class mfs_interface {
     // Writes out the physical journal to the disk. Then applies the
     // flushed out transactions to the disk filesystem.
     void flush_journal() {
-      fs_journal->flush_to_disk();
+      auto journal_lock = fs_journal->prepare_for_commit();
+
+      for (auto it = fs_journal->transaction_log.begin(); 
+        it != fs_journal->transaction_log.end(); it++) {
+        // Write out the transaction blocks to the disk journal in timestamp order. 
+        write_transaction_to_journal((*it)->blocks, (*it)->timestamp_);
+
+        // This transaction has been written to the journal. Writeback the changes 
+        // to original location on disk. 
+        for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++)
+          b->writeback();
+        (*it)->blocks.clear();
+        delete (*it);
+        // The blocks have been written to disk successfully. Safe to delete
+        // this transaction from the journal. (This means that all the
+        // transactions till this point have made it to the disk. So the journal
+        // can simply be truncated.)
+        clear_journal();
+      }
+      fs_journal->transaction_log.clear();
     }
+
+    // Writes out a single journal transaction to disk
+    void write_transaction_to_journal(const std::vector<transaction_diskblock> vec, 
+          const u64 timestamp);
+
+    // Called on reboot after a crash. Applies committed transactions.
+    void process_journal();
+
+    // Truncate the journal on the disk
+    void clear_journal();
 
     // Adds a metadata operation to the logical log.
     void add_to_metadata_log(mfs_operation *op) {

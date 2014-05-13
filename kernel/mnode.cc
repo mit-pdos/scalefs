@@ -298,6 +298,49 @@ mfile::sync_file()
   dirty(false);
 }
 
+// This does exactly what the function sync_file() does, with the exception that
+// the filesystem operations are directly written to disk without being logged 
+// in the journal. This function is used to flush the journal contents to the disk.
+void
+mfile::sync_journal_file() {
+  if (!is_dirty())
+    return;
+
+  transaction *journal_trans = new transaction();
+  u64 ilen = rootfs_interface->get_file_size(inum_);
+  auto size = read_size();
+  // If the in-memory file is shorter, truncate the file on the disk.
+  if (ilen > *size)
+    rootfs_interface->truncate_file(inum_, *size, journal_trans);
+
+  // Flush all in-memory file pages to disk.
+  auto page_end = pages_.find(PGROUNDUP(*size) / PGSIZE);
+  auto lock = pages_.acquire(pages_.begin(), page_end);
+  for (auto it = pages_.begin(); it != page_end; ) {
+    // Skip unset spans
+    if (!it.is_set()) {
+      it += it.base_span();
+      continue;
+    }
+    if (!it->is_dirty_page()) {
+      ++it;
+      continue;
+    }
+
+    size_t pos = it.index() * PGSIZE;
+    size_t nbytes = *size - pos;
+    if (nbytes > PGSIZE)
+      nbytes = PGSIZE;
+    assert(nbytes == rootfs_interface->sync_file_page(inum_, 
+                    (char*)it->get_page_info()->va(), pos, nbytes, journal_trans));
+    it->set_dirty_bit(false);
+    ++it;
+  }
+  rootfs_interface->update_file_size(inum_, *size, journal_trans);
+  journal_trans->write_to_disk();
+  dirty(false); 
+}
+
 void
 mdir::sync_dir()
 {

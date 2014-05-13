@@ -506,6 +506,7 @@ public:
   void clear_pages(u64 begin, u64 size);
   void dirty_page(u64 pageidx);
   void sync_file();
+  void sync_journal_file();
   void remove_pgtable_mappings(u64 start_offset);
 };
 

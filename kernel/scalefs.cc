@@ -11,6 +11,8 @@ mfs_interface::mfs_interface() {
   mnode_to_inode = new linearhash<u64, u64>(4099);
   fs_journal = new journal();
   metadata_log = new mfs_logical_log();
+  // XXX Set up the physical journal file
+
 }
 
 // Returns an sref to an inode if mnode_inum is mapped to one.
@@ -257,6 +259,91 @@ void mfs_interface::mfs_truncate(mfs_operation *op, transaction *tr) {
   truncate_file(op->mnode, 0, tr);
 }
 
+void mfs_interface::write_transaction_to_journal(
+    const std::vector<transaction_diskblock> vec, const u64 timestamp) {
+  sref<mnode> m = namei(root_fs->get(1), "sv6journal");
+  sref<file> f = make_sref<file_inode>(m, true, true, true);
+  
+  // Each transaction begins with a start block
+  journal_block_header hdstart(timestamp, 0, jrnl_start);
+  char buf[sizeof(journal_block_header)];
+  memset(buf, 0, sizeof(buf)); 
+  memmove(buf, &hdstart, sizeof(hdstart));
+  char databuf[BSIZE];
+  memset(databuf, 0, sizeof(databuf));
+  f->write(buf, sizeof(buf));
+  f->write(databuf, BSIZE);
+  
+  // Write out the transaction diskblocks
+  for (auto it = vec.begin(); it != vec.end(); it++) {
+    journal_block_header hd(timestamp, it->blocknum, jrnl_data);
+    memset(buf, 0, sizeof(buf));
+    memmove(buf, &hd, sizeof(hd));
+    f->write(buf, sizeof(buf));
+    f->write(it->blockdata, BSIZE);
+  }
+  
+  // Each transaction ends with a commit block
+  journal_block_header hdcommit(timestamp, 0, jrnl_commit);
+  memset(buf, 0, sizeof(buf)); 
+  memmove(buf, &hdcommit, sizeof(hdcommit));
+  memset(databuf, 0, sizeof(databuf));
+  f->write(buf, sizeof(buf));
+  f->write(databuf, BSIZE);
+  
+  // Fsync the journal file with logging disabled
+  m->as_file()->sync_journal_file();
+}
+
+void mfs_interface::process_journal() {
+  sref<mnode> m = namei(root_fs->get(1), "sv6journal");
+  sref<file> f = make_sref<file_inode>(m, true, false, false);
+  
+  u64 current_transaction = 0;
+  transaction *trans = new transaction();
+  char hdbuf[sizeof(journal_block_header)];
+
+  while (f->read(hdbuf, sizeof(journal_block_header)) ==
+    sizeof(journal_block_header)) {
+    char databuf[BSIZE];
+    if (f->read(databuf, BSIZE) != BSIZE)
+      panic("Crash recovery failed!");
+
+    journal_block_header hd;
+    memset(&hd, 0, sizeof(hd));
+    memmove(&hd, hdbuf, sizeof(hdbuf));
+
+    switch (hd.block_type) {
+      case jrnl_start:
+        current_transaction = hd.timestamp;
+        delete(trans);
+        trans = new transaction();
+        break;
+      case jrnl_data:
+        if (hd.timestamp != current_transaction)
+          panic("Crash recovery failed!");
+        trans->add_block(transaction_diskblock(hd.blocknum, databuf));
+        break;
+      case jrnl_commit:
+        if (hd.timestamp != current_transaction)
+          panic("Crash recovery failed!");
+        trans->write_to_disk();
+        break;
+      default:
+        panic("Unhandled block type. Crash recovery failed!");
+        break;
+    }
+  }
+
+  m->as_file()->write_size().resize_nogrow(0);
+  m->as_file()->sync_journal_file();
+}
+
+void mfs_interface::clear_journal() {
+  sref<mnode> m = namei(root_fs->get(1), "sv6journal");
+  m->as_file()->write_size().resize_nogrow(0);
+}
+
 bool mfs_interface::inode_lookup(u64 mnode, u64 *inum) {
   if (!mnode_to_inode)
     panic("mnode_to_inode mapping does not exist yet");
@@ -348,6 +435,10 @@ void mfsload() {
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
   root_inum = rootfs_interface->load_root()->inum_;
-  // XXX Check the physical journal and reapply transactions if needed
   /* the root inode gets an extra reference because of its own ".." */
+
+  // Check the journal and reapply committed transactions
+  rootfs_interface->process_journal();
+  // XXX System needs to be restarted after this for the filesystem repair to
+  // complete successfully.
 }
