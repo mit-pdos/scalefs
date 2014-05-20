@@ -47,13 +47,19 @@ struct transaction_diskblock {
     timestamp = get_timestamp();
   }
 
+  transaction_diskblock(const transaction_diskblock& db) {
+    blocknum = db.blocknum;
+    memmove(blockdata, db.blockdata, BSIZE);
+    timestamp = db.timestamp;
+  }
+
   // Write out the block contents to disk block # blocknum.
   void writeback() {
-    sref<buf> bp = buf::get(1, blocknum);
+    /*sref<buf> bp = buf::get(1, blocknum);
     auto cmp = bp->read();
     if (strcmp(cmp->data, blockdata) != 0)
       cprintf("%ld: Bufcache and transaction diskblock %d don't match\n",
-        timestamp, blocknum);
+        timestamp, blocknum);*/
     idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
   }
 
@@ -93,7 +99,7 @@ class transaction {
       assert(static_cast<bool>(l));
 
       // Sort the diskblocks in timestamp order.
-      std::sort(blocks.begin(), blocks.end(), compare_timestamp_db);
+      std::sort(blocks.begin(), blocks.end(), compare_transaction_db);
     }
     
     // Write the blocks in this transaction to disk. Used to write the journal.
@@ -103,9 +109,16 @@ class transaction {
       blocks.clear();
     }
 
-    // comparison function to order diskblock updates in timestamp order
-    static bool compare_timestamp_db(transaction_diskblock b1, transaction_diskblock b2) {
-      return (b1.timestamp < b2.timestamp);
+    // Comparison function to order diskblock updates. Diskblocks are ordered in
+    // increasing order of (blocknum, timestamp). This ensure that all
+    // diskblocks with the same blocknum are present in the list in sequence and
+    // ordered in increasing order of their timestamps. So while writing out the
+    // transaction to the journal, for each block number just the block with the
+    // highest timestamp needs to be written to disk. Gets rid of unnecessary I/O.
+    static bool compare_transaction_db(transaction_diskblock b1, transaction_diskblock b2) {
+      if (b1.blocknum == b2.blocknum)
+        return (b1.timestamp < b2.timestamp);
+      return (b1.blocknum < b2.blocknum);
     }
 
     // Transactions need to be applied in timestamp order too. They might not
@@ -335,15 +348,28 @@ class mfs_interface {
 
       for (auto it = fs_journal->transaction_log.begin(); 
         it != fs_journal->transaction_log.end(); it++) {
+        // Make a list of the most current version of the diskblocks. For each
+        // block number pick the diskblock with the highest timestamp and
+        // discard the rest.
+        std::vector<transaction_diskblock> block_vec;
+        for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++) {
+          if ((b+1) != (*it)->blocks.end() && b->blocknum == (b+1)->blocknum)
+            continue;
+          block_vec.emplace_back(transaction_diskblock(*b));
+        }
+
         // Write out the transaction blocks to the disk journal in timestamp order. 
-        write_transaction_to_journal((*it)->blocks, (*it)->timestamp_);
+        write_transaction_to_journal(block_vec, (*it)->timestamp_);
 
         // This transaction has been written to the journal. Writeback the changes 
         // to original location on disk. 
-        for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++)
+        for (auto b = block_vec.begin(); b != block_vec.end(); b++)
           b->writeback();
+ 
+        block_vec.clear();
         (*it)->blocks.clear();
         delete (*it);
+
         // The blocks have been written to disk successfully. Safe to delete
         // this transaction from the journal. (This means that all the
         // transactions till this point have made it to the disk. So the journal
