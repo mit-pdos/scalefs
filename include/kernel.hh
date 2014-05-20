@@ -119,6 +119,8 @@ void            dir_init(sref<inode> dp);
 void            dir_flush(sref<inode> dp, transaction *trans = NULL);
 void            dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, 
                   transaction *trans = NULL);
+void            dir_remove_entry(sref<inode> dp, char *entry_name, 
+                  transaction *trans = NULL);
 
 // futex.cc
 typedef u64* futexkey_t;

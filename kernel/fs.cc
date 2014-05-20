@@ -1104,6 +1104,21 @@ dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, transaction *tr
     });
 }
 
+void
+dir_remove_entry(sref<inode> dp, char* entry_name, transaction *trans) {
+  dir_init(dp);
+  dp->dir.load()->enumerate([&entry_name, &dp, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
+      if (strcmp(entry_name, name.buf_) == 0) {
+        sref<inode> ip = iget(dp->dev, inum);
+        if (ip->type == T_DIR)
+          dirunlink(dp, name.buf_, inum, true); 
+        else if (ip->type == T_FILE)
+          dirunlink(dp, name.buf_, inum, false);
+      }
+      return false;
+    });
+}
+
 // Look for a directory entry in a directory.
 sref<inode>
 dirlookup(sref<inode> dp, char *name)

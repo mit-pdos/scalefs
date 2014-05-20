@@ -71,13 +71,20 @@ int mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nb
 // Creates a new file on the disk if an mnode (mfile) does not have a corresponding
 // inode mapping.
 u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
-  char *name, transaction *tr, bool sync_parent) {
+  char *name, transaction *tr, bool link_in_parent) {
   u64 inum = 0, parent_inum = 0, returnval = 0;
   if (inode_lookup(mfile_inum, &inum))
     return 0;
+
+  // The parent directory will always be present on the disk when the child is
+  // created. This is because all create operations are logged in the logical
+  // log (metadata operations). A parent's create will have occurred before the
+  // child's create. This is the order the operations will be present in the
+  // logical log and hence this is the order they'll make it to the disk. This
+  // gets rid of the scenario where we would need to go up the directory tree
+  // and explicitly sync all new ancestors.
   if (!inode_lookup(parent, &parent_inum))
     panic("create_file_if_new: parent %ld does not exist\n", parent);
-    // XXX(rasha) what if the parent needs to be synced too
     
   sref<inode> i;
   i = ialloc(1, type);
@@ -87,9 +94,11 @@ u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
   iupdate(i, tr);
   iunlock(i);
 
-  // Sync the parent too if specified. We sync the parents of all newly-created
-  // files that are fsynced. POSIX does not require this however.
-  if (sync_parent) {
+  // If link_in_parent flag is set, create a directory entry in the parent
+  // directory corresponding to this file. By default we always create directory
+  // entries in the parent directory for newly-created files that are fsynced.
+  // POSIX does not require this however.
+  if (link_in_parent) {
     sref<inode> parenti = iget(1, parent_inum);
     if (!parenti)
       panic("create_file_if_new: parent %ld does not exist on disk\n",
@@ -114,13 +123,20 @@ void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
 // Creates a new direcotry on the disk if an mnode (mdir) does not have a 
 // corresponding inode mapping.
 u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
-  char *name, transaction *tr, bool sync_parent) {
+  char *name, transaction *tr, bool link_in_parent) {
   u64 inum = 0, parent_inum = 0, returnval = 0;
   if (inode_lookup(mdir_inum, &inum))
     return 0;
+
+  // The parent directory will always be present on the disk when the child is
+  // created. This is because all create operations are logged in the logical
+  // log (metadata operations). A parent's create will have occurred before the
+  // child's create. This is the order the operations will be present in the
+  // logical log and hence this is the order they'll make it to the disk. This
+  // gets rid of the scenario where we would need to go up the directory tree
+  // and explicitly sync all new ancestors.
   if (!inode_lookup(parent, &parent_inum))
     panic("create_dir_if_new: parent %ld does not exist\n", parent);
-  // XXX(rasha) what if the parent needs to be synced too
 
   sref<inode> i, parenti;
   i = ialloc(1, type);
@@ -131,8 +147,11 @@ u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
   dir_flush(i, tr);
   iunlock(i);
 
-  // If a new directory is fsynced we sync the parent too.
-  if (sync_parent) {
+  // If link_in_parent flag is set, create a directory entry in the parent
+  // directory corresponding to this child directory. By default we always
+  // create directory entries in the parent directory for newly-created
+  // directories that are fsynced. POSIX does not require this however.
+  if (link_in_parent) {
     parenti = iget(1, parent_inum);
     ilock(parenti, 1);
     dirlink(parenti, name, i->inum, true);
@@ -151,8 +170,15 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
   sref<inode> i = get_inode(mdir_inum, "create_directory_entry");
 
   sref<inode> di = dirlookup(i, name);
-  if (di) 
-    return;   // directory entry exists. XXX Check if the inum has changed
+  if (di) {
+    // directory entry exists
+    if (di->inum == dirent_inum)
+      return;
+    // The name now refers to a different inode. Unlink the old one and create a
+    // new directory entry for this mapping.
+    else
+      dir_remove_entry(i, name, tr);
+  }
 
   ilock(i, 1);
   u64 inum = 0;
