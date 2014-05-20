@@ -83,8 +83,9 @@ class transaction {
       blocks.push_back(b);
     }
 
-    // XXX Write the transaction out to disk before carrying out the
-    // corresponding filesystem operations (Two-phase commit)
+    // Prepare the transaction for two phase commit. The transaction diskblocks
+    // are ordered by timestamp. (This is needed to ensure that mutliple changes
+    // to the same block are written to disk in the correct order.)
     void prepare_for_commit() {
       // All relevant blocks must have been added to the transaction at
       // this point. A try acquire must succeed.
@@ -131,7 +132,9 @@ class journal {
 
     // Add a new transaction to the journal.
     void add_transaction(transaction *tr) {
-      // XXX File system operations are serialized at this lock.
+      // File system operations are serialized at this lock. Is this really a
+      // scalability hit, given that transactions are only added on a call to
+      // fsync(). Is it reasonable to slow down during an fsync()?
       auto l = write_lock.guard();
       transaction_log.push_back(tr);
     }

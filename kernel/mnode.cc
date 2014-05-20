@@ -180,7 +180,7 @@ mfile::get_page(u64 pageidx)
       barrier();
     }
     if (pageidx < PGROUNDUP(size_) / PGSIZE && fs_ == root_fs) {
-      // XXX read from disk
+      // Read page from disk
       char *p = zalloc("file page");
       assert(p);
 

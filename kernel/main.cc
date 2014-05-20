@@ -60,6 +60,7 @@ void inithpet(void);
 void initrtc(void);
 void initmfs(void);
 void idleloop(void);
+void initfs(void);
 
 #define IO_RTC  0x70
 
@@ -239,10 +240,8 @@ cmain(u64 mbmagic, u64 mbaddr)
 
   inituser();      // first user process
   initnmi();
-
-  // XXX hack until mnodes can load from disk
-  extern void mfsload();
-  mfsload();
+  
+  initfs();
 
 #if CODEX
   initcodex();

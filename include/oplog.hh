@@ -1,5 +1,3 @@
-// XXX This compiles, but is completely untested
-
 #pragma once
 
 #include "bitset.hh"
@@ -360,7 +358,7 @@ namespace oplog {
       std::vector<int> indices;
       std::vector<tsc_logger::op*> merged_ops;
       for(auto it = pending_.begin(); it < pending_.end(); it++) {
-        it->sort_ops();  //XXX Are the inidividual loggers already in tsc order?
+        it->sort_ops();  //XXX(rasha) Are the inidividual loggers already in tsc order?
         size += it->ops_size();
         indices.push_back(0);
       }

@@ -11,7 +11,7 @@ mfs_interface::mfs_interface() {
   mnode_to_inode = new linearhash<u64, u64>(4099);
   fs_journal = new journal();
   metadata_log = new mfs_logical_log();
-  // XXX Set up the physical journal file
+  // XXX(rasha) Set up the physical journal file
 
 }
 
@@ -77,7 +77,7 @@ u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
     return 0;
   if (!inode_lookup(parent, &parent_inum))
     panic("create_file_if_new: parent %ld does not exist\n", parent);
-    // XXX what if the parent needs to be synced too
+    // XXX(rasha) what if the parent needs to be synced too
     
   sref<inode> i;
   i = ialloc(1, type);
@@ -120,7 +120,7 @@ u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
     return 0;
   if (!inode_lookup(parent, &parent_inum))
     panic("create_dir_if_new: parent %ld does not exist\n", parent);
-  // XXX what if the parent needs to be synced too
+  // XXX(rasha) what if the parent needs to be synced too
 
   sref<inode> i, parenti;
   i = ialloc(1, type);
@@ -406,7 +406,7 @@ void mfs_interface::load_dir(sref<inode> i, sref<mnode> m) {
 
     sref<mnode> mf = load_dir_entry(de.inum, m);
     strbuf<DIRSIZ> name(de.name);
-    // XXX No links are held to the directory itself (via ".")
+    // No links are held to the directory itself (via ".")
     // A link to the parent was already created at the time of mnode creation.
     // The root directory is an exception.
     if (name == "." || (name == ".." && i->inum != 1))
@@ -430,7 +430,7 @@ sref<mnode> mfs_interface::load_root() {
   return m;
 }
 
-void mfsload() {
+void initfs() {
   root_fs = new mfs();
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
@@ -439,6 +439,6 @@ void mfsload() {
 
   // Check the journal and reapply committed transactions
   rootfs_interface->process_journal();
-  // XXX System needs to be restarted after this for the filesystem repair to
+  // XXX(rasha) System needs to be restarted after this for the filesystem repair to
   // complete successfully.
 }
