@@ -10,14 +10,9 @@ mfs* root_fs;
 mfs* anon_fs;
 mfs_interface* rootfs_interface;
 
-/* This hash stores mappings from mnode numbers to inode numbers on disk.
- * It is initialized during boot, and updated when operations from fs_log
- * are flushed out to disk.
- */
+// This hash table stores mappings from mnode numbers in memory to inode numbers
+// on the disk.
 linearhash<u64, u64> *mnode_to_inode = NULL;
-
-fs_sync_op *fs_log;
-spinlock fs_log_lock;
 
 // Copy the next path element from path into name.
 // Update the pointer to the element following the copied one.

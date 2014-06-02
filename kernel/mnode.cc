@@ -206,17 +206,6 @@ mfile::get_page(u64 pageidx)
 }
 
 void
-mfile::clear_pages(u64 begin, u64 size)
-{
-  if(PGROUNDUP(begin) > PGROUNDUP(begin+size))
-    return;
-  auto page_begin = pages_.find(PGROUNDUP(begin) / PGSIZE);
-  auto page_end = pages_.find(PGROUNDUP(begin+size) / PGSIZE);
-  auto lock = pages_.acquire(page_begin, page_end);
-  pages_.unset(page_begin, page_end);
-}
-
-void
 mfile::dirty_page(u64 pageidx)
 {
   auto it = pages_.find(pageidx);

@@ -503,7 +503,6 @@ public:
 
   void ondisk_size(u64 size);
   page_state get_page(u64 pageidx);
-  void clear_pages(u64 begin, u64 size);
   void dirty_page(u64 pageidx);
   void sync_file();
   void sync_journal_file();
