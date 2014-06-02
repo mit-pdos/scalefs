@@ -53,6 +53,12 @@ sys_dup2(int ofd, int nfd)
   if (!f)
     return -1;
 
+  if (ofd == nfd)
+    // Do nothing, aggressively.  Remarkably, while dup2 usually
+    // clears O_CLOEXEC on nfd (even if ofd is O_CLOEXEC), POSIX 2013
+    // is very clear that it should *not* do this if ofd == nfd.
+    return nfd;
+
   if (!myproc()->ftable->replace(nfd, std::move(f)))
     return -1;
 
@@ -690,7 +696,8 @@ sys_pipe2(userptr<int> fd, int flags)
   if (pipealloc(&rf, &wf, flags) < 0)
     return -1;
 
-  int fd_buf[2] = { fdalloc(std::move(rf), 0), fdalloc(std::move(wf), 0) };
+  int fd_buf[2] = { fdalloc(std::move(rf), flags),
+                    fdalloc(std::move(wf), flags) };
   if (fd_buf[0] >= 0 && fd_buf[1] >= 0 && fd.store(fd_buf, 2))
     return 0;
 

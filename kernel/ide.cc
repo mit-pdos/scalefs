@@ -16,8 +16,7 @@
 #define IDE_CMD_WRITE 0x30
 
 #define BSIZE 512
-
-#if !MEMIDE
+#if !MEMIDE && !AHCIIDE
 
 static struct spinlock idelock;
 static int havedisk1;
@@ -97,8 +96,6 @@ idewrite(u32 dev, const char* data, u64 count, u64 offset)
   outsl(0x1f0, data, count/4);
 
   assert(idewait(1) >= 0);
-  //cprintf("IDE write successful Dev no. %ld, Sector no.%ld\n",
-  //          (long int)dev, (long int)sector);
 }
 
 void

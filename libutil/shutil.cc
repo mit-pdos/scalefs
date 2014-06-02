@@ -1,4 +1,5 @@
 #include "shutil.h"
+#include "libutil.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -51,10 +52,18 @@ readall(int fd, void *buf, size_t n)
 ssize_t
 copy_fd(int dst, int src)
 {
-  ssize_t res = 0;
+  return copy_fd_n(dst, src, (size_t)-1);
+}
+
+// Read from src until EOF or limit bytes, write to dst.  Returns
+// number of bytes copied on success, < 0 on failure.
+ssize_t
+copy_fd_n(int dst, int src, size_t limit)
+{
+  size_t res = 0;
   char buf[4096];
-  while (1) {
-    int r = read(src, buf, sizeof buf);
+  while (res < limit) {
+    int r = read(src, buf, limit - res < sizeof buf ? limit - res : sizeof buf);
     if (r < 0) {
 #if !defined(XV6_USER)
       if (errno == EINTR)
@@ -84,4 +93,22 @@ mkdir_if_noent(const char *path, mode_t mode)
 #endif
   }
   return 0;
+}
+
+// Return the length of the file referred to by fd.  Returns < 0 on
+// failure.
+ssize_t
+fd_len(int fd)
+{
+  // Could also do this with fstat, but that returns way more
+  // information than we need
+  off_t pos = lseek(fd, 0, SEEK_CUR);
+  if (pos < 0)
+    return -1;
+  off_t end = lseek(fd, 0, SEEK_END);
+  if (end < 0)
+    return -1;
+  if (lseek(fd, pos, SEEK_SET))
+    edie("failed to return file offset to original position");
+  return end;
 }

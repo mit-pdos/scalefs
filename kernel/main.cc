@@ -39,6 +39,7 @@ void initdisk(void);
 void inituser(void);
 void initsamp(void);
 void inite1000(void);
+void initahci(void);
 void initpci(void);
 void initnet(void);
 void initsched(void);
@@ -220,19 +221,20 @@ cmain(u64 mbmagic, u64 mbaddr)
   initidle();
   initgc();        // gc epochs and threads
   initrefcache();  // Requires initsched
-  initdisk();      // disk
-  initinode();     // inode cache
   initconsole();
   initfutex();
   initsamp();
   initlockstat();
   initacpi();              // Requires initacpitables, initkalloc?
   inite1000();             // Before initpci
+  initahci();
   initpci();               // Suggests initacpi
   initnet();
   inithpet();              // Requires initacpitables
   initrtc();               // Requires inithpet
   initdev();               // Misc /dev nodes
+  initdisk();      // disk
+  initinode();     // inode cache
   initmfs();
 
   if (VERBOSE)

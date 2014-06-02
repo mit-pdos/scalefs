@@ -77,7 +77,7 @@ COMFLAGS  = -static -DXV6_HW=$(HW) -DXV6 \
 	    -fno-builtin -fno-strict-aliasing -fno-omit-frame-pointer -fms-extensions \
 	    -mno-red-zone
 COMFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector) -I$(shell $(CC) -print-file-name=include)
-COMFLAGS  += -Wl,-m,elf_x86_64 -nostdlib
+COMFLAGS  += -Wl,-m,elf_x86_64 -nostdlib -ffreestanding
 LDFLAGS   = -m elf_x86_64
 else
 INCLUDES := -include param.h -iquote libutil/include -I$(MTRACESRC)
@@ -162,7 +162,7 @@ $(O)/%.o: $(O)/%.S
 $(O)/sysroot: include/host_hdrs.hh
 	rm -rf $@.tmp $@
 	mkdir -p $@.tmp
-	tar c $$($(CXX) -E -H -std=c++0x $< -o /dev/null 2>&1 \
+	tar c $$($(CXX) -E -H -std=c++0x -ffreestanding $< -o /dev/null 2>&1 \
 		| awk '/^[.]/ {print $$2}') | tar xC $@.tmp
 	mv $@.tmp $@
 
@@ -216,7 +216,9 @@ QEMUOPTS += -numa node -numa node
 endif
 
 ifeq ($(PLATFORM),xv6)
-QEMUOPTS += -hdb $(O)/fs.img
+QEMUOPTS += -device ahci,id=ahci0 \
+	    -drive if=none,file=$(O)/fs.img,format=raw,id=drive-sata0-0-0 \
+	    -device ide-drive,bus=ahci0.0,drive=drive-sata0-0-0,id=sata0-0-0
 qemu: $(O)/fs.img
 endif
 ifeq ($(PLATFORM),native)
