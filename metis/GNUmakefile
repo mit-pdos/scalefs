@@ -36,7 +36,7 @@ endif
 # Streamflow uses super pages of 8MB
 SF_MMOPT += -DSPAGE_SM=8
 
-OPTFLAG := -O3
+OPTFLAG := -O3 -g
 #OPTFLAG := -g
 INCLUDES := -I$(TOP) -I$(TOP)/lib
 
@@ -83,11 +83,11 @@ $(O)/%.o: %.c
 
 $(O)/%: $(O)/%.o $(LDEPS)
 	@echo "MAKE	$@"
-	$(Q)$(CC) $(CFLAGS) -o $@ $< $(LIB)
+	$(Q)$(CXX) $(CFLAGS) -o $@ $< $(LIB)
 
 $(O)/%.sf: $(O)/%.o $(LDEPS)
 	@echo "MAKE	$@"
-	$(Q)$(CC) $(CFLAGS) -o $@ $< $(SF_LIB)
+	$(Q)$(CXX) $(CFLAGS) -o $@ $< $(SF_LIB)
 
 clean:
 	@rm -rf $(PROGS) *.o *.a *~ *.tmp *.bak *.log *.orig $(O)
