@@ -322,18 +322,19 @@ void mfs_interface::write_transaction_to_journal(
 }
 
 void mfs_interface::process_journal() {
-  sref<mnode> m = namei(root_fs->get(1), "sv6journal");
-  sref<file> f = make_sref<file_inode>(m, true, false, false);
-  
+  u32 offset = 0;
   u64 current_transaction = 0;
   transaction *trans = new transaction();
   char hdbuf[sizeof(journal_block_header)];
+  sref<inode> ip = namei(sref<inode>(), "/sv6journal");
 
-  while (f->read(hdbuf, sizeof(journal_block_header)) ==
+  while (readi(ip, hdbuf, offset, sizeof(journal_block_header)) == 
     sizeof(journal_block_header)) {
     char databuf[BSIZE];
-    if (f->read(databuf, BSIZE) != BSIZE)
+    offset += sizeof(journal_block_header);
+    if (readi(ip, databuf, offset, BSIZE) != BSIZE)
       panic("Crash recovery failed!");
+    offset += BSIZE;
 
     journal_block_header hd;
     memset(&hd, 0, sizeof(hd));
@@ -360,9 +361,6 @@ void mfs_interface::process_journal() {
         break;
     }
   }
-
-  m->as_file()->write_size().resize_nogrow(0);
-  m->as_file()->sync_journal_file();
 }
 
 void mfs_interface::clear_journal() {
@@ -460,11 +458,14 @@ void initfs() {
   root_fs = new mfs();
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
-  root_inum = rootfs_interface->load_root()->inum_;
-  /* the root inode gets an extra reference because of its own ".." */
 
   // Check the journal and reapply committed transactions
   rootfs_interface->process_journal();
   // XXX(rasha) System needs to be restarted after this for the filesystem repair to
   // complete successfully.
+
+  root_inum = rootfs_interface->load_root()->inum_;
+  /* the root inode gets an extra reference because of its own ".." */
+
+  rootfs_interface->clear_journal();
 }
