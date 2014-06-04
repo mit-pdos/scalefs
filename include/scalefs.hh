@@ -77,6 +77,10 @@ class transaction {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
+    transaction(u64 t) : timestamp_(t) {
+      blocks = std::vector<transaction_diskblock>();
+    }
+
     transaction() : timestamp_(get_timestamp()) {
       blocks = std::vector<transaction_diskblock>();
     }
@@ -154,10 +158,11 @@ class journal {
 
     lock_guard<spinlock> prepare_for_commit() {
       auto l = write_lock.guard();
-
-      // Sort the transactions in timestamp order.
-      std::sort(transaction_log.begin(), transaction_log.end(), compare_timestamp_tr);
-
+      
+      // The transactions are present in the transaction log in the order in
+      // which the metadata operations were applied. This corresponds to the
+      // correct linearization of the memfs operations. So the transactions are 
+      // logged in the correct order.
       for (auto it = transaction_log.begin(); it != transaction_log.end(); it++)
         (*it)->prepare_for_commit();
 
@@ -186,6 +191,8 @@ struct mfs_operation {
   short mnode_type; // creation type for the new inode
   char *name;       // name of the file/directory
   char *newname;    // used for rename operation
+  u64 timestamp;    // timestamp returned at the linearization point of the
+                    // operation when it occurs in mfs
 
   // Types of metadata operations
   enum {
@@ -195,27 +202,28 @@ struct mfs_operation {
     op_rename,
   };
 
-  mfs_operation(int type, u64 mn, u64 pt, char nm[], short m_type = 0)
-    : op_type(type), mnode(mn), parent(pt), mnode_type(m_type), newname(NULL) {
+  mfs_operation(int type, u64 mn, u64 pt, char nm[], short m_type = 0, u64 t = 0)
+    : op_type(type), mnode(mn), parent(pt), mnode_type(m_type), newname(NULL),
+      timestamp(t) {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
     }   
 
-  mfs_operation(int type, u64 mn, u32 st, u32 nb) 
-    : op_type(type), mnode(mn), name(NULL), newname(NULL) {}   
+  mfs_operation(int type, u64 mn, u32 st, u32 nb, u64 t = 0) 
+    : op_type(type), mnode(mn), name(NULL), newname(NULL), timestamp(t) {}   
 
   mfs_operation(int type, char oldnm[], u64 mn, u64 pt, 
-      char newnm[], u64 newmn, u64 newpt, u8 m_type)
+      char newnm[], u64 newmn, u64 newpt, u8 m_type, u64 t = 0)
     : op_type(type), mnode(mn), parent(pt), new_mnode(newmn),
-    new_parent(newpt), mnode_type(m_type) {
+    new_parent(newpt), mnode_type(m_type), timestamp(t) {
       name = new char[DIRSIZ];
       newname = new char[DIRSIZ];
       strncpy(name, oldnm, DIRSIZ);
       strncpy(newname, newnm, DIRSIZ);
     }   
 
-  mfs_operation(int type, u64 mn) 
-    : op_type(type), mnode(mn), name(NULL), newname(NULL) {}   
+  mfs_operation(int type, u64 mn, u64 t = 0) 
+    : op_type(type), mnode(mn), name(NULL), newname(NULL), timestamp(t) {}   
 
   ~mfs_operation() {
     if (name)
@@ -260,6 +268,9 @@ class mfs_logical_log: public tsc_logged_object {
       void print() {
         operation->print_operation();
       }
+      u64 get_tsc() {
+        return operation->timestamp;
+      }
 
       private:
       mfs_logical_log *parent;
@@ -267,7 +278,7 @@ class mfs_logical_log: public tsc_logged_object {
     };
 
     void add_operation(mfs_operation *op) {
-      get_logger()->push<add_op>(add_op(this, op));
+      get_logger()->push_with_tsc<add_op>(add_op(this, op));
     }
 
   protected:
@@ -401,7 +412,7 @@ class mfs_interface {
 
       for (auto it = metadata_log->operation_vec.begin(); 
           it != metadata_log->operation_vec.end(); it++) {
-        transaction *tr = new transaction();
+        transaction *tr = new transaction((*it)->timestamp);
         apply_metadata_operation(*it, tr);
         add_to_journal(tr);
         delete (*it);

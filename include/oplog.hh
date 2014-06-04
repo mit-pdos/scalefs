@@ -287,6 +287,16 @@ namespace oplog {
       ops_.push_back(new op_inst<CB>(rdtscp(), std::forward<CB>(cb)));
     }
 
+    // Same as push<CB>, the only difference being that the tsc value is passed
+    // here instead of calling rdtscp() to get a tsc value. This is used to log
+    // filesystem operations in the logical log, where the tsc is read off at
+    // the linearization point of the operation (when applied on mfs).
+    template<typename CB>
+    void push_with_tsc(CB &&cb)
+    {
+      ops_.push_back(new op_inst<CB>(cb.get_tsc(), std::forward<CB>(cb)));
+    }
+
     static bool compare_tsc(op *op1, op *op2) { return (op1->tsc < op2->tsc); }
 
     void sort_ops() {

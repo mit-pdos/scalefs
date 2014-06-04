@@ -295,7 +295,7 @@ mfile::sync_journal_file() {
   if (!is_dirty())
     return;
 
-  transaction *journal_trans = new transaction();
+  transaction *journal_trans = new transaction(0);
   u64 ilen = rootfs_interface->get_file_size(inum_);
   auto size = read_size();
   // If the in-memory file is shorter, truncate the file on the disk.

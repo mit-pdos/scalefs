@@ -317,7 +317,7 @@ void mfs_interface::write_transaction_to_journal(
 void mfs_interface::process_journal() {
   u32 offset = 0;
   u64 current_transaction = 0;
-  transaction *trans = new transaction();
+  transaction *trans = new transaction(0);
   char hdbuf[sizeof(journal_block_header)];
   sref<inode> ip = namei(sref<inode>(), "/sv6journal");
 
@@ -337,7 +337,7 @@ void mfs_interface::process_journal() {
       case jrnl_start:
         current_transaction = hd.timestamp;
         delete(trans);
-        trans = new transaction();
+        trans = new transaction(0);
         break;
       case jrnl_data:
         if (hd.timestamp != current_transaction)
