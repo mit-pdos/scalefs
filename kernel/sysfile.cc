@@ -566,13 +566,8 @@ sys_openat(int dirfd, userptr_str path, int omode, ...)
     return -1;
 
   if (m->type() == mnode::types::file && (omode & O_TRUNC))
-    if (*m->as_file()->read_size()) {
+    if (*m->as_file()->read_size())
       m->as_file()->write_size().resize_nogrow(0);
-      if (m->fs_ == root_fs) {
-        mfs_operation *op = new mfs_operation(mfs_operation::op_truncate, m->inum_);
-        rootfs_interface->add_to_metadata_log(op);
-      }
-    }
 
   sref<file> f = make_sref<file_inode>(
     m, !(rwmode == O_WRONLY), !(rwmode == O_RDONLY), !!(omode & O_APPEND));

@@ -193,7 +193,6 @@ struct mfs_operation {
     op_link,
     op_unlink,
     op_rename,
-    op_truncate
   };
 
   mfs_operation(int type, u64 mn, u64 pt, char nm[], short m_type = 0)
@@ -416,7 +415,6 @@ class mfs_interface {
     void mfs_link(mfs_operation *op, transaction *tr);
     void mfs_unlink(mfs_operation *op, transaction *tr);
     void mfs_rename(mfs_operation *op, transaction *tr);
-    void mfs_truncate(mfs_operation *op, transaction *tr);
 
   private:
     void load_dir(sref<inode> i, sref<mnode> m); 

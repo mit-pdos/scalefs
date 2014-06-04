@@ -234,8 +234,6 @@ void mfs_interface::apply_metadata_operation(mfs_operation *op, transaction *tr)
       mfs_unlink(op, tr); break;
     case mfs_operation::op_rename:
       mfs_rename(op, tr); break;
-    case mfs_operation::op_truncate:
-      mfs_truncate(op, tr); break;
     default:
       panic("apply_metadata_operation: invalid operation");
       break;
@@ -278,11 +276,6 @@ void mfs_interface::mfs_rename(mfs_operation *op, transaction *tr) {
 
   unlink_old_inodes(op->parent, names_vec, tr);
   update_dir_inode(op->parent, tr);
-}
-
-// Truncate operation
-void mfs_interface::mfs_truncate(mfs_operation *op, transaction *tr) {
-  truncate_file(op->mnode, 0, tr);
 }
 
 void mfs_interface::write_transaction_to_journal(
