@@ -335,47 +335,17 @@ mdir::sync_dir()
 {
   if (!is_dirty())
     return;
-  
+
   // Apply pending metadata operations to the disk filesystem first.
   // This takes care of any dependencies.
   rootfs_interface->process_metadata_log();
-  
-  // Acquire seq lock (to protect atomic renames)
-  auto seqw = seq_writer(&syncing_seq_);
-  syncing_ = true;
-  transaction *trans = new transaction();
 
-  // Enumerate existing directory entries in names_vec, which is then used to
-  // compare and unlink any old on-disk directory entries.
-  strbuf<DIRSIZ> prev("."), next;
-  std::vector<char*> names_vec;
-  char str[DIRSIZ];
-  strcpy(str, ".");
-  names_vec.push_back(str);
-  while (enumerate(&prev, &next)) {
-    char str[DIRSIZ];
-    strcpy(str, next.buf_);
-    names_vec.push_back(str);
-    prev = next;
-  }
-  rootfs_interface->unlink_old_inodes(inum_, names_vec, trans);
-
-  prev = strbuf<DIRSIZ>(".");
-  sref<mnode> m;
-  while (enumerate(&prev, &next)) {
-    m = lookup(next);
-    // Create a new directory entry on disk if needed.
-    rootfs_interface->create_directory_entry(inum_, (char*)next.buf_,
-        m->inum_, m->type(), trans); 
-    prev = next;
-  }
-  rootfs_interface->update_dir_inode(inum_, trans);
- 
-  // Add the fsync transaction to the journal and flush the journal to disk.
-  rootfs_interface->add_to_journal(trans);
+  // Flush out the physical journal to disk. The directory entries do not need
+  // to be flushed explicitly. If there were any operations on the directory
+  // they will have been applied when the logical log was processed. This means
+  // that the fsync will not block any operations on the mdir.
   rootfs_interface->flush_journal();
   dirty(false);
-  syncing_ = false;
 }
 
 void
