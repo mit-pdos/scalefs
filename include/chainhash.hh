@@ -9,6 +9,15 @@
 #include "lockwrap.hh"
 #include "hash.hh"
 #include "ilist.hh"
+#include "cpuid.hh"
+
+static u64 get_tsc() {
+  if (cpuid::features().rdtscp)
+    return rdtscp();
+  // cpuid + rdtsc combination (more expensive) is used as an alternative to
+  // rdtscp where it's not supported.
+  return rdtsc_serialized();
+}
 
 template<class K, class V>
 class chainhash {
@@ -55,7 +64,7 @@ public:
 
   NEW_DELETE_OPS(chainhash);
 
-  bool insert(const K& k, const V& v) {
+  bool insert(const K& k, const V& v, u64 *tsc = NULL) {
     if (dead_ || lookup(k))
       return false;
 
@@ -70,10 +79,12 @@ public:
         return false;
 
     b->chain.push_front(new item(k, v));
+    if (tsc)
+      *tsc = get_tsc();
     return true;
   }
 
-  bool remove(const K& k, const V& v) {
+  bool remove(const K& k, const V& v, u64 *tsc = NULL) {
     if (!lookup(k))
       return false;
 
@@ -90,6 +101,8 @@ public:
       if (i->key == k && i->val == v) {
         b->chain.erase_after(prev);
         gc_delayed(&*i);
+        if (tsc)
+          *tsc = get_tsc();
         return true;
       }
     }
@@ -97,7 +110,7 @@ public:
 
   bool replace_from(const K& kdst, const V* vpdst,
                     chainhash* src, const K& ksrc,
-                    const V& vsrc)
+                    const V& vsrc, u64 *tsc = NULL)
   {
     /*
      * A special API used by rename.  Atomically performs the following
@@ -147,6 +160,8 @@ public:
         i.val = vsrc;
         bsrc->chain.erase_after(srcprev);
         gc_delayed(&*srci);
+        if (tsc)
+          *tsc = get_tsc();
         return true;
       }
     }
@@ -157,6 +172,8 @@ public:
     bsrc->chain.erase_after(srcprev);
     gc_delayed(&*srci);
     bdst->chain.push_front(new item(kdst, vsrc));
+    if (tsc)
+      *tsc = get_tsc();
     return true;
   }
 

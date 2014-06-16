@@ -173,10 +173,10 @@ private:
   chainhash<strbuf<DIRSIZ>, u64> map_;
 
 public:
-  bool insert(const strbuf<DIRSIZ>& name, mlinkref* ilink) {
+  bool insert(const strbuf<DIRSIZ>& name, mlinkref* ilink, u64 *tsc = NULL) {
     if (name == ".")
       return false;
-    if (!map_.insert(name, ilink->mn()->inum_))
+    if (!map_.insert(name, ilink->mn()->inum_, tsc))
       return false;
     assert(ilink->held());
     ilink->mn()->nlink_.inc();
@@ -184,8 +184,8 @@ public:
     return true;
   }
 
-  bool remove(const strbuf<DIRSIZ>& name, sref<mnode> m) {
-    if (!map_.remove(name, m->inum_))
+  bool remove(const strbuf<DIRSIZ>& name, sref<mnode> m, u64 *tsc = NULL) {
+    if (!map_.remove(name, m->inum_, tsc))
       return false;
     m->nlink_.dec();
     dirty(true);
@@ -193,10 +193,11 @@ public:
   }
 
   bool replace_from(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
-                    mdir* src, const strbuf<DIRSIZ>& srcname, sref<mnode> msrc) {
+                    mdir* src, const strbuf<DIRSIZ>& srcname, sref<mnode> msrc,
+                    u64 *tsc = NULL) {
     u64 dstinum = mdst ? mdst->inum_ : 0;
     if (!map_.replace_from(dstname, mdst ? &dstinum : nullptr,
-                           &src->map_, srcname, msrc->inum_))
+                           &src->map_, srcname, msrc->inum_, tsc))
       return false;
     if (mdst)
       mdst->nlink_.dec();
