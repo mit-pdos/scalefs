@@ -366,12 +366,14 @@ sys_rename(userptr_str old_path, userptr_str new_path)
        */
       return -1;
 
-    // XXX (rasha) Not linearizable, fix this.
     if (mfroadblock == mfold) {
-      if (mdold->as_dir()->remove(oldname, mfold)) {
+      if (mdnew->as_dir()->replace_common_inode(newname, mfroadblock,
+            mdold->as_dir(), oldname, &tsc)) {
+        // Deletion of the source succeeded while the destination remained
+        // unchanged. Log the operation in the logical log.
         if (mdold->fs_ == root_fs) {
           mfs_operation *op = new mfs_operation(mfs_operation::op_unlink, 
-                                mfold->inum_, mdold->inum_, oldname.buf_);
+              mfold->inum_, mdold->inum_, oldname.buf_, tsc);
           rootfs_interface->add_to_metadata_log(op);
         }
         return 0;
@@ -380,10 +382,9 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       if (mdnew->as_dir()->replace_from(newname, mfroadblock,
             mdold->as_dir(), oldname, mfold, &tsc)) {
         if (mdnew->fs_ == root_fs) {
-          mfroadblock = mdnew->as_dir()->lookup(newname);
           mfs_operation *op = new mfs_operation(mfs_operation::op_rename, 
                       oldname.buf_, mfold->inum_, mdold->inum_, newname.buf_, 
-                      mfroadblock->inum_, mdnew->inum_, mfroadblock->type(), tsc);
+                      mfold->inum_, mdnew->inum_, mfold->type(), tsc);
           rootfs_interface->add_to_metadata_log(op);
         }
         return 0;
