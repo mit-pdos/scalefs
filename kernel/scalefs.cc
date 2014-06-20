@@ -223,25 +223,31 @@ void mfs_interface::initialize_dir(sref<mnode> m) {
   load_dir(i, m);
 }
 
-// Applies metadata operations on the disk representation of the filesystem.
-void mfs_interface::apply_metadata_operation(mfs_operation *op, transaction *tr) {
-  switch (op->op_type) {
-    case mfs_operation::op_create:
-      mfs_create(op, tr); break;
-    case mfs_operation::op_link:
-      mfs_link(op, tr); break;
-    case mfs_operation::op_unlink:
-      mfs_unlink(op, tr); break;
-    case mfs_operation::op_rename:
-      mfs_rename(op, tr); break;
-    default:
-      panic("apply_metadata_operation: invalid operation");
-      break;
-  }
+// Adds a metadata operation to the logical log.
+void mfs_interface::add_to_metadata_log(mfs_operation *op) {
+  metadata_log->add_operation(op);
 }
 
+// Applies metadata operations logged in the logical journal. Called on
+// fsync to resolve any metadata dependencies.
+void mfs_interface::process_metadata_log() {
+  // Synchronize the oplog loggers.
+  auto guard = metadata_log->synchronize();
+
+  for (auto it = metadata_log->operation_vec.begin(); 
+      it != metadata_log->operation_vec.end();
+      it++) {
+    transaction *tr = new
+      transaction((*it)->timestamp);
+    (*it)->apply(tr);
+    add_to_journal(tr);
+    delete (*it);
+  }   
+  metadata_log->operation_vec.clear();
+}  
+
 // Create operation
-void mfs_interface::mfs_create(mfs_operation *op, transaction *tr) {
+void mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr) {
   if (op->mnode_type == mnode::types::file)      // sync the parent directory too
     create_file_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr, true);     
   else if (op->mnode_type == mnode::types::dir)  
@@ -249,13 +255,13 @@ void mfs_interface::mfs_create(mfs_operation *op, transaction *tr) {
 }
 
 // Link operation
-void mfs_interface::mfs_link(mfs_operation *op, transaction *tr) {
+void mfs_interface::mfs_link(mfs_operation_link *op, transaction *tr) {
   create_directory_entry(op->parent, op->name, op->mnode, op->mnode_type, tr);
   update_dir_inode(op->parent, tr);
 }
 
 // Unlink operation
-void mfs_interface::mfs_unlink(mfs_operation *op, transaction *tr) {
+void mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr) {
   char str[DIRSIZ];
   strcpy(str, op->name);
   std::vector<char *> names_vec;
@@ -265,19 +271,63 @@ void mfs_interface::mfs_unlink(mfs_operation *op, transaction *tr) {
 }
 
 // Rename operation
-void mfs_interface::mfs_rename(mfs_operation *op, transaction *tr) {
+void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
   char str[DIRSIZ];
   strcpy(str, op->name);
   std::vector<char *> names_vec;
   names_vec.push_back(str);
 
-  create_directory_entry(op->new_parent, op->newname, op->new_mnode, op->mnode_type, tr);
+  create_directory_entry(op->new_parent, op->newname, op->mnode, op->mnode_type, tr);
   update_dir_inode(op->new_parent, tr);
 
   unlink_old_inodes(op->parent, names_vec, tr);
   update_dir_inode(op->parent, tr);
 }
 
+// Adds a transaction to the physical journal.
+void mfs_interface::add_to_journal(transaction *tr) {
+  fs_journal->add_transaction(tr);
+}
+
+// Writes out the physical journal to the disk. Then applies the
+// flushed out transactions to the disk filesystem.
+void mfs_interface::flush_journal() {
+  auto journal_lock = fs_journal->prepare_for_commit();
+
+  for (auto it = fs_journal->transaction_log.begin(); 
+      it != fs_journal->transaction_log.end(); it++) {
+    // Make a list of the most current version of the diskblocks. For each
+    // block number pick the diskblock with the highest timestamp and
+    // discard the rest.
+    std::vector<transaction_diskblock> block_vec;
+    for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++) {
+      if ((b+1) != (*it)->blocks.end() && b->blocknum == (b+1)->blocknum)
+        continue;
+      block_vec.emplace_back(transaction_diskblock(*b));
+    }
+
+    // Write out the transaction blocks to the disk journal in timestamp order. 
+    write_transaction_to_journal(block_vec, (*it)->timestamp_);
+
+    // This transaction has been written to the journal. Writeback the changes 
+    // to original location on disk. 
+    for (auto b = block_vec.begin(); b != block_vec.end(); b++)
+      b->writeback();
+
+    block_vec.clear();
+    (*it)->blocks.clear();
+    delete (*it);
+
+    // The blocks have been written to disk successfully. Safe to delete
+    // this transaction from the journal. (This means that all the
+    // transactions till this point have made it to the disk. So the journal
+    // can simply be truncated.)
+    clear_journal();
+  }
+  fs_journal->transaction_log.clear();
+}
+
+// Writes out a single journal transaction to disk
 void mfs_interface::write_transaction_to_journal(
     const std::vector<transaction_diskblock> vec, const u64 timestamp) {
   sref<mnode> m = namei(root_fs->get(1), "sv6journal");
@@ -314,6 +364,7 @@ void mfs_interface::write_transaction_to_journal(
   m->as_file()->sync_journal_file();
 }
 
+// Called on reboot after a crash. Applies committed transactions.
 void mfs_interface::process_journal() {
   u32 offset = 0;
   u64 current_transaction = 0;
@@ -356,6 +407,7 @@ void mfs_interface::process_journal() {
   }
 }
 
+// Truncate the journal on the disk
 void mfs_interface::clear_journal() {
   sref<mnode> m = namei(root_fs->get(1), "sv6journal");
   m->as_file()->write_size().resize_nogrow(0);

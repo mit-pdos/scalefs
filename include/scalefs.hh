@@ -10,10 +10,15 @@
 class mnode;
 class transaction;
 class mfs_interface;
-typedef struct transaction_diskblock transaction_diskblock;
-typedef struct mfs_operation mfs_operation;
+class mfs_operation;
+class mfs_operation_create;
+class mfs_operation_link;
+class mfs_operation_unlink;
+class mfs_operation_rename;
+class mfs_logical_log;
 typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
+typedef struct transaction_diskblock transaction_diskblock;
 
 static u64 get_timestamp() {
   if (cpuid::features().rdtscp)
@@ -181,110 +186,6 @@ class journal {
     spinlock write_lock;
 };
 
-// Struct mfs_operation represents each filesystem metadata operation
-struct mfs_operation {
-  int op_type;      // type of the metadata operation
-  u64 mnode;        // mnode number on which the operation takes place
-  u64 parent;       // mnode number of the parent
-  u64 new_mnode;    // used for rename operation
-  u64 new_parent;   // used for rename operation
-  short mnode_type; // creation type for the new inode
-  char *name;       // name of the file/directory
-  char *newname;    // used for rename operation
-  u64 timestamp;    // timestamp returned at the linearization point of the
-                    // operation when it occurs in mfs
-
-  // Types of metadata operations
-  enum {
-    op_create,
-    op_link,
-    op_unlink,
-    op_rename,
-  };
-
-  mfs_operation(int type, u64 mn, u64 pt, char nm[], short m_type = 0, u64 t = 0)
-    : op_type(type), mnode(mn), parent(pt), mnode_type(m_type), newname(NULL),
-      timestamp(t) {
-      name = new char[DIRSIZ];
-      strncpy(name, nm, DIRSIZ);
-    }   
-
-  mfs_operation(int type, u64 mn, u32 st, u32 nb, u64 t = 0) 
-    : op_type(type), mnode(mn), name(NULL), newname(NULL), timestamp(t) {}   
-
-  mfs_operation(int type, char oldnm[], u64 mn, u64 pt, 
-      char newnm[], u64 newmn, u64 newpt, u8 m_type, u64 t = 0)
-    : op_type(type), mnode(mn), parent(pt), new_mnode(newmn),
-    new_parent(newpt), mnode_type(m_type), timestamp(t) {
-      name = new char[DIRSIZ];
-      newname = new char[DIRSIZ];
-      strncpy(name, oldnm, DIRSIZ);
-      strncpy(newname, newnm, DIRSIZ);
-    }   
-
-  mfs_operation(int type, u64 mn, u64 t = 0) 
-    : op_type(type), mnode(mn), name(NULL), newname(NULL), timestamp(t) {}   
-
-  ~mfs_operation() {
-    if (name)
-      delete[] name;
-    if (newname)
-      delete[] newname;
-  }
-
-  NEW_DELETE_OPS(mfs_operation);
-
-  void print_operation() {
-    cprintf("Op Type : %d\n", op_type);
-    cprintf("Mnode: %ld\n", mnode);
-    cprintf("Parent: %ld\n", parent);
-    cprintf("New mnode: %ld\n", new_mnode);
-    cprintf("New parent: %ld\n", new_parent);
-    cprintf("Mnode type: %d\n", mnode_type);
-    if (name)
-      cprintf("Name: %s\n", name);
-    if (newname)
-      cprintf("Newname: %s\n", newname);
-  }
-};
-
-// The "logical" log of metadata operations. These operations are applied on an fsync 
-// call so that any previous dependencies can be resolved before the mnode is fsynced.
-// The list of operations is oplog-maintained.
-class mfs_logical_log: public tsc_logged_object {
-  friend mfs_interface;
-
-  public:
-    NEW_DELETE_OPS(mfs_logical_log);
-  
-    // Oplog operation that implements adding a metadata operation to the log
-    struct add_op {
-      add_op(mfs_logical_log *l, mfs_operation *op): parent(l), operation(op) {
-        assert(l);
-      }
-      void operator()() {
-        parent->operation_vec.push_back(std::move(operation));
-      }
-      void print() {
-        operation->print_operation();
-      }
-      u64 get_tsc() {
-        return operation->timestamp;
-      }
-
-      private:
-      mfs_logical_log *parent;
-      mfs_operation *operation;
-    };
-
-    void add_operation(mfs_operation *op) {
-      get_logger()->push_with_tsc<add_op>(add_op(this, op));
-    }
-
-  protected:
-    mfs_operation_vec operation_vec;
-};
-
 // This class acts as an interfacing layer between the in-memory representation
 // of the filesystem and the on-disk representation. It provides functions to
 // convert mnode operations to inode operations and vice versa. This also
@@ -342,90 +243,24 @@ class mfs_interface {
 
     void create_mapping(u64 mnode, u64 inode);
     bool inode_lookup(u64 mnode, u64 *inum);
-
     // Initializes the root directory. Called during boot.
     sref<mnode> load_root();
 
-    // Adds a transaction to the physical journal.
-    void add_to_journal(transaction *tr) {
-      fs_journal->add_transaction(tr);
-    }
-
-    // Writes out the physical journal to the disk. Then applies the
-    // flushed out transactions to the disk filesystem.
-    void flush_journal() {
-      auto journal_lock = fs_journal->prepare_for_commit();
-
-      for (auto it = fs_journal->transaction_log.begin(); 
-        it != fs_journal->transaction_log.end(); it++) {
-        // Make a list of the most current version of the diskblocks. For each
-        // block number pick the diskblock with the highest timestamp and
-        // discard the rest.
-        std::vector<transaction_diskblock> block_vec;
-        for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++) {
-          if ((b+1) != (*it)->blocks.end() && b->blocknum == (b+1)->blocknum)
-            continue;
-          block_vec.emplace_back(transaction_diskblock(*b));
-        }
-
-        // Write out the transaction blocks to the disk journal in timestamp order. 
-        write_transaction_to_journal(block_vec, (*it)->timestamp_);
-
-        // This transaction has been written to the journal. Writeback the changes 
-        // to original location on disk. 
-        for (auto b = block_vec.begin(); b != block_vec.end(); b++)
-          b->writeback();
- 
-        block_vec.clear();
-        (*it)->blocks.clear();
-        delete (*it);
-
-        // The blocks have been written to disk successfully. Safe to delete
-        // this transaction from the journal. (This means that all the
-        // transactions till this point have made it to the disk. So the journal
-        // can simply be truncated.)
-        clear_journal();
-      }
-      fs_journal->transaction_log.clear();
-    }
-
-    // Writes out a single journal transaction to disk
+    // Journal functions
+    void add_to_journal(transaction *tr);
+    void flush_journal();
     void write_transaction_to_journal(const std::vector<transaction_diskblock> vec, 
           const u64 timestamp);
-
-    // Called on reboot after a crash. Applies committed transactions.
     void process_journal();
-
-    // Truncate the journal on the disk
     void clear_journal();
 
-    // Adds a metadata operation to the logical log.
-    void add_to_metadata_log(mfs_operation *op) {
-      metadata_log->add_operation(op);
-    }
-
-    // Applies metadata operations logged in the logical journal. Called on
-    // fsync to resolve any metadata dependencies.
-    void process_metadata_log() {
-      // Synchronize the oplog loggers.
-      auto guard = metadata_log->synchronize();
-
-      for (auto it = metadata_log->operation_vec.begin(); 
-          it != metadata_log->operation_vec.end(); it++) {
-        transaction *tr = new transaction((*it)->timestamp);
-        apply_metadata_operation(*it, tr);
-        add_to_journal(tr);
-        delete (*it);
-      }
-      metadata_log->operation_vec.clear();
-    }
-
     // Metadata functions
-    void apply_metadata_operation(mfs_operation *op, transaction *tr);
-    void mfs_create(mfs_operation *op, transaction *tr);
-    void mfs_link(mfs_operation *op, transaction *tr);
-    void mfs_unlink(mfs_operation *op, transaction *tr);
-    void mfs_rename(mfs_operation *op, transaction *tr);
+    void add_to_metadata_log(mfs_operation *op);
+    void process_metadata_log();
+    void mfs_create(mfs_operation_create *op, transaction *tr);
+    void mfs_link(mfs_operation_link *op, transaction *tr);
+    void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
+    void mfs_rename(mfs_operation_rename *op, transaction *tr);
 
   private:
     void load_dir(sref<inode> i, sref<mnode> m); 
@@ -435,11 +270,217 @@ class mfs_interface {
 
     // Mapping from disk inode numbers to the corresponding mnodes
     linearhash<u64, sref<mnode>> *inum_to_mnode;
-
     // Mapping from in-memory mnode numbers to disk inode numbers
     linearhash<u64, u64> *mnode_to_inode;
     
     journal *fs_journal;            // The phsyical journal
     mfs_logical_log *metadata_log;  // The logical log
+};
 
+class mfs_operation {
+  public:
+    NEW_DELETE_OPS(mfs_operation);
+  
+    mfs_operation(mfs_interface *p, u64 t): parent_mfs(p), timestamp(t) {
+      assert(parent_mfs);
+    }
+
+    virtual ~mfs_operation() {}
+    virtual void apply(transaction *tr) = 0;
+    virtual void print() = 0;
+
+  protected:
+    mfs_interface *parent_mfs;
+  public:
+    const u64 timestamp;
+};
+
+class mfs_operation_create: public mfs_operation {
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_create);
+
+    mfs_operation_create(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[],
+      short m_type)
+    : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type) {
+      name = new char[DIRSIZ];
+      strncpy(name, nm, DIRSIZ);
+    }
+
+    ~mfs_operation_create() {
+      delete[] name;
+    }
+    
+    void apply(transaction *tr) override {
+      parent_mfs->mfs_create(this, tr);
+    }
+
+    void print() {
+      cprintf("CREATE\n");
+      cprintf("Op Type : Create\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Mnode: %ld\n", mnode);
+      cprintf("Parent: %ld\n", parent);
+      cprintf("Name: %s\n", name);
+      cprintf("Mnode type: %d\n", mnode_type);
+    }
+
+  private:
+    u64 mnode;        // mnode number of the new file/directory
+    u64 parent;       // mnode number of the parent directory
+    char *name;       // name of the new file/directory
+    short mnode_type; // creation type for the new inode
+};
+
+class mfs_operation_link: public mfs_operation {
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_link);
+
+    mfs_operation_link(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[],
+      short m_type)
+    : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type) {
+      name = new char[DIRSIZ];
+      strncpy(name, nm, DIRSIZ);
+    }
+
+    ~mfs_operation_link() {
+      delete[] name;
+    }
+    
+    void apply(transaction *tr) override {
+      parent_mfs->mfs_link(this, tr);
+    }
+
+    void print() {
+      cprintf("LINK\n");
+      cprintf("Op Type : Link\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Mnode: %ld\n", mnode);
+      cprintf("Parent: %ld\n", parent);
+      cprintf("Name: %s\n", name);
+      cprintf("Mnode type: %d\n", mnode_type);
+    }
+
+  private:
+    u64 mnode;        // mnode number of the file/directory to be linked
+    u64 parent;       // mnode number of the parent directory
+    char *name;       // name of the file/directory
+    short mnode_type; // type of the inode (file/dir)
+};
+
+class mfs_operation_unlink: public mfs_operation {
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_unlink);
+
+    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mn, u32 pt, char nm[]) 
+    : mfs_operation(p, t), mnode(mn), parent(pt) {
+      name = new char[DIRSIZ];
+      strncpy(name, nm, DIRSIZ);
+    }
+
+    ~mfs_operation_unlink() {
+      delete[] name;
+    }
+    
+    void apply(transaction *tr) override {
+      parent_mfs->mfs_unlink(this, tr);
+    }
+
+    void print() {
+      cprintf("UNLINK\n");
+      cprintf("Op Type : Unlink\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Mnode: %ld\n", mnode);
+      cprintf("Parent: %ld\n", parent);
+      cprintf("Name: %s\n", name);
+    }
+
+  private:
+    u64 mnode;        // mnode number of the file/directory to be unlinked
+    u64 parent;       // mnode number of the parent directory
+    char *name;       // name of the file/directory
+};
+
+class mfs_operation_rename: public mfs_operation {
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_rename);
+
+    mfs_operation_rename(mfs_interface *p, u64 t, char oldnm[], u64 mn, u64 pt,
+      char newnm[], u64 newpt, u8 m_type)
+    : mfs_operation(p, t), mnode(mn), parent(pt), new_parent(newpt),
+      mnode_type(m_type) {
+      name = new char[DIRSIZ];
+      newname = new char[DIRSIZ];
+      strncpy(name, oldnm, DIRSIZ);
+      strncpy(newname, newnm, DIRSIZ);
+    }
+
+    ~mfs_operation_rename() {
+      delete[] name;
+      delete[] newname;
+    }
+
+    void apply(transaction *tr) override {
+      parent_mfs->mfs_rename(this, tr);
+    }
+
+    void print() {
+      cprintf("RENAME\n");
+      cprintf("Op Type : Rename\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Name: %s\n", name);
+      cprintf("Mnode: %ld\n", mnode);
+      cprintf("Parent: %ld\n", parent);
+      cprintf("Newname: %s\n", newname);
+      cprintf("New parent: %ld\n", new_parent);
+      cprintf("Mnode type: %d\n", mnode_type);
+    }
+
+  private:
+    u64 mnode;        // mnode number of the file/directory to be moved
+    u64 parent;       // mnode number of the source directory
+    u64 new_parent;   // mnode number of the destination directory
+    short mnode_type; // type of the inode
+    char *name;       // source name
+    char *newname;    // destination name
+};
+
+// The "logical" log of metadata operations. These operations are applied on an fsync 
+// call so that any previous dependencies can be resolved before the mnode is fsynced.
+// The list of operations is oplog-maintained.
+class mfs_logical_log: public tsc_logged_object {
+  friend mfs_interface;
+
+  public:
+    NEW_DELETE_OPS(mfs_logical_log);
+  
+    // Oplog operation that implements adding a metadata operation to the log
+    struct add_op {
+      add_op(mfs_logical_log *l, mfs_operation *op): parent(l), operation(op) {
+        assert(l);
+      }
+      void operator()() {
+        parent->operation_vec.push_back(std::move(operation));
+      }
+      void print() {
+        operation->print();
+      }
+      u64 get_tsc() {
+        return operation->timestamp;
+      }
+
+      private:
+      mfs_logical_log *parent;
+      mfs_operation *operation;
+    };
+
+    void add_operation(mfs_operation *op) {
+      get_logger()->push_with_tsc<add_op>(add_op(this, op));
+    }
+
+  protected:
+    mfs_operation_vec operation_vec;
 };
