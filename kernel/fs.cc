@@ -111,14 +111,14 @@ balloc(u32 dev, transaction *trans = NULL)
       if((locked->data[bi/8] & m) == 0){  // Is block free?
         locked->data[bi/8] |= m;  // Mark block in use on disk.
         found = true;
+        if (trans) {
+          char charbuf[BSIZE];
+          memmove(charbuf, locked->data, BSIZE);
+          transaction_diskblock b(blocknum, charbuf);
+          trans->add_block(b);
+        }
         break;
       }
-    }
-    if (trans) {
-      char charbuf[BSIZE];
-      memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(blocknum, charbuf);
-      trans->add_block(b);
     }
     if(found)
       break;
@@ -452,10 +452,11 @@ iupdate(sref<inode> ip, transaction *trans)
     }
   }
 
-  if (ip->addrs[NDIRECT] != 0 && ip->iaddrs.load() != nullptr) {
+  if (ip->addrs[NDIRECT] != 0) {
     bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto locked = bp->write();
-    memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
+    if (ip->iaddrs.load() != nullptr)
+      memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
@@ -745,6 +746,12 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
         bfree(ip->dev, addr, trans);
         goto retry2;
+      }
+      if (trans) {
+        char charbuf[BSIZE];
+        memmove(charbuf, (void*)ip->iaddrs.load(), IADDRSSZ);
+        transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
+        trans->add_block(b);
       }
     }
 
