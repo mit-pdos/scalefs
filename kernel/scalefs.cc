@@ -117,6 +117,7 @@ void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "truncate_file");
   itrunc(i, offset, tr);
+  iupdate(i, tr);
   root_fs->get(mfile_inum)->as_file()->remove_pgtable_mappings(offset);
 }
 
@@ -177,7 +178,7 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
     // The name now refers to a different inode. Unlink the old one and create a
     // new directory entry for this mapping.
     else
-      dir_remove_entry(i, name, tr);
+      dir_remove_entry(i, name);
   }
 
   ilock(i, 1);
@@ -204,7 +205,7 @@ void mfs_interface::unlink_old_inodes(u64 mdir_inum, std::vector<char*> names_ve
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mdir_inum, "unlink_old_inodes");
 
-  dir_remove_entries(i, names_vec, tr);
+  dir_remove_entries(i, names_vec);
   update_dir(i, tr);
 }
 

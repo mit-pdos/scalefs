@@ -117,10 +117,8 @@ int             dirlink(sref<inode>, const char*, u32, bool inc_link);
 int             dirunlink(sref<inode>, const char*, u32, bool dec_link);
 void            dir_init(sref<inode> dp);
 void            dir_flush(sref<inode> dp, transaction *trans = NULL);
-void            dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, 
-                  transaction *trans = NULL);
-void            dir_remove_entry(sref<inode> dp, char *entry_name, 
-                  transaction *trans = NULL);
+void            dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec);
+void            dir_remove_entry(sref<inode> dp, char *entry_name);
 
 // futex.cc
 typedef u64* futexkey_t;

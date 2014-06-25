@@ -1083,9 +1083,9 @@ dir_flush(sref<inode> dp, transaction *trans)
 }
 
 void
-dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, transaction *trans) {
+dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec) {
   dir_init(dp);
-  dp->dir.load()->enumerate([&names_vec, &dp, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
+  dp->dir.load()->enumerate([&names_vec, &dp](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
       bool exists = false;
       for (auto it = names_vec.begin(); it != names_vec.end(); it++) {
         if (strcmp(*it, name.buf_) == 0) {
@@ -1105,9 +1105,9 @@ dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec, transaction *tr
 }
 
 void
-dir_remove_entry(sref<inode> dp, char* entry_name, transaction *trans) {
+dir_remove_entry(sref<inode> dp, char* entry_name) {
   dir_init(dp);
-  dp->dir.load()->enumerate([&entry_name, &dp, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
+  dp->dir.load()->enumerate([&entry_name, &dp](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
       if (strcmp(entry_name, name.buf_) == 0) {
         sref<inode> ip = iget(dp->dev, inum);
         if (ip->type == T_DIR)

@@ -67,7 +67,8 @@ mfs::alloc(u8 type, u64 parent)
 }
 
 mnode::mnode(mfs* fs, u64 inum)
-  : fs_(fs), inum_(inum), initialized_(false), cache_pin_(false), valid_(false)
+  : fs_(fs), inum_(inum), initialized_(false), cache_pin_(false), dirty_(false),
+    valid_(false)
 {
   kstats::inc(&kstats::mnode_alloc);
 }
@@ -300,7 +301,7 @@ mfile::sync_journal_file() {
   auto size = read_size();
   // If the in-memory file is shorter, truncate the file on the disk.
   if (ilen > *size)
-    rootfs_interface->truncate_file(inum_, *size, journal_trans);
+    rootfs_interface->truncate_file(inum_, 0, journal_trans);
 
   // Flush all in-memory file pages to disk.
   auto page_end = pages_.find(PGROUNDUP(*size) / PGSIZE);
