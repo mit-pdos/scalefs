@@ -60,18 +60,16 @@ struct transaction_diskblock {
 
   // Write out the block contents to disk block # blocknum.
   void writeback() {
-    /*sref<buf> bp = buf::get(1, blocknum);
-    auto cmp = bp->read();
-    if (strcmp(cmp->data, blockdata) != 0)
-      cprintf("%ld: Bufcache and transaction diskblock %d don't match\n",
-        timestamp, blocknum);*/
     idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
   }
 
   void writeback_through_bufcache() {
     sref<buf> bp = buf::get(1, blocknum);
-    if (bp->dirty())
-      bp->writeback();
+    {
+      auto locked = bp->write();
+      memmove(locked->data, blockdata, BSIZE);
+    }
+    bp->writeback();
   }
 
 };
@@ -98,6 +96,13 @@ class transaction {
       blocks.push_back(b);
     }
 
+    // Add multiple disk blocks to a transaction.
+    void add_blocks(std::vector<transaction_diskblock> bvec) {
+      auto l = write_lock.guard();
+      for (auto b = bvec.begin(); b != bvec.end(); b++)
+        blocks.emplace_back(transaction_diskblock(*b));
+    }
+
     // Prepare the transaction for two phase commit. The transaction diskblocks
     // are ordered by timestamp. (This is needed to ensure that mutliple changes
     // to the same block are written to disk in the correct order.)
@@ -115,6 +120,15 @@ class transaction {
     void write_to_disk() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         b->writeback();
+      blocks.clear();
+    }
+
+    // Writes the blocks in the transaction to disk, and updates the
+    // corresponding bufcache entries too. Used on crash recovery to avoid
+    // rebooting after the changes have been applied.
+    void write_to_disk_update_bufcache() {
+      for (auto b = blocks.begin(); b != blocks.end(); b++)
+        b->writeback_through_bufcache();
       blocks.clear();
     }
 

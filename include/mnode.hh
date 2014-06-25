@@ -500,7 +500,6 @@ public:
   page_state get_page(u64 pageidx);
   void dirty_page(u64 pageidx);
   void sync_file();
-  void sync_journal_file();
   void remove_pgtable_mappings(u64 start_offset);
 };
 
