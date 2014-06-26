@@ -60,7 +60,8 @@ struct transaction_diskblock {
 
   // Write out the block contents to disk block # blocknum.
   void writeback() {
-    idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
+    sref<buf> bp = buf::get(1, blocknum);
+    bp->writeback();
   }
 
   void writeback_through_bufcache() {

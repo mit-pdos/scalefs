@@ -285,9 +285,34 @@ void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
   update_dir_inode(op->parent, tr);
 }
 
-// Adds a transaction to the physical journal.
+// Logs a transaction in the disk journal and then applies it to the disk
 void mfs_interface::add_to_journal(transaction *tr) {
-  fs_journal->add_transaction(tr);
+  // Make a list of the most current version of the diskblocks. For each
+  // block number pick the diskblock with the highest timestamp and
+  // discard the rest.
+  std::vector<transaction_diskblock> block_vec;
+  for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++) {
+    if ((b+1) != tr->blocks.end() && b->blocknum == (b+1)->blocknum)
+      continue;
+    block_vec.emplace_back(transaction_diskblock(*b));
+  }
+
+  // Write out the transaction blocks to the disk journal in timestamp order. 
+  write_transaction_to_journal(block_vec, tr->timestamp_);
+
+  // This transaction has been written to the journal. Writeback the changes 
+  // to original location on disk. 
+  for (auto b = block_vec.begin(); b != block_vec.end(); b++)
+    b->writeback();
+
+  block_vec.clear();
+  tr->blocks.clear();
+
+  // The blocks have been written to disk successfully. Safe to delete
+  // this transaction from the journal. (This means that all the
+  // transactions till this point have made it to the disk. So the journal
+  // can simply be truncated.)
+  clear_journal();
 }
 
 // Writes out the physical journal to the disk. Then applies the

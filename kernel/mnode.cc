@@ -284,7 +284,6 @@ mfile::sync_file()
   
   // Add the fsync transaction to the journal and flush the journal to disk.
   rootfs_interface->add_to_journal(trans);
-  rootfs_interface->flush_journal();
   dirty(false);
 }
 
@@ -296,13 +295,12 @@ mdir::sync_dir()
 
   // Apply pending metadata operations to the disk filesystem first.
   // This takes care of any dependencies.
-  rootfs_interface->process_metadata_log();
-
   // Flush out the physical journal to disk. The directory entries do not need
   // to be flushed explicitly. If there were any operations on the directory
   // they will have been applied when the logical log was processed. This means
   // that the fsync will not block any operations on the mdir.
-  rootfs_interface->flush_journal();
+  rootfs_interface->process_metadata_log();
+
   dirty(false);
 }
 
