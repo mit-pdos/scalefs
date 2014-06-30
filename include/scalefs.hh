@@ -60,8 +60,7 @@ struct transaction_diskblock {
 
   // Write out the block contents to disk block # blocknum.
   void writeback() {
-    sref<buf> bp = buf::get(1, blocknum);
-    bp->writeback();
+    idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
   }
 
   void writeback_through_bufcache() {
@@ -164,6 +163,7 @@ class journal {
   public:
     NEW_DELETE_OPS(journal);
     journal() {
+      current_off = 0;
       transaction_log = std::vector<transaction*>();
     }
 
@@ -194,11 +194,16 @@ class journal {
       return (t1->timestamp_ < t2->timestamp_);
     }
 
+    u32 current_offset() { return current_off; }
+    void update_offset(u32 new_off) { current_off = new_off; }
+
   private:
     // List of transactions (Unordered).
     std::vector<transaction*> transaction_log;
     // Guards updates to the transaction_log
     spinlock write_lock;
+    // Current size of flushed out transactions on the disk
+    u32 current_off;
 };
 
 // This class acts as an interfacing layer between the in-memory representation
@@ -263,6 +268,7 @@ class mfs_interface {
 
     // Journal functions
     void add_to_journal(transaction *tr);
+    void add_apply_to_journal(transaction *tr);
     void flush_journal();
     void write_transaction_to_journal(const std::vector<transaction_diskblock> vec, 
           const u64 timestamp);

@@ -285,8 +285,13 @@ void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
   update_dir_inode(op->parent, tr);
 }
 
-// Logs a transaction in the disk journal and then applies it to the disk
+// Logs a transaction to the physical journal. Does not apply it to the disk yet
 void mfs_interface::add_to_journal(transaction *tr) {
+  fs_journal->add_transaction(tr);
+}
+
+// Logs a transaction in the disk journal and then applies it to the disk
+void mfs_interface::add_apply_to_journal(transaction *tr) {
   // Make a list of the most current version of the diskblocks. For each
   // block number pick the diskblock with the highest timestamp and
   // discard the rest.
@@ -347,7 +352,8 @@ void mfs_interface::flush_journal() {
     // The blocks have been written to disk successfully. Safe to delete
     // this transaction from the journal. (This means that all the
     // transactions till this point have made it to the disk. So the journal
-    // can simply be truncated.)
+    // can simply be truncated. Since the journal is static, the journal file
+    // simply needs to be zero-filled.)
     clear_journal();
   }
   fs_journal->transaction_log.clear();
@@ -358,7 +364,7 @@ void mfs_interface::write_transaction_to_journal(
     const std::vector<transaction_diskblock> vec, const u64 timestamp) {
   transaction *trans = new transaction(0);
   sref<inode> ip = namei(sref<inode>(), "/sv6journal");
-  u32 offset = ip->size;
+  u32 offset = fs_journal->current_offset();
 
   // Each transaction begins with a start block
   journal_block_header hdstart(timestamp, 0, jrnl_start);
@@ -401,8 +407,7 @@ void mfs_interface::write_transaction_to_journal(
   offset += BSIZE;
 
   // Update the journal file inode too.
-  update_size(ip, offset, trans); 
-  iupdate(ip, trans);
+  fs_journal->update_offset(offset);
   trans->write_to_disk();
 }
 
@@ -410,17 +415,27 @@ void mfs_interface::write_transaction_to_journal(
 void mfs_interface::process_journal() {
   u32 offset = 0;
   u64 current_transaction = 0;
+  bool jrnl_error = false;
   transaction *trans = new transaction(0);
   std::vector<transaction_diskblock> block_vec;
-  char hdbuf[sizeof(journal_block_header)];
   sref<inode> ip = namei(sref<inode>(), "/sv6journal");
+  ilock(ip, 1);
 
-  while (readi(ip, hdbuf, offset, sizeof(journal_block_header)) == 
-    sizeof(journal_block_header)) {
+  while (!jrnl_error) {
+    char hdbuf[sizeof(journal_block_header)];
     char databuf[BSIZE];
+    if (readi(ip, hdbuf, offset, sizeof(journal_block_header)) !=
+      sizeof(journal_block_header))
+      break;
+
+    char hdcmp[sizeof(journal_block_header)];
+    memset(&hdcmp, 0, sizeof(journal_block_header));
+    if (!memcmp(hdcmp, hdbuf, sizeof(journal_block_header)))
+      break;  // Zero-filled block indicates end of journal
+
     offset += sizeof(journal_block_header);
     if (readi(ip, databuf, offset, BSIZE) != BSIZE)
-      panic("Crash recovery failed!");
+      break;
     offset += BSIZE;
 
     journal_block_header hd;
@@ -433,36 +448,37 @@ void mfs_interface::process_journal() {
         block_vec.clear();
         break;
       case jrnl_data:
-        if (hd.timestamp != current_transaction)
-          panic("Crash recovery failed!");
-        block_vec.emplace_back(transaction_diskblock(hd.blocknum, databuf));
+        if (hd.timestamp == current_transaction)
+          block_vec.emplace_back(transaction_diskblock(hd.blocknum, databuf));
+        else
+          jrnl_error = true;
         break;
       case jrnl_commit:
-        if (hd.timestamp != current_transaction)
-          panic("Crash recovery failed!");
-        trans->add_blocks(block_vec);
+        if (hd.timestamp == current_transaction)
+          trans->add_blocks(block_vec);
+        else
+          jrnl_error = true;
         break;
       default:
-        panic("Unhandled block type. Crash recovery failed!");
+        jrnl_error = true;
         break;
     }
   }
 
-  transaction *jtr = new transaction(0);
-  itrunc(ip, 0, jtr);
-  iupdate(ip, jtr);
-  jtr->write_to_disk_update_bufcache();
+  // Zero-fill the journal
+  zero_fill(ip, 8459264);
+  iunlock(ip);
 
   trans->write_to_disk_update_bufcache();
 }
 
-// Truncate the journal on the disk
+// Clear (zero-fill) the journal file on the disk
 void mfs_interface::clear_journal() {
-  transaction *trans = new transaction(0);
   sref<inode> ip = namei(sref<inode>(), "/sv6journal");
-  itrunc(ip, 0, trans);
-  iupdate(ip, trans);
-  trans->write_to_disk();
+  ilock(ip, 1);
+  zero_fill(ip, fs_journal->current_offset());
+  iunlock(ip);
+  fs_journal->update_offset(0);
 }
 
 bool mfs_interface::inode_lookup(u64 mnode, u64 *inum) {

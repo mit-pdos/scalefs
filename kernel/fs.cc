@@ -69,6 +69,18 @@ bzero(int dev, int bno, transaction *trans = NULL)
   }
 }
 
+// Zero a block and writeback to disk. Used to zero out journal blocks
+static void
+bzero_writeback(int dev, int bno)
+{
+  sref<buf> bp = buf::get(dev, bno);
+  {
+    auto locked = bp->write();
+    memset(locked->data, 0, BSIZE);
+  }
+  bp->writeback();
+}
+
 //
 // Blocks
 //
@@ -843,6 +855,55 @@ class diskblock : public rcu_freed {
 
   NEW_DELETE_OPS(diskblock)
 };
+
+// Fill the file with zeroes till offset. Used to "clear" the journal file.
+void
+zero_fill(sref<inode> ip, u32 offset)
+{
+  scoped_gc_epoch e;
+
+  auto w = ip->seq.write_begin();
+  u32 bno = BLOCKROUNDUP(offset);
+
+  if (bno < NDIRECT) {
+  for (int i = 0; i < bno; i++)
+    if (ip->addrs[i])
+      bzero_writeback(ip->dev, ip->addrs[i]);
+  }
+  bno -= NDIRECT;
+
+  if (bno < NINDIRECT) {
+    if (ip->addrs[NDIRECT]) {
+      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+      auto copy = bp->read();
+      u32* a = (u32*)copy->data;
+      for(int i = 0; i < bno; i++)
+        if(a[i])
+          bzero_writeback(ip->dev, a[i]);
+    }
+  }
+  bno -= NINDIRECT;
+
+  if (bno < NINDIRECT * NINDIRECT) {
+    if (ip->addrs[NDIRECT+1]) {
+      sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+      auto copy1 = bp1->read();
+      u32* a1 = (u32*)copy1->data;
+      u32 end1 = (bno%NINDIRECT) ? bno/NINDIRECT+1 : bno/NINDIRECT;
+      for(int i = 0; i < end1; i++) {
+        if(a1[i]) {
+          sref<buf> bp2 = buf::get(ip->dev, a1[i]);
+          auto copy2 = bp2->read();
+          u32* a2 = (u32*)copy2->data;
+          u32 end2 = (i < end1-1) ? NINDIRECT : bno%NINDIRECT;
+          for(int j = 0; j < end2; j++)
+            if(a2[j])
+              bzero_writeback(ip->dev, a2[j]);
+        }
+      }
+    }
+  }
+}
 
 void
 itrunc(sref<inode> ip, u32 offset, transaction *trans)
