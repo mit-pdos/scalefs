@@ -204,6 +204,7 @@ namespace oplog {
       }
     };
 
+  protected:
     // Per-type, per-CPU, per-object logger.  The per-CPU part of this
     // is unprotected because we lock internally.
     static percpu<cache, NO_CRITICAL> cache_;
@@ -223,6 +224,7 @@ namespace oplog {
   // The logger class used by tsc_logged_object.
   class tsc_logger
   {
+  public:
     class op
     {
     public:
@@ -232,6 +234,7 @@ namespace oplog {
       virtual void print() = 0;
     };
 
+  private:
     template<class CB>
     class op_inst : public op
     {
@@ -309,6 +312,25 @@ namespace oplog {
     }
 
     size_t ops_size() { return ops_.size(); }
+
+    // Returns the number of ops with timestamp less than max_tsc
+    size_t ops_before_max_tsc(u64 max_tsc) {
+      size_t size = 0;
+      for (auto it = ops_.begin(); it != ops_.end(); it++, size++)
+        if ((*it)->tsc >= max_tsc)
+          break;
+      return size;
+    }
+
+    // Erases ops with timestamp less than max_tsc
+    void clear_before_max_tsc(u64 max_tsc) {
+      auto it = ops_.begin();
+      while (it != ops_.end() && (*it)->tsc < max_tsc) {
+        ops_.erase(ops_.begin());
+        it = ops_.begin();
+      }
+    }
+
     op* op_at_index(int i) { return ops_.at(i); }
   };
 
@@ -316,6 +338,7 @@ namespace oplog {
   // synchronized TSCs.
   class tsc_logged_object : public logged_object<tsc_logger>
   {
+  protected:
     typedef struct {
       tsc_logger::op *op;
       u64 logger_index;
@@ -362,7 +385,7 @@ namespace oplog {
     // This should heap-merge all of the loggers
     // in pending_ and apply their operations in order.
     void flush_finish() override {
-      if (pending_.size() < 0)
+      if (pending_.size() == 0)
         return;
       int size = 0, i = 0;
       std::vector<int> indices;
@@ -376,7 +399,6 @@ namespace oplog {
       if (size == 0)
         return;
       //Merge the operations using heaps
-      i = 0;
       min_heap_.clear();
       for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
         if (it->ops_size() == 0)
@@ -417,6 +439,154 @@ namespace oplog {
         it->reset();
       pending_.clear();
       min_heap_.clear();
+    }
+
+  };
+
+  class mfs_logged_object : public tsc_logged_object {
+    typedef struct mfs_tsc {
+      u64 tsc_value;
+      seqcount<u32> seq;
+    } mfs_tsc;
+    // The starting time of the latest mfs metadata operation on each core
+    percpu<mfs_tsc> mfs_start_tsc;
+    // The ending time of the latest mfs metadata operation on each core
+    percpu<mfs_tsc> mfs_end_tsc;
+
+    // Heap-merges pending loggers and applies the operations, leaving behind
+    // operations that have timestamps greater than or equal to max_tsc.
+    void flush_finish_max_timestamp(u64 max_tsc) {
+      if (pending_.size() == 0)
+        return;
+      int size = 0, i = 0;
+      std::vector<int> indices;
+      std::vector<size_t> ops_size_vec;
+      std::vector<tsc_logger::op*> merged_ops;
+      for(auto it = pending_.begin(); it < pending_.end(); it++) {
+        it->sort_ops();
+        int sz = it->ops_before_max_tsc(max_tsc);
+        ops_size_vec.push_back(sz);
+        size += sz;
+        indices.push_back(0);
+      }
+
+      if (size == 0)
+        return;
+      //Merge the operations using heaps
+      min_heap_.clear();
+      for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
+        if (ops_size_vec.at(i) == 0)
+          continue;
+        heap_element temp;
+        temp.op = it->op_at_index(0);
+        temp.logger_index = i;
+        min_heap_.push_back(temp);
+      }
+      for(i = min_heap_.size()-1; i >= 0; i--)
+        min_heapify(i);
+      merged_ops.push_back(min_heap_.at(0).op);
+
+      i = 1;
+      while (i < size) {
+        int index = min_heap_.at(0).logger_index;
+        indices.at(index)++;
+        if (indices.at(index) < ops_size_vec.at(index)) {
+          heap_element temp;
+          temp.op = pending_.at(index).op_at_index(indices.at(index));
+          temp.logger_index = index;
+          min_heap_.at(0) = temp;
+          i++;
+        } else {
+          min_heap_.at(0) = min_heap_.back();
+          min_heap_.pop_back();
+        }
+        if (min_heap_.size() == 0)
+          break;
+        min_heapify(0);
+        merged_ops.push_back(min_heap_.at(0).op);
+      }
+
+      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
+        ((tsc_logger::op *)(*it))->run();
+      }
+      for(auto it = pending_.begin(); it < pending_.end(); it++)
+        it->clear_before_max_tsc(max_tsc);
+
+      i = 0;
+      for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
+        if(it->ops_size() == 0) {
+          pending_.erase(pending_.begin()+i);
+          it--;
+          i--;
+        }
+      }
+
+      min_heap_.clear();
+    }
+
+  public:
+    void update_start_tsc(size_t cpu, u64 start_tsc) {
+      auto w = mfs_start_tsc[cpu].seq.write_begin();
+      mfs_start_tsc[cpu].tsc_value = start_tsc;
+    }
+
+    void update_end_tsc(size_t cpu, u64 end_tsc) {
+      auto w = mfs_end_tsc[cpu].seq.write_begin();
+      mfs_end_tsc[cpu].tsc_value = end_tsc;
+    }
+
+    // The same as logged_object::synchronize except that we might have to wait
+    // for cores which have in-flight operations that need to be logged before
+    // synchronization.
+    lock_guard<spinlock> wait_synchronize(u64 wait_tsc) {
+      auto guard = sync_lock_.guard();
+
+      for (size_t i = 0; i < NCPU; ++i) {
+        auto r_start = mfs_start_tsc[i].seq.read_begin();
+        auto r_end = mfs_end_tsc[i].seq.read_begin();
+        u64 start_tsc = 0, end_tsc = 0;
+        while (r_start.do_retry())
+          start_tsc = mfs_start_tsc[i].tsc_value;
+        while (r_end.do_retry())
+          end_tsc = mfs_end_tsc[i].tsc_value;
+
+        // end_tsc < start_tsc indicates that the core in question is executing
+        // an operation that might not have been logged yet. We can only be sure
+        // that the operation has been logged once the end_tsc value has been
+        // updated, which is the last thing an operation does before exiting. We
+        // need to wait for an operation that is executing to be logged in order
+        // to know where the linearization point of the operation lies with
+        // respect to wait_tsc.
+        if (end_tsc < start_tsc && start_tsc < wait_tsc)
+          while (!r_end.need_retry());
+      }
+
+      while (1) {
+        bool any = false;
+        // Gather loggers
+        for (auto cpu : cpus_) {
+          auto way = cache_[cpu].hash_way(this);
+          auto way_guard = way->lock_.guard();
+          auto cur_obj = way->obj_.load(std::memory_order_relaxed);
+          assert(cur_obj == this);
+          // Flush only those operations whose linearization points have
+          // timestamps <= wait_tsc. Operations that occurred later do not need
+          // to take affect yet.
+          flush_logger(&way->logger_);
+          cpus_.atomic_reset(cpu);
+          any = true;
+        }
+        if (!any)
+          break;
+        // Make sure we see concurrent updates to cpus_.
+        barrier();
+      }
+
+      // Tell the logged object that it has a consistent set of
+      // loggers and should do any final flushing.
+      flush_finish_max_timestamp(wait_tsc);
+
+      return std::move(guard);
     }
 
   };

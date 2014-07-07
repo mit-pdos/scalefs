@@ -224,6 +224,14 @@ void mfs_interface::initialize_dir(sref<mnode> m) {
   load_dir(i, m);
 }
 
+void mfs_interface::metadata_op_start(size_t cpu, u64 tsc_val) {
+  metadata_log->update_start_tsc(cpu, tsc_val);
+}
+
+void mfs_interface::metadata_op_end(size_t cpu, u64 tsc_val) {
+  metadata_log->update_end_tsc(cpu, tsc_val);
+}
+
 // Adds a metadata operation to the logical log.
 void mfs_interface::add_to_metadata_log(mfs_operation *op) {
   metadata_log->add_operation(op);
@@ -231,9 +239,9 @@ void mfs_interface::add_to_metadata_log(mfs_operation *op) {
 
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
-void mfs_interface::process_metadata_log() {
+void mfs_interface::process_metadata_log(u64 max_tsc) {
   // Synchronize the oplog loggers.
-  auto guard = metadata_log->synchronize();
+  auto guard = metadata_log->wait_synchronize(max_tsc);
 
   for (auto it = metadata_log->operation_vec.begin(); 
       it != metadata_log->operation_vec.end();
@@ -243,9 +251,9 @@ void mfs_interface::process_metadata_log() {
     (*it)->apply(tr);
     add_to_journal(tr);
     delete (*it);
-  }   
+  }
   metadata_log->operation_vec.clear();
-}  
+}
 
 // Create operation
 void mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr) {

@@ -276,8 +276,10 @@ class mfs_interface {
     void clear_journal();
 
     // Metadata functions
+    void metadata_op_start(size_t cpu, u64 tsc_val);
+    void metadata_op_end(size_t cpu, u64 tsc_val);
     void add_to_metadata_log(mfs_operation *op);
-    void process_metadata_log();
+    void process_metadata_log(u64 max_tsc);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
@@ -472,7 +474,7 @@ class mfs_operation_rename: public mfs_operation {
 // The "logical" log of metadata operations. These operations are applied on an fsync 
 // call so that any previous dependencies can be resolved before the mnode is fsynced.
 // The list of operations is oplog-maintained.
-class mfs_logical_log: public tsc_logged_object {
+class mfs_logical_log: public mfs_logged_object {
   friend mfs_interface;
 
   public:
