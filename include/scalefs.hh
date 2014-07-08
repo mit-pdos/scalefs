@@ -279,7 +279,8 @@ class mfs_interface {
     void metadata_op_start(size_t cpu, u64 tsc_val);
     void metadata_op_end(size_t cpu, u64 tsc_val);
     void add_to_metadata_log(mfs_operation *op);
-    void process_metadata_log(u64 max_tsc);
+    void process_metadata_log(u64 max_tsc, u64 inum);
+    void find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
@@ -312,6 +313,11 @@ class mfs_operation {
     virtual void apply(transaction *tr) = 0;
     virtual void print() = 0;
 
+    // Checks if the mnode the mfs_operation is performed on is present in the
+    // vector mnode_vec. If yes, the other mnodes the operation modifies (for
+    // eg. the parent mnode) are added to mnode_vec.
+    virtual bool check_dependency(std::vector<u64> &mnode_vec) = 0;
+
   protected:
     mfs_interface *parent_mfs;
   public:
@@ -336,6 +342,19 @@ class mfs_operation_create: public mfs_operation {
     
     void apply(transaction *tr) override {
       parent_mfs->mfs_create(this, tr);
+    }
+
+    bool check_dependency (std::vector<u64> &mnode_vec) override {
+      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+        if (*it == mnode) {
+          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
+            if (*i == parent)
+              return true;
+          mnode_vec.push_back(parent);
+          return true;
+        }
+      }
+      return false;
     }
 
     void print() {
@@ -375,6 +394,19 @@ class mfs_operation_link: public mfs_operation {
       parent_mfs->mfs_link(this, tr);
     }
 
+    bool check_dependency (std::vector<u64> &mnode_vec) override {
+      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+        if (*it == mnode) {
+          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
+            if (*i == parent)
+              return true;
+          mnode_vec.push_back(parent);
+          return true;
+        }
+      }
+      return false;
+    }
+
     void print() {
       cprintf("LINK\n");
       cprintf("Op Type : Link\n");
@@ -409,6 +441,19 @@ class mfs_operation_unlink: public mfs_operation {
     
     void apply(transaction *tr) override {
       parent_mfs->mfs_unlink(this, tr);
+    }
+
+    bool check_dependency (std::vector<u64> &mnode_vec) override {
+      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+        if (*it == mnode) {
+          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
+            if (*i == parent)
+              return true;
+          mnode_vec.push_back(parent);
+          return true;
+        }
+      }
+      return false;
     }
 
     void print() {
@@ -448,6 +493,26 @@ class mfs_operation_rename: public mfs_operation {
 
     void apply(transaction *tr) override {
       parent_mfs->mfs_rename(this, tr);
+    }
+
+    bool check_dependency (std::vector<u64> &mnode_vec) override {
+      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+        if (*it == mnode) {
+          bool flag1 = false, flag2 = false;
+          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++) {
+            if (*i == parent)
+              flag1 = true;
+            else if (*i == new_parent)
+              flag2 = true;
+          }
+          if (!flag1)
+            mnode_vec.push_back(parent);
+          if (!flag2)
+            mnode_vec.push_back(new_parent);
+          return true;
+        }
+      }
+      return false;
     }
 
     void print() {

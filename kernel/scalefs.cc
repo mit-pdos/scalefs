@@ -239,20 +239,45 @@ void mfs_interface::add_to_metadata_log(mfs_operation *op) {
 
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
-void mfs_interface::process_metadata_log(u64 max_tsc) {
+void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum) {
   // Synchronize the oplog loggers.
   auto guard = metadata_log->wait_synchronize(max_tsc);
 
-  for (auto it = metadata_log->operation_vec.begin(); 
-      it != metadata_log->operation_vec.end();
-      it++) {
-    transaction *tr = new
-      transaction((*it)->timestamp);
+  // Find out the metadata operations the fsync() call depends on and just apply
+  // those. inum refers to the mnode that is executing the fsync().
+  mfs_operation_vec dependent_ops;
+  find_dependent_ops(inum, dependent_ops);
+
+  auto it = dependent_ops.end();
+  do {
+    it--;
+    transaction *tr = new transaction((*it)->timestamp);
     (*it)->apply(tr);
     add_to_journal(tr);
     delete (*it);
-  }
-  metadata_log->operation_vec.clear();
+  } while (it != dependent_ops.begin());
+
+  dependent_ops.clear();
+}
+
+// Goes through the metadata log and filters out the operations that the fsync()
+// call depends on. inum refers to the mnode that is executing the fsync().
+void mfs_interface::find_dependent_ops(u64 inum,
+  mfs_operation_vec &dependent_ops) {
+  // mnode_vec is a monotonically growing list of mnode inums whose dependent
+  // operations need to be flushed too.
+  std::vector<u64> mnode_vec;
+  mnode_vec.push_back(inum);
+  auto it = metadata_log->operation_vec.end();
+  int index = metadata_log->operation_vec.size();
+  do {
+    it--;
+    index--;
+    if((*it)->check_dependency(mnode_vec)) {
+      dependent_ops.push_back(*it);
+      metadata_log->operation_vec.erase(metadata_log->operation_vec.begin()+index);
+    }
+  } while (it != metadata_log->operation_vec.begin());
 }
 
 // Create operation
