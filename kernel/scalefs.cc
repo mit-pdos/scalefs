@@ -248,6 +248,9 @@ void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum) {
   mfs_operation_vec dependent_ops;
   find_dependent_ops(inum, dependent_ops);
 
+  if (dependent_ops.size() == 0)
+    return;
+
   auto it = dependent_ops.end();
   do {
     it--;
@@ -264,6 +267,10 @@ void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum) {
 // call depends on. inum refers to the mnode that is executing the fsync().
 void mfs_interface::find_dependent_ops(u64 inum,
   mfs_operation_vec &dependent_ops) {
+ 
+  if (metadata_log->operation_vec.size() == 0)
+    return;
+
   // mnode_vec is a monotonically growing list of mnode inums whose dependent
   // operations need to be flushed too.
   std::vector<u64> mnode_vec;
