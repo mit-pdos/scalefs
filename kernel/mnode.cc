@@ -191,8 +191,8 @@ mfile::get_page(u64 pageidx)
       if (nbytes > PGSIZE)
         nbytes = PGSIZE;
 
-      auto lock = pages_.acquire(it);
       assert(nbytes == rootfs_interface->load_file_page(inum_, p, pos, nbytes));
+      auto lock = pages_.acquire(it);
       page_state ps(pi);
       if (PGOFFSET(nbytes))
         ps.set_partial_page(true);

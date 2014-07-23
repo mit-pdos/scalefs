@@ -109,8 +109,7 @@ class transaction {
     void prepare_for_commit() {
       // All relevant blocks must have been added to the transaction at
       // this point. A try acquire must succeed.
-      auto l = write_lock.try_guard();
-      assert(static_cast<bool>(l));
+      assert(write_lock.try_acquire());
 
       // Sort the diskblocks in timestamp order.
       std::sort(blocks.begin(), blocks.end(), compare_transaction_db);
@@ -153,7 +152,7 @@ class transaction {
     std::vector<transaction_diskblock> blocks;
 
     // Guards updates to the transaction_diskblock vector.
-    spinlock write_lock;
+    sleeplock write_lock;
 };
 
 // The "physical" journal is made up of transactions, which in turn are made up of
@@ -176,7 +175,7 @@ class journal {
       transaction_log.push_back(tr);
     }
 
-    lock_guard<spinlock> prepare_for_commit() {
+    lock_guard<sleeplock> prepare_for_commit() {
       auto l = write_lock.guard();
       
       // The transactions are present in the transaction log in the order in
@@ -201,7 +200,7 @@ class journal {
     // List of transactions (Unordered).
     std::vector<transaction*> transaction_log;
     // Guards updates to the transaction_log
-    spinlock write_lock;
+    sleeplock write_lock;
     // Current size of flushed out transactions on the disk
     u32 current_off;
 };

@@ -465,15 +465,15 @@ private:
   radix_array<page_state, maxidx, PGSIZE,
               kalloc_allocator<page_state>> pages_;
 
-  spinlock resize_lock_;
+  sleeplock resize_lock_;
   seqcount<u32> size_seq_;
   u64 size_;
 
 public:
-  class resizer : public lock_guard<spinlock>,
+  class resizer : public lock_guard<sleeplock>,
                   public seq_writer {
   private:
-    resizer(mfile* mf) : lock_guard<spinlock>(&mf->resize_lock_),
+    resizer(mfile* mf) : lock_guard<sleeplock>(&mf->resize_lock_),
                          seq_writer(&mf->size_seq_),
                          mf_(mf) {}
     mfile* mf_;
