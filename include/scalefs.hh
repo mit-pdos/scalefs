@@ -109,7 +109,8 @@ class transaction {
     void prepare_for_commit() {
       // All relevant blocks must have been added to the transaction at
       // this point. A try acquire must succeed.
-      assert(write_lock.try_acquire());
+      auto l = write_lock.try_guard();
+      assert(static_cast<bool>(l));
 
       // Sort the diskblocks in timestamp order.
       std::sort(blocks.begin(), blocks.end(), compare_transaction_db);

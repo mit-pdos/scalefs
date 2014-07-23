@@ -32,6 +32,10 @@ class sleeplock {
     return lock_guard<sleeplock>(this);
   }
 
+  lock_guard<sleeplock> try_guard() {
+    return lock_guard<sleeplock>(this, lock_guard<sleeplock>::try_guard_tag);
+  }
+
  private:
   spinlock spinlock_;
   condvar cv_;

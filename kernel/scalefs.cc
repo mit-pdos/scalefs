@@ -240,15 +240,14 @@ void mfs_interface::add_to_metadata_log(mfs_operation *op) {
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum) {
-  { // Synchronize the oplog loggers.
-    // XXX (rasha) Is doing this within a scoped block safe?
-    auto guard = metadata_log->wait_synchronize(max_tsc);
-  }
-
-  // Find out the metadata operations the fsync() call depends on and just apply
-  // those. inum refers to the mnode that is executing the fsync().
   mfs_operation_vec dependent_ops;
-  find_dependent_ops(inum, dependent_ops);
+  {
+    // Synchronize the oplog loggers.
+    auto guard = metadata_log->wait_synchronize(max_tsc);
+    // Find out the metadata operations the fsync() call depends on and just
+    // apply those. inum refers to the mnode that is executing the fsync().
+    find_dependent_ops(inum, dependent_ops);
+  }
 
   if (dependent_ops.size() == 0)
     return;
