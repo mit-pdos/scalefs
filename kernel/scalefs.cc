@@ -583,6 +583,9 @@ void mfs_interface::load_dir(sref<inode> i, sref<mnode> m) {
       continue;
 
     sref<mnode> mf = load_dir_entry(de.inum, m);
+    if (!mf)
+      continue;
+
     strbuf<DIRSIZ> name(de.name);
     // No links are held to the directory itself (via ".")
     // A link to the parent was already created at the time of mnode creation.
