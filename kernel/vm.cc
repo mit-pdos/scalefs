@@ -175,7 +175,7 @@ vmap::copy()
 
       // Copy the descriptor
       nm->vpfs_.fill(out, it->dup());
-      if (myproc() != bootproc && out->page) {
+      if (myproc() != bootproc && out->page && out->inode) {
         std::pair<vmap*, uptr> rmap = std::make_pair(&*(nm.get()), out.index()*PGSIZE);
         out->page->add_pte(rmap);
       }
@@ -230,7 +230,7 @@ again:
       // Verify unmapped region now that we hold the lock
       if (!fixed)
         goto again;
-      if (myproc() != bootproc && it->page) {
+      if (myproc() != bootproc && it->page && it->inode) {
         std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
         pages.add(std::move(it->page), rmap);
       } else
@@ -273,7 +273,7 @@ vmap::remove(uptr start, uptr len)
     auto lock = vpfs_.acquire(begin, end);
     for (auto it = begin; it < end; it += it.span()) {
       if (it.is_set()) {
-        if (myproc() != bootproc && it->page) {
+        if (myproc() != bootproc && it->page && it->inode) {
           std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
           pages.add(std::move(it->page), rmap);
         } else
@@ -317,7 +317,7 @@ vmap::willneed(uptr start, uptr len)
     bool writable = (it->flags & vmdesc::FLAG_WRITE);
     if (writable && (it->flags & vmdesc::FLAG_COW)) {
       sref<page_info> old_page = it->page;
-      if (myproc() != bootproc && old_page) {
+      if (myproc() != bootproc && old_page && it->inode) {
         std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
         pages.add(std::move(old_page), rmap);
       } else
@@ -418,7 +418,7 @@ vmap::dup_page(uptr dest, uptr src)
     auto lock = vpfs_.acquire(destit);
     assert(!destit.is_set());
     vpfs_.fill(destit, desc);
-    if (myproc() != bootproc && destit->page) {
+    if (myproc() != bootproc && destit->page && destit->inode) {
       std::pair<vmap*, uptr> rmap = std::make_pair(&*this, destit.index()*PGSIZE);
       destit->page->add_pte(rmap);
     }
@@ -472,7 +472,7 @@ vmap::pagefault(uptr va, u32 err)
     // down.
     if (type == access_type::WRITE && (desc.flags & vmdesc::FLAG_COW)) {
       old_page = desc.page;
-      if (myproc() != bootproc && old_page) {
+      if (myproc() != bootproc && old_page && desc.inode) {
         std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
         old_page->remove_pte(rmap);
       }
@@ -767,9 +767,9 @@ vmap::ensure_page(const vmap::vpf_array::iterator &it, vmap::access_type type,
     // save extraneous reference counting
     vpfs_.fill(it, std::move(n));
   }
-  if (myproc() != bootproc) {
+  if (myproc() != bootproc && it->page && it->inode) {
     std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
-    page->add_pte(rmap);
+    it->page->add_pte(rmap);
   }
   return page.get();
 }
