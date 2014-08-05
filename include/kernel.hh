@@ -120,6 +120,8 @@ void            dir_init(sref<inode> dp);
 void            dir_flush(sref<inode> dp, transaction *trans = NULL);
 void            dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec);
 void            dir_remove_entry(sref<inode> dp, char *entry_name);
+void            balloc_on_disk(u32 bno, transaction *trans);
+void            bfree_on_disk(u32 bno, transaction *trans);
 
 // futex.cc
 typedef u64* futexkey_t;

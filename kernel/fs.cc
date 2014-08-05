@@ -103,6 +103,8 @@ throw_out_of_blocks()
 }
 
 // Allocate a disk block.
+// For the root device this makes changes only to the bitmap in memory
+// (maintained by rootfs_interface), not the one on the disk.
 static u32
 balloc(u32 dev, transaction *trans = NULL)
 {
@@ -112,6 +114,16 @@ balloc(u32 dev, transaction *trans = NULL)
   sref<buf> bp;
   int b, bi;
   u32 blocknum;
+
+  if (dev == 1) {
+    b = rootfs_interface->find_free_block();
+    if (b < sb.size) {
+      if (trans)
+        trans->add_allocated_block(b);
+      return b;
+    }
+    throw_out_of_blocks();
+  }
 
   for(b = 0; b < sb.size; b += BPB){
     blocknum = BBLOCK(b, sb.ninodes);
@@ -144,7 +156,28 @@ balloc(u32 dev, transaction *trans = NULL)
   return 0;
 }
 
+// Mark a block as allocated in the disk bitmap.
+void balloc_on_disk(u32 bno, transaction *trans) {
+  superblock sb;
+  readsb(1, &sb);
+  u32 blocknum = BBLOCK(bno, sb.ninodes);
+  sref<buf> bp = buf::get(1, blocknum);
+  auto locked = bp->write();
+
+  int bi = bno % BPB;
+  int m = 1 << (bi % 8);
+  assert((locked->data[bi/8] & m) == 0);
+  locked->data[bi/8] |= m;
+
+  char charbuf[BSIZE];
+  memmove(charbuf, locked->data, BSIZE);
+  transaction_diskblock b(blocknum, charbuf);
+  trans->add_block(b);
+}
+
 // Free a disk block.
+// For the root device this makes changes only to the bitmap in memory
+// (maintained by rootfs_interface), not the one on the disk.
 static void
 bfree(int dev, u64 x, transaction *trans = NULL)
 {
@@ -155,6 +188,13 @@ bfree(int dev, u64 x, transaction *trans = NULL)
   readsb(dev, &sb);
   sref<buf> bp;
   u32 blocknum;
+
+  if (dev == 1) {
+    rootfs_interface->free_block(b);
+    if (trans)
+      trans->add_free_block(b);
+    return;
+  }
 
   {
     blocknum = BBLOCK(b, sb.ninodes);
@@ -173,6 +213,25 @@ bfree(int dev, u64 x, transaction *trans = NULL)
       trans->add_block(b);
     }
   }
+}
+
+// Mark a block as free in the disk bitmap.
+void bfree_on_disk(u32 bno, transaction *trans) {
+  superblock sb;
+  readsb(1, &sb);
+  u32 blocknum = BBLOCK(bno, sb.ninodes);
+  sref<buf> bp = buf::get(1, blocknum);
+  auto locked = bp->write();
+
+  int bi = bno % BPB;
+  int m = 1 << (bi % 8);
+  assert((locked->data[bi/8] & m) != 0);
+  locked->data[bi/8] &= ~m;
+
+  char charbuf[BSIZE];
+  memmove(charbuf, locked->data, BSIZE);
+  transaction_diskblock b(blocknum, charbuf);
+  trans->add_block(b);
 }
 
 // Inodes.

@@ -82,10 +82,14 @@ class transaction {
     NEW_DELETE_OPS(transaction);
     transaction(u64 t) : timestamp_(t) {
       blocks = std::vector<transaction_diskblock>();
+      allocated_block_list = std::vector<u32>();
+      free_block_list = std::vector<u32>();
     }
 
     transaction() : timestamp_(get_timestamp()) {
       blocks = std::vector<transaction_diskblock>();
+      allocated_block_list = std::vector<u32>();
+      free_block_list = std::vector<u32>();
     }
 
     // Add a diskblock to the transaction. These diskblocks are not necessarily
@@ -101,6 +105,14 @@ class transaction {
       auto l = write_lock.guard();
       for (auto b = bvec.begin(); b != bvec.end(); b++)
         blocks.emplace_back(transaction_diskblock(*b));
+    }
+
+    void add_allocated_block(u32 bno) {
+      allocated_block_list.push_back(bno);
+    }
+
+    void add_free_block(u32 bno) {
+      free_block_list.push_back(bno);
     }
 
     // Prepare the transaction for two phase commit. The transaction diskblocks
@@ -154,6 +166,14 @@ class transaction {
 
     // Guards updates to the transaction_diskblock vector.
     sleeplock write_lock;
+
+    // Block numbers of newly allocated blocks within this transaction. These
+    // blocks have not been marked as allocated on the disk yet.
+    std::vector<u32> allocated_block_list;
+
+    // Block numbers of blocks freed within this transaction. These blocks have
+    // not been marked as free on the disk yet.
+    std::vector<u32> free_block_list;
 };
 
 // The "physical" journal is made up of transactions, which in turn are made up of
@@ -183,8 +203,6 @@ class journal {
       // which the metadata operations were applied. This corresponds to the
       // correct linearization of the memfs operations. So the transactions are 
       // logged in the correct order.
-      for (auto it = transaction_log.begin(); it != transaction_log.end(); it++)
-        (*it)->prepare_for_commit();
 
       return l;
     }
@@ -237,6 +255,18 @@ class mfs_interface {
       jrnl_commit,        // Commit transaction block
     };
 
+    // Keeps track of free and allocated blocks on the disk. Transactions that
+    // modify the block free bitmap on the disk go through a list of free_bit
+    // structs in memory first.
+    typedef struct free_bit {
+      bool is_free;
+      sleeplock write_lock;
+
+      free_bit(bool b): is_free(b) {}
+      NEW_DELETE_OPS(free_bit);
+
+    } free_bit;
+
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
@@ -286,6 +316,11 @@ class mfs_interface {
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
     void mfs_rename(mfs_operation_rename *op, transaction *tr);
 
+    // Block free bit vector functions
+    void initialize_free_bit_vector();
+    u32 find_free_block();
+    void free_block(u32 bno);
+
   private:
     void load_dir(sref<inode> i, sref<mnode> m); 
     sref<mnode> load_dir_entry(u64 inum, sref<mnode> parent);
@@ -299,6 +334,11 @@ class mfs_interface {
     
     journal *fs_journal;            // The phsyical journal
     mfs_logical_log *metadata_log;  // The logical log
+
+    // The free block bitmap in memory. Transactions marking a block free or not
+    // free on the bitmap on disk make the corresponding changes in this vector
+    // first. (Essential for reverting changes in case an fsync(file) fails.)
+    std::vector<free_bit> free_bit_vector;
 };
 
 class mfs_operation {

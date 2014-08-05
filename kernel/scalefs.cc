@@ -11,6 +11,7 @@ mfs_interface::mfs_interface() {
   mnode_to_inode = new linearhash<u64, u64>(4099);
   fs_journal = new journal();
   metadata_log = new mfs_logical_log();
+  free_bit_vector = std::vector<free_bit>();
   // XXX(rasha) Set up the physical journal file
 
 }
@@ -366,8 +367,18 @@ void mfs_interface::add_apply_to_journal(transaction *tr) {
 void mfs_interface::flush_journal() {
   auto journal_lock = fs_journal->prepare_for_commit();
 
-  for (auto it = fs_journal->transaction_log.begin(); 
+  for (auto it = fs_journal->transaction_log.begin();
       it != fs_journal->transaction_log.end(); it++) {
+    // Add free bitmap changes to the transaction.
+    for (auto a = (*it)->allocated_block_list.begin(); a !=
+        (*it)->allocated_block_list.end(); a++)
+      balloc_on_disk(*a, *it);
+    for (auto f = (*it)->free_block_list.begin(); f !=
+        (*it)->free_block_list.end(); f++)
+      bfree_on_disk(*f, *it);
+
+    (*it)->prepare_for_commit();
+
     // Make a list of the most current version of the diskblocks. For each
     // block number pick the diskblock with the highest timestamp and
     // discard the rest.
@@ -611,10 +622,60 @@ sref<mnode> mfs_interface::load_root() {
   return m;
 }
 
+// Initialize the free bit vector from the disk when the system boots.
+void mfs_interface::initialize_free_bit_vector() {
+  sref<buf> bp;
+  int b, bi;
+  u32 blocknum;
+  superblock sb;
+
+  bp = buf::get(1, 1);
+  auto r = bp->read();
+  memmove(&sb, r->data, sizeof(sb));
+  free_bit_vector.clear();
+
+  for(b = 0; b < sb.size; b += BPB) {
+    blocknum = BBLOCK(b, sb.ninodes);
+    bp = buf::get(1, blocknum);
+    auto copy = bp->read();
+
+    for(bi = 0; bi < BPB && bi < (sb.size - b); bi++){
+      int m = 1 << (bi % 8);
+      free_bit_vector.emplace_back(free_bit(((copy->data[bi/8] & m) ==
+      0)?true:false));
+    }
+  }
+
+}
+
+// Return the block number of a free block in the free_bit_vector.
+u32 mfs_interface::find_free_block() {
+  u32 index = 0;
+  for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
+    if (it->is_free) {
+      auto lock = it->write_lock.guard();
+      it->is_free = false;
+      break;
+    }
+    index++;
+  }
+  return index;
+}
+
+// Mark a block as free in the free_bit_vector.
+void mfs_interface::free_block(u32 bno) {
+  if (free_bit_vector.at(bno).is_free)
+    panic("freeing free block");
+  auto lock = free_bit_vector.at(bno).write_lock.guard();
+  free_bit_vector.at(bno).is_free = true;
+}
+
 void initfs() {
   root_fs = new mfs();
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
+
+  rootfs_interface->initialize_free_bit_vector();
 
   // Check the journal and reapply committed transactions
   rootfs_interface->process_journal();
