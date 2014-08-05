@@ -66,7 +66,7 @@ int mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nb
     transaction *tr) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "sync_file_page");
-  return writei(i, p, pos, nbytes, tr);
+  return writei(i, p, pos, nbytes, tr, true);
 }
 
 // Creates a new file on the disk if an mnode (mfile) does not have a corresponding
@@ -118,7 +118,6 @@ void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "truncate_file");
   itrunc(i, offset, tr);
-  iupdate(i, tr);
   root_fs->get(mfile_inum)->as_file()->remove_pgtable_mappings(offset);
 }
 
@@ -333,7 +332,18 @@ void mfs_interface::add_to_journal(transaction *tr) {
 }
 
 // Logs a transaction in the disk journal and then applies it to the disk
-void mfs_interface::add_apply_to_journal(transaction *tr) {
+void mfs_interface::add_fsync_to_journal(transaction *tr) {
+  // Update free bitmap on disk.
+  for (auto a = tr->allocated_block_list.begin(); a !=
+      tr->allocated_block_list.end(); a++)
+    balloc_on_disk(*a, tr);
+  tr->allocated_block_list.clear();
+  for (auto f = tr->free_block_list.begin(); f !=
+      tr->free_block_list.end(); f++)
+    bfree_on_disk(*f, tr);
+
+  tr->prepare_for_commit();
+
   // Make a list of the most current version of the diskblocks. For each
   // block number pick the diskblock with the highest timestamp and
   // discard the rest.
@@ -360,6 +370,12 @@ void mfs_interface::add_apply_to_journal(transaction *tr) {
   // transactions till this point have made it to the disk. So the journal
   // can simply be truncated.)
   clear_journal();
+
+  // Mark freed blocks as free in memory free_block_list
+  for (auto f = tr->free_block_list.begin(); f !=
+      tr->free_block_list.end(); f++)
+    free_block(*f);
+  tr->free_block_list.clear();
 }
 
 // Writes out the physical journal to the disk. Then applies the
@@ -376,6 +392,8 @@ void mfs_interface::flush_journal() {
     for (auto f = (*it)->free_block_list.begin(); f !=
         (*it)->free_block_list.end(); f++)
       bfree_on_disk(*f, *it);
+    (*it)->allocated_block_list.clear();
+    (*it)->free_block_list.clear();
 
     (*it)->prepare_for_commit();
 

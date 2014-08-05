@@ -245,6 +245,8 @@ mfile::sync_file()
   if (!is_dirty())
     return;
 
+  auto lock = fsync_lock_.guard();
+
   u64 fsync_tsc = 0;
   if (cpuid::features().rdtscp)
     fsync_tsc = rdtscp();
@@ -254,31 +256,33 @@ mfile::sync_file()
   // Apply pending metadata operations to the disk filesystem first.
   // This takes care of any dependencies.
   rootfs_interface->process_metadata_log(fsync_tsc, inum_);
+  rootfs_interface->flush_journal();
 
   transaction *trans = new transaction();
- 
-  u64 ilen = rootfs_interface->get_file_size(inum_);
-  auto size = read_size();
-  // If the in-memory file is shorter, truncate the file on the disk.
-  if (ilen > *size)
-    rootfs_interface->truncate_file(inum_, *size, trans);
+  u64 mlen = *read_size();
 
   // Flush all in-memory file pages to disk.
-  auto page_end = pages_.find(PGROUNDUP(*size) / PGSIZE);
-  auto lock = pages_.acquire(pages_.begin(), page_end);
+  auto page_end = pages_.find(PGROUNDUP(mlen) / PGSIZE);
   for (auto it = pages_.begin(); it != page_end; ) {
     // Skip unset spans
     if (!it.is_set()) {
+      mlen = *read_size();
+      if (mlen <= it.index()*PGSIZE)
+        break;
       it += it.base_span();
+      if (mlen <= it.index()*PGSIZE)
+        break;
       continue;
     }
+
+    auto lock = pages_.acquire(it);
     if (!it->is_dirty_page()) {
       ++it;
       continue;
     }
 
     size_t pos = it.index() * PGSIZE;
-    size_t nbytes = *size - pos;
+    size_t nbytes = mlen - pos;
     if (nbytes > PGSIZE)
       nbytes = PGSIZE;
     assert(nbytes == rootfs_interface->sync_file_page(inum_, 
@@ -286,11 +290,18 @@ mfile::sync_file()
     it->set_dirty_bit(false);
     ++it;
   }
-  rootfs_interface->update_file_size(inum_, *size, trans);
   
+  u64 ilen = rootfs_interface->get_file_size(inum_);
+  // If the in-memory file is shorter, truncate the file on the disk.
+  if (ilen > mlen)
+    rootfs_interface->truncate_file(inum_, mlen, trans);
+
+  // Update the size and the inode.
+  rootfs_interface->update_file_size(inum_, mlen, trans);
+
   // Add the fsync transaction to the journal and flush the journal to disk.
-  rootfs_interface->add_to_journal(trans);
-  rootfs_interface->flush_journal();
+  rootfs_interface->add_fsync_to_journal(trans);
+
   dirty(false);
 }
 

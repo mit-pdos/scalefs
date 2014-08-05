@@ -178,8 +178,12 @@ void balloc_on_disk(u32 bno, transaction *trans) {
 // Free a disk block.
 // For the root device this makes changes only to the bitmap in memory
 // (maintained by rootfs_interface), not the one on the disk.
+// delayed_free = true indicates that the block should not be marked free in the
+// memory free bit vector just yet. This is delayed until the time that the
+// transaction is processed. This is needed when we do not want truncated blocks
+// to be available for use until the file fsync commits.
 static void
-bfree(int dev, u64 x, transaction *trans = NULL)
+bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
 {
   u32 b = x;
   bzero(dev, b, trans);
@@ -190,7 +194,8 @@ bfree(int dev, u64 x, transaction *trans = NULL)
   u32 blocknum;
 
   if (dev == 1) {
-    rootfs_interface->free_block(b);
+    if (!delayed_free)
+      rootfs_interface->free_block(b);
     if (trans)
       trans->add_free_block(b);
     return;
@@ -978,7 +983,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
 
   for(int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
     if(ip->addrs[i]){
-      bfree(ip->dev, ip->addrs[i], trans);
+      bfree(ip->dev, ip->addrs[i], trans, true);
       ip->addrs[i] = 0;
     }
   }
@@ -995,7 +1000,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       u32* a = (u32*)locked->data;
       for(int i = start; i < NINDIRECT; i++) {
         if(a[i]) {
-          bfree(ip->dev, a[i], trans);
+          bfree(ip->dev, a[i], trans, true);
           a[i] = 0;
         }
       }
@@ -1008,7 +1013,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
 
     if (start == 0) {
-      bfree(ip->dev, ip->addrs[NDIRECT], trans);
+      bfree(ip->dev, ip->addrs[NDIRECT], trans, true);
       ip->addrs[NDIRECT] = 0;
     }
     if (ip->iaddrs.load() != nullptr) {
@@ -1036,7 +1041,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
             if(!a2[j])
               continue;
 
-            bfree(ip->dev, a2[j], trans);
+            bfree(ip->dev, a2[j], trans, true);
             a2[j] = 0;
           }
           if (trans && start != 0) {
@@ -1048,7 +1053,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
         }
 
         if (start == 0) { 
-          bfree(ip->dev, a1[i], trans);
+          bfree(ip->dev, a1[i], trans, true);
           a1[i] = 0;
         }
       }
@@ -1061,7 +1066,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
 
     if (bno == 0) {
-      bfree(ip->dev, ip->addrs[NDIRECT+1], trans);
+      bfree(ip->dev, ip->addrs[NDIRECT+1], trans, true);
       ip->addrs[NDIRECT+1] = 0;
     }
   }
@@ -1104,8 +1109,11 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
 
 // PAGEBREAK!
 // Write data to inode.
+// writeback = true indicates that the data block is not logged in the journal.
+// It is written back to the disk directly.
 int
-writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
+writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
+      bool writeback)
 {
   scoped_gc_epoch e;
 
@@ -1137,7 +1145,11 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans)
     m = min(n - tot, BSIZE - off%BSIZE);
     auto locked = bp->write();
     memmove(locked->data + off%BSIZE, src, m);
-    if (trans) {
+    if (writeback) {
+      memmove(charbuf, locked->data, BSIZE);
+      transaction_diskblock b(blocknum, charbuf);
+      b.writeback();
+    } else if (trans) {
       memmove(charbuf, locked->data, BSIZE);
       transaction_diskblock b(blocknum, charbuf);
       trans->add_block(b);

@@ -469,6 +469,9 @@ private:
   seqcount<u32> size_seq_;
   u64 size_;
 
+  // Only one fsync can execute on the mnode at a time
+  sleeplock fsync_lock_;
+
 public:
   class resizer : public lock_guard<sleeplock>,
                   public seq_writer {

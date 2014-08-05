@@ -110,7 +110,8 @@ void            zero_fill(sref<inode>, u32 offset);
 void            itrunc(sref<inode>, u32 offset = 0, transaction *trans = NULL);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);
-int             writei(sref<inode>, const char*, u32, u32, transaction *trans = NULL);
+int             writei(sref<inode>, const char*, u32, u32,
+                  transaction *trans = NULL, bool writeback = false);
 void            update_size(sref<inode>, u32, transaction *trans = NULL);
 void            update_dir(sref<inode>, transaction *trans = NULL);
 sref<inode>     nameiparent(sref<inode> cwd, const char*, char*);
