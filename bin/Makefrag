@@ -65,6 +65,7 @@ UPROGS_BIN= \
   sync \
   fsync \
         disktest \
+  fsynctest \
 
 ifeq ($(HAVE_LWIP),y)
 UPROGS_BIN += \

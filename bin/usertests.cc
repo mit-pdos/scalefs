@@ -1993,45 +1993,6 @@ writeprotecttest(void)
 }
 
 void
-fsynctest(void)
-{
-  int fd, i;
-  fprintf(stdout, "fsynctest\n");
-
-  fd = open("dummyfile", O_RDWR);
-  for(i = 0; i < 1024; i++) {    //write two new pages
-    if(write(fd, "aaaaaaa", 8) != 8)
-      die("error: write aa (i=%d) to file failed", i);
-  }
-  fsync(fd);   //update on disk
-  close(fd);
-
-  fd = open("dummyfile", O_TRUNC|O_RDWR);
-  for(i = 0; i < 512; i++) {    //write a new page
-    if(write(fd, "ccccccc", 8) != 8)
-      die("error: write bb (i=%d) to file failed", i);
-  }
-  fsync(fd);   //update on disk
-  close(fd);
-
-  fd = open("dummyfile2", O_RDWR|O_CREAT);
-  for(i = 0; i < 1024; i++) {    //write two new pages
-    if(write(fd, "bbbbbbb", 8) != 8)
-      die("error: write bb (i=%d) to file failed", i);
-  }
-  fsync(fd);   //update on disk
-  close(fd);
-
-  if(mkdir("dummydir", 0777) < 0)
-    die("mkdir failed");
-  fd = open(".", 0);
-  fsync(fd);
-  close(fd);
-
-  fprintf(stdout, "fsynctest ok\n");
-}
-
-void
 cloexec(void)
 {
   const char *argv[] = {"echo", "testing", nullptr};
@@ -2160,7 +2121,6 @@ main(int argc, char *argv[])
 
   TEST(floattest);
   TEST(writeprotecttest);
-  //TEST(fsynctest);
 
   TEST(cloexec);
 
