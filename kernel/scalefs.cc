@@ -239,14 +239,14 @@ void mfs_interface::add_to_metadata_log(mfs_operation *op) {
 
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
-void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum) {
+void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
   mfs_operation_vec dependent_ops;
   {
     // Synchronize the oplog loggers.
     auto guard = metadata_log->wait_synchronize(max_tsc);
     // Find out the metadata operations the fsync() call depends on and just
     // apply those. inum refers to the mnode that is executing the fsync().
-    find_dependent_ops(inum, dependent_ops);
+    find_dependent_ops(inum, dependent_ops, isdir);
   }
 
   if (dependent_ops.size() == 0)
@@ -267,7 +267,7 @@ void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum) {
 // Goes through the metadata log and filters out the operations that the fsync()
 // call depends on. inum refers to the mnode that is executing the fsync().
 void mfs_interface::find_dependent_ops(u64 inum,
-  mfs_operation_vec &dependent_ops) {
+  mfs_operation_vec &dependent_ops, bool isdir) {
  
   if (metadata_log->operation_vec.size() == 0)
     return;
@@ -281,7 +281,10 @@ void mfs_interface::find_dependent_ops(u64 inum,
   do {
     it--;
     index--;
-    if((*it)->check_dependency(mnode_vec)) {
+    if (isdir && (*it)->check_parent_dependency(mnode_vec, inum)) {
+      dependent_ops.push_back(*it);
+      metadata_log->operation_vec.erase(metadata_log->operation_vec.begin()+index);
+    } else if((*it)->check_dependency(mnode_vec)) {
       dependent_ops.push_back(*it);
       metadata_log->operation_vec.erase(metadata_log->operation_vec.begin()+index);
     }

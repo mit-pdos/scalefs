@@ -309,8 +309,8 @@ class mfs_interface {
     void metadata_op_start(size_t cpu, u64 tsc_val);
     void metadata_op_end(size_t cpu, u64 tsc_val);
     void add_to_metadata_log(mfs_operation *op);
-    void process_metadata_log(u64 max_tsc, u64 inum);
-    void find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops);
+    void process_metadata_log(u64 max_tsc, u64 inum, bool isdir);
+    void find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops, bool isdir);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
@@ -358,6 +358,8 @@ class mfs_operation {
     // eg. the parent mnode) are added to mnode_vec.
     virtual bool check_dependency(std::vector<u64> &mnode_vec) = 0;
 
+    virtual bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) = 0;
+
   protected:
     mfs_interface *parent_mfs;
   public:
@@ -393,6 +395,17 @@ class mfs_operation_create: public mfs_operation {
           mnode_vec.push_back(parent);
           return true;
         }
+      }
+      return false;
+    }
+
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+      if (parent == pt) {
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
+          if (*it == mnode)
+            return true;
+        mnode_vec.push_back(mnode);
+        return true;
       }
       return false;
     }
@@ -447,6 +460,17 @@ class mfs_operation_link: public mfs_operation {
       return false;
     }
 
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+      if (parent == pt) {
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
+          if (*it == mnode)
+            return true;
+        mnode_vec.push_back(mnode);
+        return true;
+      }
+      return false;
+    }
+
     void print() {
       cprintf("LINK\n");
       cprintf("Op Type : Link\n");
@@ -492,6 +516,17 @@ class mfs_operation_unlink: public mfs_operation {
           mnode_vec.push_back(parent);
           return true;
         }
+      }
+      return false;
+    }
+
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+      if (parent == pt) {
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
+          if (*it == mnode)
+            return true;
+        mnode_vec.push_back(mnode);
+        return true;
       }
       return false;
     }
@@ -551,6 +586,44 @@ class mfs_operation_rename: public mfs_operation {
             mnode_vec.push_back(new_parent);
           return true;
         }
+      }
+      return false;
+    }
+
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+      if (parent == pt || new_parent == pt) {
+        bool is_parent = false;
+        if (parent == pt)
+          is_parent = true;
+
+        bool present = false;
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+          if (*it == mnode) {
+            present = true;
+            break;
+          }
+        }
+        if (!present)
+          mnode_vec.push_back(mnode);
+
+        present = false;
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+          if (is_parent && *it == new_parent) {
+            present = true;
+            break;
+          } else if (!is_parent && *it == parent) {
+            present = true;
+            break;
+          }
+        }
+
+        if (!present) {
+          if (is_parent)
+            mnode_vec.push_back(new_parent);
+          else
+            mnode_vec.push_back(parent);
+        }
+        return true;
       }
       return false;
     }
