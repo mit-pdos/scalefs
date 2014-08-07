@@ -205,5 +205,5 @@ public:
 private:
   rmap *rmap_pte;
 
-};
+} __attribute__((aligned(16)));
 

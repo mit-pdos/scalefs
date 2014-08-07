@@ -371,26 +371,33 @@ public:
       FLAG_PARTIAL_PAGE = 1 << FLAG_PARTIAL_PAGE_BIT,
       FLAG_DIRTY_PAGE_BIT = 2,
       FLAG_DIRTY_PAGE = 1 << FLAG_DIRTY_PAGE_BIT,
+      FLAG_VALID_BIT = 3,
+      FLAG_VALID = 1 << FLAG_VALID_BIT,
     };
 
     /*
      * Low bits are flags, as above.  High bits are page_info pointer.
      */
     u64 value_;
-    static_assert((alignof(page_info) & 0x7) == 0,
-                  "page_info must be at least 8 byte aligned");
+    static_assert((alignof(page_info) & 0xF) == 0,
+                  "page_info must be at least 16 byte aligned");
 
     page_info* get_page_info_raw() const {
-      return (page_info*) (value_ & ~0x7);
+      return (page_info*) (value_ & ~0xF);
     }
 
   public:
-    page_state() : value_(0) {}
+    NEW_DELETE_OPS(page_state);
+
+    page_state(bool is_valid = false) : value_(0) {
+      set_valid_bit(is_valid);
+    }
 
     page_state(sref<page_info> p) : value_((u64) p.get()) {
       page_info* pi = get_page_info_raw();
       if (pi)
         pi->inc();
+      set_valid_bit(true);
     }
 
     ~page_state() {
@@ -431,8 +438,19 @@ public:
       return sref<page_info>::newref(get_page_info_raw());
     }
 
+    bool is_valid() const {
+      return !!(value_ & FLAG_VALID);
+    }
+
+    void set_valid_bit(bool flag) {
+      if (flag)
+        locked_set_bit(FLAG_VALID_BIT, &value_);
+      else
+        locked_reset_bit(FLAG_VALID_BIT, &value_);
+    }
+
     bool is_set() const {
-      return get_page_info_raw() != nullptr;
+      return is_valid();
     }
 
     bit_spinlock get_lock() {
@@ -490,10 +508,10 @@ public:
     u64 read_size() { return mf_->size_; }
     void resize_nogrow(u64 size);
     void resize_append(u64 size, sref<page_info> pi);
+    void initialize_from_disk(u64 size);
   };
 
   resizer write_size() {
-    dirty(true);
     return resizer(this);
   }
 
@@ -501,7 +519,6 @@ public:
     return seq_reader<u64>(&size_, &size_seq_);
   }
 
-  void ondisk_size(u64 size);
   page_state get_page(u64 pageidx);
   void dirty_page(u64 pageidx);
   void sync_file();

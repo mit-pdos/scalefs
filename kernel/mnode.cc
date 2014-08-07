@@ -138,6 +138,7 @@ mfile::resizer::resize_nogrow(u64 newsize)
     /* Shrunk, and last page is partial */
     mf_->pages_.find(newsize / PGSIZE)->set_partial_page(true);
   }
+  mf_->dirty(true);
 }
 
 void
@@ -161,26 +162,27 @@ mfile::resizer::resize_append(u64 size, sref<page_info> pi)
   ps.set_dirty_bit(true);
   mf_->pages_.fill(it, ps);
   mf_->size_ = size;
+  mf_->dirty(true);
 }
 
 void
-mfile::ondisk_size(u64 size)
+mfile::resizer::initialize_from_disk(u64 size)
 {
-  size_ = size;
+  auto begin = mf_->pages_.begin();
+  auto end = mf_->pages_.find(PGROUNDUP(size) / PGSIZE);
+  auto lock = mf_->pages_.acquire(begin, end);
+  page_state ps(true);
+  mf_->pages_.fill(begin, end, ps);
+  mf_->size_ = size;
 }
 
 mfile::page_state
 mfile::get_page(u64 pageidx)
 {
   auto it = pages_.find(pageidx);
-  if (!it.is_set()) {
-    if (!initialized_ && fs_ == root_fs) {
-      cprintf("Should not be happening. File not initialized from disk yet!\n");
-      initialized_ = true;
-      rootfs_interface->initialize_file(root_fs->get(inum_));
-      barrier();
-    }
-    if (pageidx < PGROUNDUP(size_) / PGSIZE && fs_ == root_fs) {
+  if (!it.is_set())
+    return mfile::page_state();
+  if (it->get_page_info() == nullptr && fs_ == root_fs) {
       // Read page from disk
       char *p = zalloc("file page");
       assert(p);
@@ -191,16 +193,13 @@ mfile::get_page(u64 pageidx)
       if (nbytes > PGSIZE)
         nbytes = PGSIZE;
 
-      assert(nbytes == rootfs_interface->load_file_page(inum_, p, pos, nbytes));
+      size_t bytes_read = rootfs_interface->load_file_page(inum_, p, pos, nbytes);
+      assert(nbytes == bytes_read);
       auto lock = pages_.acquire(it);
       page_state ps(pi);
       if (PGOFFSET(nbytes))
         ps.set_partial_page(true);
       pages_.fill(it, ps);
-    }
-
-    else
-      return mfile::page_state();
   }
 
   return it->copy_consistent();

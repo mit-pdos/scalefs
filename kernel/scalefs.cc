@@ -37,7 +37,8 @@ sref<inode> mfs_interface::get_inode(u64 mnode_inum, const char *str) {
 void mfs_interface::initialize_file(sref<mnode> m) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(m->inum_, "initialize_file");
-  m->as_file()->ondisk_size(i->size);
+  auto resizer = m->as_file()->write_size();
+  resizer.initialize_from_disk(i->size);
 }
 
 // Reads in a file page from the disk.
