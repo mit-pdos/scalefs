@@ -16,6 +16,7 @@
 #include "fstest.h"
 #include "libutil.h"
 #include "spinbarrier.hh"
+#include "user.h"
 
 extern char _end[];
 __thread sigjmp_buf pf_jmpbuf;
@@ -373,6 +374,8 @@ main(int ac, char** av)
     if (run_threads) {
       run_test(tp, tf, &fstests[t], 0, true);
     }
+
+    sync();
   }
 
   printf("fstest: done\n");
