@@ -309,6 +309,7 @@ class mfs_interface {
     void metadata_op_start(size_t cpu, u64 tsc_val);
     void metadata_op_end(size_t cpu, u64 tsc_val);
     void add_to_metadata_log(mfs_operation *op);
+    void process_metadata_log();
     void process_metadata_log(u64 max_tsc, u64 inum, bool isdir);
     void find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops, bool isdir);
     void mfs_create(mfs_operation_create *op, transaction *tr);

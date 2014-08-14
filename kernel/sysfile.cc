@@ -141,16 +141,13 @@ sys_close(int fd)
 }
 
 //SYSCALL
-int
+void
 sys_sync(void)
 {
-  // Not implemented. A call to flush_journal() only writes out data updates to
-  // files on which fsync() was explicitly called, and metadata updates that
-  // were flushed out as a result of the fsync (An fsync processes the logical
-  // log and flushes out all metadata updates that occurred before the fsync
-  // call). Have to explicitly keep track of dirty pages and flush all of them
-  // out (irrespective of a call to fsync) for sync to work correctly.
-  return 0;
+  // XXX (rasha) This only flushes out the logical log. Dirty files need to be
+  // synced too.
+  rootfs_interface->process_metadata_log();
+  rootfs_interface->flush_journal();
 }
 
 //SYSCALL

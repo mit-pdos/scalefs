@@ -238,6 +238,27 @@ void mfs_interface::add_to_metadata_log(mfs_operation *op) {
   metadata_log->add_operation(op);
 }
 
+// Applies all metadata operations logged in the logical log. Called on sync.
+void mfs_interface::process_metadata_log() {
+  mfs_operation_vec ops;
+  {
+    auto guard = metadata_log->synchronize();
+    for (auto it = metadata_log->operation_vec.begin(); it !=
+      metadata_log->operation_vec.end(); it++)
+      ops.push_back(*it);
+    metadata_log->operation_vec.clear();
+  }
+
+  for (auto it = ops.begin(); it != ops.end(); it++) {
+    transaction *tr = new transaction((*it)->timestamp);
+    (*it)->apply(tr);
+    add_to_journal(tr);
+    delete (*it);
+  }
+  ops.clear();
+
+}
+
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
