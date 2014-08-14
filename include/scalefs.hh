@@ -92,6 +92,12 @@ class transaction {
       free_block_list = std::vector<u32>();
     }
 
+    ~transaction() {
+      blocks.clear();
+      allocated_block_list.clear();
+      free_block_list.clear();
+    }
+
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
     // out the changes to disk.
@@ -185,6 +191,12 @@ class journal {
     journal() {
       current_off = 0;
       transaction_log = std::vector<transaction*>();
+    }
+
+    ~journal() {
+      for (auto it = transaction_log.begin(); it != transaction_log.end(); it++)
+        delete (*it);
+      transaction_log.clear();
     }
 
     // Add a new transaction to the journal.
@@ -658,6 +670,11 @@ class mfs_logical_log: public mfs_logged_object {
 
   public:
     NEW_DELETE_OPS(mfs_logical_log);
+    ~mfs_logical_log() {
+      for (auto it = operation_vec.begin(); it != operation_vec.end(); it++)
+        delete (*it);
+      operation_vec.clear();
+    }
   
     // Oplog operation that implements adding a metadata operation to the log
     struct add_op {
