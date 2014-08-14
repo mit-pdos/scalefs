@@ -137,6 +137,18 @@ vmap::vmap() :
 
 vmap::~vmap()
 {
+  for (auto it = vpfs_.begin(), end = vpfs_.end(); it != end; ) {
+    // Skip unset spans
+    if (!it.is_set()) {
+      it += it.base_span();
+      continue;
+    }
+    if (myproc() != bootproc && it->page && it->inode) {
+      std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+      it->page->remove_pte(rmap);
+    }
+    ++it;
+  }
 }
 
 sref<vmap>

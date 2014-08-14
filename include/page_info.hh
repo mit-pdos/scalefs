@@ -61,7 +61,6 @@ class page_info : public PAGE_REFCOUNT referenced, public alloc_debug_info
 protected:
   void onzero()
   {
-    rmap_pte->delete_rmap();
     kfree(va());
   }
 
@@ -126,14 +125,15 @@ public:
         get_logger()->push<rem_op>(rem_op(this, map));
       }
 
-      void delete_rmap() {
-        rmap_vec.clear();
-      }
-
       void sync(std::vector<rmap_entry> &vec) {
         auto guard = synchronize();
         for (auto it = rmap_vec.begin(); it != rmap_vec.end(); it++)
           vec.emplace_back(*it);
+        rmap_vec.clear();
+      }
+
+      ~rmap() {
+        rmap_vec.clear();
       }
 
     protected:
