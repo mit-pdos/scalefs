@@ -682,7 +682,7 @@ inode::nlink(void)
 void
 inode::onzero(void)
 {
-  acquire(&lock);
+  /*acquire(&lock);
   if (nlink())
     panic("iput [%p]: nlink %u\n", this, nlink());
 
@@ -716,7 +716,7 @@ inode::onzero(void)
   ins->remove(make_pair(dev, inum), &ip);
   the_inode_cache.add(inum);
   gc_delayed(ip);
-  return;
+  return;*/
 }
 
 // Lock the given inode.
