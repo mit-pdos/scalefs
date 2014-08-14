@@ -168,7 +168,6 @@ u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
 // representation but not on the disk.
 void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
     dirent_inum, u8 type, transaction *tr) {
-  scoped_gc_epoch e;
   sref<inode> i = get_inode(mdir_inum, "create_directory_entry");
 
   sref<inode> di = dirlookup(i, name);
@@ -203,7 +202,6 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
 // The file/directory names that are present in the mdir are specified in names_vec.
 void mfs_interface::unlink_old_inodes(u64 mdir_inum, std::vector<char*> names_vec,
     transaction *tr) {
-  scoped_gc_epoch e;
   sref<inode> i = get_inode(mdir_inum, "unlink_old_inodes");
 
   dir_remove_entries(i, names_vec);
@@ -212,7 +210,6 @@ void mfs_interface::unlink_old_inodes(u64 mdir_inum, std::vector<char*> names_ve
 
 // Calls a dir_flush on the directory.
 void mfs_interface::update_dir_inode(u64 mdir_inum, transaction *tr) {
-  scoped_gc_epoch e;
   sref<inode> i = get_inode(mdir_inum, "update_dir_inode");
   update_dir(i, tr);
 }
@@ -315,6 +312,7 @@ void mfs_interface::find_dependent_ops(u64 inum,
 
 // Create operation
 void mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr) {
+  scoped_gc_epoch e;
   if (op->mnode_type == mnode::types::file)      // sync the parent directory too
     create_file_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr, true);     
   else if (op->mnode_type == mnode::types::dir)  
@@ -323,12 +321,14 @@ void mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr) {
 
 // Link operation
 void mfs_interface::mfs_link(mfs_operation_link *op, transaction *tr) {
+  scoped_gc_epoch e;
   create_directory_entry(op->parent, op->name, op->mnode, op->mnode_type, tr);
   update_dir_inode(op->parent, tr);
 }
 
 // Unlink operation
 void mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr) {
+  scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
   std::vector<char *> names_vec;
@@ -339,6 +339,7 @@ void mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr) {
 
 // Rename operation
 void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
+  scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
   std::vector<char *> names_vec;
@@ -613,7 +614,6 @@ sref<mnode> mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent) {
     break;
 
   default:
-    cprintf("unhandled inode type %d\n", i->type.load());
     return sref<mnode>();
   }
   
