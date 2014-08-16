@@ -185,6 +185,9 @@ $(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS)
 ##
 ifeq ($(PLATFORM),native)
 override QEMUAPPEND += console=ttyS0
+# Exit qemu on panic
+override QEMUAPPEND += panic=-1
+QEMUOPTS += -no-reboot
 endif
 
 ## One NUMA node per CPU when mtrace'ing
@@ -200,7 +203,7 @@ ifneq ($(RUN),)
 override QEMUAPPEND += \$$ $(RUN)
 endif
 
-QEMUOPTS = -smp $(QEMUSMP) -m $(QEMUMEM) \
+QEMUOPTS += -smp $(QEMUSMP) -m $(QEMUMEM) \
 	$(if $(QEMUOUTPUT),-serial file:$(QEMUOUTPUT),-serial mon:stdio) \
 	-nographic \
 	-numa node -numa node \
@@ -225,6 +228,9 @@ ifeq ($(PLATFORM),native)
 QEMUOPTS += -initrd $(O)/initramfs
 endif
 
+# User-provided QEMU options
+QEMUOPTS += $(QEMUEXTRA)
+
 qemu: $(KERN)
 	$(QEMU) $(QEMUOPTS) $(QEMUKVMFLAGS) -kernel $(KERN)
 gdb: $(KERN)
@@ -237,7 +243,7 @@ codex: $(KERN)
 ##
 MTRACEOUT ?= mtrace.out
 MTRACEOPTS = -rtc clock=vm -mtrace-enable -mtrace-file $(MTRACEOUT) \
-	     -mtrace-calls
+	     -mtrace-calls -snapshot
 $(MTRACEOUT): $(KERN)
 	$(Q)rm -f $(MTRACEOUT)
 	$(MTRACE) $(QEMUOPTS) $(MTRACEOPTS) -kernel $(KERN) -s

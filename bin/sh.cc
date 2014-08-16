@@ -280,14 +280,17 @@ public:
 class cmd_list : public cmd
 {
   sref<cmd> left_, right_;
+  char op_;
 
 public:
-  cmd_list(const sref<cmd> &left, const sref<cmd> &right)
-    : left_(left), right_(right) { }
+  cmd_list(const sref<cmd> &left, const sref<cmd> &right, char op = ';')
+    : left_(left), right_(right), op_(op) { }
 
   int run() override
   {
-    left_->run();
+    int l = left_->run();
+    if ((op_ == 'A' && l != 0) || (op_ == 'O' && l == 0))
+      return l;
     return right_->run();
   }
 };
@@ -436,6 +439,13 @@ struct tok
 {
   char type;
   string word;
+
+  string describe() const
+  {
+    if (word.empty())
+      return string() + type;
+    return word;
+  }
 };
 
 void
@@ -465,8 +475,15 @@ lex(const string &buf, bool eof, vector<tok> *toks)
     switch (mode) {
     case NORMAL:
       if (strchr(symbols, *pos)) {
-        if (*pos == '>' && (pos + 1) < end && *(pos + 1) == '>') {
-          toks->push_back(tok{'+'}); // >>
+        char next = ((pos + 1) < end) ? *(pos + 1) : 0;
+        if (*pos == '>' && next == '>') {
+          toks->push_back(tok{'+', ">>"});
+          pos += 2;
+        } else if (*pos == '&' && next == '&') {
+          toks->push_back(tok{'A', "&&"});
+          pos += 2;
+        } else if (*pos == '|' && next == '|') {
+          toks->push_back(tok{'O', "||"});
           pos += 2;
         } else
           toks->push_back(tok{*(pos++)});
@@ -483,6 +500,7 @@ lex(const string &buf, bool eof, vector<tok> *toks)
       if (strchr(whitespace, *pos) || strchr(symbols, *pos) || *pos == '#') {
         toks->push_back(tok{'a', move(word)});
         toks->push_back(tok{' '});
+        word.clear();
         mode = NORMAL;
         continue;
       } else if (*pos == '\'') {
@@ -712,22 +730,25 @@ class parser
     return res;
   }
 
-  sref<cmd> pback()
+  // and_or <- pipeline ((AND_IF | OR_IF) linebreak pipeline)* [left]
+  sref<cmd> pand_or()
   {
     auto res = ppipe();
-    if (tryget("&")) {
-      while (tryget("&"));
-      res = sref<cmd>::transfer(new cmd_back{res});
-    }
+    while (char op = tryget("AO"))
+      res = sref<cmd>::transfer(new cmd_list{res, ppipe(), op});
     return res;
   }
 
+  // list <- and_or (separator_op and_or)*
   sref<cmd> plist()
   {
-    auto res = pback();
-    if (tryget(";"))
-      res = sref<cmd>::transfer(new cmd_list{res, plist()});
-    return res;
+    auto l = pand_or();
+    char sep = tryget(";&");
+    if (!sep)
+      return l;
+    if (sep == '&')
+      l = sref<cmd>::transfer(new cmd_back{l});
+    return sref<cmd>::transfer(new cmd_list{l, plist()});
   }
 
   sref<expr> pexpr(const char *term = " ", char *last_out = nullptr)
@@ -783,7 +804,7 @@ public:
       res = plist();
       if (cur != toks.end())
         res = sref<cmd>::transfer(
-          new cmd_error{string("unexpected token: ") + cur->type});
+          new cmd_error{string("unexpected token: ") + cur->describe()});
     } catch (syntax_error &error) {
       res = sref<cmd>::transfer(
         new cmd_error{string("syntax error: ") + error.what()});

@@ -67,6 +67,7 @@ UPROGS_BIN= \
         disktest \
   fsynctest \
   synctest \
+	dd \
 
 ifeq ($(HAVE_LWIP),y)
 UPROGS_BIN += \
@@ -82,6 +83,7 @@ UPROGS_NATIVE := \
 	cat \
 	cp \
 	crwpbench \
+	dd \
 	dirbench \
 	echo \
 	fdbench \
@@ -98,6 +100,7 @@ UPROGS_NATIVE := \
 	mailfilter \
 	mapbench \
 	mkdir \
+	mount \
 	mv \
 	sh \
 	tee \
