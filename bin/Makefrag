@@ -62,11 +62,11 @@ UPROGS_BIN= \
 	mail-enqueue \
 	mail-qman \
 	mail-deliver \
-  sync \
-  fsync \
-        disktest \
-  fsynctest \
-  synctest \
+	sync \
+	fsync \
+	disktest \
+	fsynctest \
+	synctest \
 	dd \
 
 ifeq ($(HAVE_LWIP),y)
@@ -105,8 +105,8 @@ UPROGS_NATIVE := \
 	sh \
 	tee \
 	vmimbalbench \
-  sync \
-  fsync \
+	sync \
+	fsync \
 
 ifeq ($(HAVE_TESTGEN),y)
 UPROGS_BIN    += fstest
