@@ -362,7 +362,6 @@ namespace oplog {
       tsc_logger::op *op;
       u64 logger_index;
     }heap_element;
-    std::vector<heap_element> min_heap_; // used to heap-merge the loggers
 
     std::vector<tsc_logger> pending_;
 
@@ -399,28 +398,28 @@ namespace oplog {
         it->print_ops();
     }
 
-    void min_heapify(int i) {
-      if (min_heap_.size() <= 1)
+    void min_heapify(std::vector<heap_element> *heap, int i) {
+      if (heap->size() <= 1)
         return;
-      assert(i < min_heap_.size());
+      assert(i < heap->size());
       int left = 2*i+1, right = 2*i+2, min_index = i;
       heap_element temp;
-      heap_element min = min_heap_.at(i);
-      if(left < min_heap_.size() && tsc_logger::compare_tsc(min_heap_.at(left).op, min.op)) {
-        min = min_heap_.at(left);
+      heap_element min = heap->at(i);
+      if(left < heap->size() && tsc_logger::compare_tsc(heap->at(left).op, min.op)) {
+        min = heap->at(left);
         min_index = left;
       }
-      if(right < min_heap_.size() && tsc_logger::compare_tsc(min_heap_.at(right).op, min.op)) {
-        min = min_heap_.at(right);
+      if(right < heap->size() && tsc_logger::compare_tsc(heap->at(right).op, min.op)) {
+        min = heap->at(right);
         min_index = right;
       }
       if(min_index == i) // No more heap properties violated.
         return;
       // Swap with whichever child is smaller.
-      temp = min_heap_.at(min_index);
-      min_heap_.at(min_index) = min_heap_.at(i);
-      min_heap_.at(i) = temp;
-      min_heapify(min_index);
+      temp = heap->at(min_index);
+      heap->at(min_index) = heap->at(i);
+      heap->at(i) = temp;
+      min_heapify(heap, min_index);
     }
 
     // This should heap-merge all of the loggers
@@ -439,38 +438,38 @@ namespace oplog {
 
       if (size == 0)
         return;
-      //Merge the operations using heaps
-      min_heap_.clear();
+      // Merge the operations using heaps
+      std::vector<heap_element> min_heap;
       for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
         if (it->ops_size() == 0)
           continue;
         heap_element temp;
         temp.op = it->op_at_index(0);
         temp.logger_index = i;
-        min_heap_.push_back(temp);
+        min_heap.push_back(temp);
       }
-      for(i = min_heap_.size()-1; i >= 0; i--)
-        min_heapify(i);
-      merged_ops.push_back(min_heap_.at(0).op);
+      for(i = min_heap.size()-1; i >= 0; i--)
+        min_heapify(&min_heap, i);
+      merged_ops.push_back(min_heap.at(0).op);
 
       i = 1;
       while (i < size) {
-        int index = min_heap_.at(0).logger_index;
+        int index = min_heap.at(0).logger_index;
         indices.at(index)++;
         if (indices.at(index) < pending_.at(index).ops_size()) {
           heap_element temp;
           temp.op = pending_.at(index).op_at_index(indices.at(index));
           temp.logger_index = index;
-          min_heap_.at(0) = temp;
+          min_heap.at(0) = temp;
           i++;
         } else {
-          min_heap_.at(0) = min_heap_.back();
-          min_heap_.pop_back();
+          min_heap.at(0) = min_heap.back();
+          min_heap.pop_back();
         }
-        if (min_heap_.size() == 0)
+        if (min_heap.size() == 0)
           break;
-        min_heapify(0);
-        merged_ops.push_back(min_heap_.at(0).op);
+        min_heapify(&min_heap, 0);
+        merged_ops.push_back(min_heap.at(0).op);
       }
  
       for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
@@ -480,15 +479,11 @@ namespace oplog {
       for(auto it = pending_.begin(); it < pending_.end(); it++)
         it->reset();
       pending_.clear();
-      min_heap_.clear();
     }
 
   public:
   ~tsc_logged_object() {
     pending_.clear();
-    for (auto it = min_heap_.begin(); it != min_heap_.end(); it++)
-      delete it->op;
-    min_heap_.clear();
     clear_loggers();
   }
 
@@ -523,38 +518,38 @@ namespace oplog {
 
       if (size == 0)
         return;
-      //Merge the operations using heaps
-      min_heap_.clear();
+      // Merge the operations using heaps
+      std::vector<heap_element> min_heap;
       for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
         if (ops_size_vec.at(i) == 0)
           continue;
         heap_element temp;
         temp.op = it->op_at_index(0);
         temp.logger_index = i;
-        min_heap_.push_back(temp);
+        min_heap.push_back(temp);
       }
-      for(i = min_heap_.size()-1; i >= 0; i--)
-        min_heapify(i);
-      merged_ops.push_back(min_heap_.at(0).op);
+      for(i = min_heap.size()-1; i >= 0; i--)
+        min_heapify(&min_heap, i);
+      merged_ops.push_back(min_heap.at(0).op);
 
       i = 1;
       while (i < size) {
-        int index = min_heap_.at(0).logger_index;
+        int index = min_heap.at(0).logger_index;
         indices.at(index)++;
         if (indices.at(index) < ops_size_vec.at(index)) {
           heap_element temp;
           temp.op = pending_.at(index).op_at_index(indices.at(index));
           temp.logger_index = index;
-          min_heap_.at(0) = temp;
+          min_heap.at(0) = temp;
           i++;
         } else {
-          min_heap_.at(0) = min_heap_.back();
-          min_heap_.pop_back();
+          min_heap.at(0) = min_heap.back();
+          min_heap.pop_back();
         }
-        if (min_heap_.size() == 0)
+        if (min_heap.size() == 0)
           break;
-        min_heapify(0);
-        merged_ops.push_back(min_heap_.at(0).op);
+        min_heapify(&min_heap, 0);
+        merged_ops.push_back(min_heap.at(0).op);
       }
 
       for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
@@ -571,8 +566,6 @@ namespace oplog {
           i--;
         }
       }
-
-      min_heap_.clear();
     }
 
   public:
