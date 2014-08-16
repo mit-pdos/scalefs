@@ -229,8 +229,10 @@ namespace oplog {
     class op
     {
     public:
+      NEW_DELETE_OPS(op);
       const uint64_t tsc;
       op(uint64_t tsc) : tsc(tsc) { }
+      virtual ~op() { }
       virtual void run() = 0;
       virtual void print() = 0;
     };
@@ -243,6 +245,8 @@ namespace oplog {
     public:
       NEW_DELETE_OPS(op_inst);
       op_inst(uint64_t tsc, CB &&cb) : op(tsc), cb_(cb) { }
+      ~op_inst() { }
+
       void run() override
       {
         cb_();
@@ -268,9 +272,19 @@ namespace oplog {
       ops_.clear();
     }
 
+    void delete_ops() {
+      for (auto it = ops_.begin(); it != ops_.end(); it++)
+        delete (*it);
+      ops_.clear();
+    }
+
     friend class tsc_logged_object;
 
   public:
+    ~tsc_logger() {
+      delete_ops();
+    }
+
     // Log the operation cb, which must be a callable.  cb will be
     // called with no arguments when the logs need to be
     // synchronized.
@@ -347,6 +361,28 @@ namespace oplog {
     std::vector<heap_element> min_heap_; // used to heap-merge the loggers
 
     std::vector<tsc_logger> pending_;
+
+    void clear_loggers() {
+      auto guard = sync_lock_.guard();
+      while (1) {
+        bool any = false;
+        // Gather loggers
+        for (auto cpu : cpus_) {
+          // XXX Is the optimizer smart enough to lift the hash
+          // computation?
+          auto way = cache_[cpu].hash_way(this);
+          auto way_guard = way->lock_.guard();
+          auto cur_obj = way->obj_.load(std::memory_order_relaxed);
+          assert(cur_obj == this);
+          way->logger_.delete_ops();
+          any = true;
+        }
+        if (!any)
+          break;
+        // Make sure we see concurrent updates to cpus_.
+        barrier();
+      }
+    }
 
     void flush_logger(tsc_logger *l) override
     {
@@ -435,12 +471,22 @@ namespace oplog {
  
       for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
         ((tsc_logger::op *)(*it))->run();
+        delete (*it);
       }
       for(auto it = pending_.begin(); it < pending_.end(); it++)
         it->reset();
       pending_.clear();
       min_heap_.clear();
     }
+
+  public:
+  ~tsc_logged_object() {
+    pending_.clear();
+    for (auto it = min_heap_.begin(); it != min_heap_.end(); it++)
+      delete it->op;
+    min_heap_.clear();
+    clear_loggers();
+  }
 
   };
 
