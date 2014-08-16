@@ -132,10 +132,6 @@ public:
         rmap_vec.clear();
       }
 
-      ~rmap() {
-        rmap_vec.clear();
-      }
-
     protected:
       std::vector<rmap_entry> rmap_vec;
   };
