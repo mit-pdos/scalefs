@@ -501,13 +501,11 @@ namespace oplog {
       for(auto &pos : posns)
         pos.logger->ops_.erase(pos.logger->ops_.begin(), pos.end);
 
-      size_t i = 0;
-      for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
-        if(it->ops_.empty()) {
-          pending_.erase(pending_.begin()+i);
-          it--;
-          i--;
-        }
+      for(auto it = pending_.begin(); it != pending_.end();) {
+        if(it->ops_.empty())
+          it = pending_.erase(it);
+        else
+          ++it;
       }
     }
 
