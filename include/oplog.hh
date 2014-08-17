@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 #include <algorithm>
+#include <queue>
 
 // OpLog is a technique for scaling objects that are frequently
 // written and rarely read.  It works by logging modification
@@ -263,6 +264,7 @@ namespace oplog {
 
     // Logged operations in TSC order
     std::vector<op*> ops_;
+    typedef decltype(ops_)::iterator op_iter;
 
     static uint64_t rdtscp() 
     {
@@ -283,6 +285,7 @@ namespace oplog {
     }
 
     friend class tsc_logged_object;
+    friend class mfs_logged_object;
 
   public:
     ~tsc_logger() {
@@ -330,27 +333,15 @@ namespace oplog {
         (*it)->print();
     }
 
-    size_t ops_size() { return ops_.size(); }
-
-    // Returns the number of ops with timestamp less than max_tsc
-    size_t ops_before_max_tsc(u64 max_tsc) {
-      size_t size = 0;
-      for (auto it = ops_.begin(); it != ops_.end(); it++, size++)
+    // Returns an iterator it where all operations in [ops_.begin(),
+    // it) have timestamps less than max_tsc
+    op_iter ops_before_max_tsc(u64 max_tsc) {
+      auto it = ops_.begin(), end = ops_.end();
+      for (; it != end; it++)
         if ((*it)->tsc >= max_tsc)
           break;
-      return size;
+      return it;
     }
-
-    // Erases ops with timestamp less than max_tsc
-    void clear_before_max_tsc(u64 max_tsc) {
-      auto it = ops_.begin();
-      while (it != ops_.end() && (*it)->tsc < max_tsc) {
-        ops_.erase(ops_.begin());
-        it = ops_.begin();
-      }
-    }
-
-    op* op_at_index(int i) { return ops_.at(i); }
   };
 
   // A logger that applies operations in global timestamp order using
@@ -358,11 +349,6 @@ namespace oplog {
   class tsc_logged_object : public logged_object<tsc_logger>
   {
   protected:
-    typedef struct {
-      tsc_logger::op *op;
-      u64 logger_index;
-    }heap_element;
-
     std::vector<tsc_logger> pending_;
 
     void clear_loggers() {
@@ -398,79 +384,49 @@ namespace oplog {
         it->print_ops();
     }
 
-    void min_heapify(std::vector<heap_element> *heap, int i) {
-      if (heap->size() <= 1)
-        return;
-      assert(i < heap->size());
-      int left = 2*i+1, right = 2*i+2, min_index = i;
-      heap_element temp;
-      heap_element min = heap->at(i);
-      if(left < heap->size() && tsc_logger::compare_tsc(heap->at(left).op, min.op)) {
-        min = heap->at(left);
-        min_index = left;
-      }
-      if(right < heap->size() && tsc_logger::compare_tsc(heap->at(right).op, min.op)) {
-        min = heap->at(right);
-        min_index = right;
-      }
-      if(min_index == i) // No more heap properties violated.
-        return;
-      // Swap with whichever child is smaller.
-      temp = heap->at(min_index);
-      heap->at(min_index) = heap->at(i);
-      heap->at(i) = temp;
-      min_heapify(heap, min_index);
+    static std::vector<size_t> seq_vector(size_t x)
+    {
+      std::vector<size_t> vec;
+      for (size_t i = 0; i < x; ++i)
+        vec.push_back(i);
+      return vec;
     }
 
     // This should heap-merge all of the loggers
     // in pending_ and apply their operations in order.
     void flush_finish() override {
-      if (pending_.size() == 0)
+      if (pending_.empty())
         return;
-      int size = 0, i = 0;
-      std::vector<int> indices;
+
+      struct pos { tsc_logger::op_iter next, end; };
+      std::vector<pos> posns;
       std::vector<tsc_logger::op*> merged_ops;
       for(auto it = pending_.begin(); it < pending_.end(); it++) {
-        it->sort_ops();  //XXX(rasha) Are the inidividual loggers already in tsc order?
-        size += it->ops_size();
-        indices.push_back(0);
-      }
-
-      if (size == 0)
-        return;
-      // Merge the operations using heaps
-      std::vector<heap_element> min_heap;
-      for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
-        if (it->ops_size() == 0)
+        if (it->ops_.empty())
           continue;
-        heap_element temp;
-        temp.op = it->op_at_index(0);
-        temp.logger_index = i;
-        min_heap.push_back(temp);
+        it->sort_ops();  //XXX(rasha) Are the inidividual loggers already in tsc order?
+        posns.push_back({it->ops_.begin(), it->ops_.end()});
       }
-      for(i = min_heap.size()-1; i >= 0; i--)
-        min_heapify(&min_heap, i);
-      merged_ops.push_back(min_heap.at(0).op);
+      if (posns.empty())
+        return;
 
-      i = 1;
-      while (i < size) {
-        int index = min_heap.at(0).logger_index;
-        indices.at(index)++;
-        if (indices.at(index) < pending_.at(index).ops_size()) {
-          heap_element temp;
-          temp.op = pending_.at(index).op_at_index(indices.at(index));
-          temp.logger_index = index;
-          min_heap.at(0) = temp;
-          i++;
-        } else {
-          min_heap.at(0) = min_heap.back();
-          min_heap.pop_back();
-        }
-        if (min_heap.size() == 0)
-          break;
-        min_heapify(&min_heap, 0);
-        merged_ops.push_back(min_heap.at(0).op);
+      // Merge the operations using a heap of indices into posns
+      auto compare = [&](size_t a, size_t b) -> bool {
+        return (*posns[a].next)->tsc > (*posns[b].next)->tsc;
+      };
+      std::priority_queue<size_t, std::vector<size_t>, decltype(compare)> heap(
+        compare, seq_vector(posns.size()));
+      while (!heap.empty()) {
+        auto top = heap.top();
+        merged_ops.push_back(*posns[top].next);
+        ++posns[top].next;
+        heap.pop();
+        if (posns[top].next != posns[top].end)
+          heap.push(top);
       }
+      assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
+                            [](const tsc_logger::op *a, const tsc_logger::op *b)
+                            -> bool { return a->tsc <= b->tsc; }));
  
       for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
         ((tsc_logger::op *)(*it))->run();
@@ -502,65 +458,52 @@ namespace oplog {
     // Heap-merges pending loggers and applies the operations, leaving behind
     // operations that have timestamps greater than or equal to max_tsc.
     void flush_finish_max_timestamp(u64 max_tsc) {
-      if (pending_.size() == 0)
+      if (pending_.empty())
         return;
-      int size = 0, i = 0;
-      std::vector<int> indices;
-      std::vector<size_t> ops_size_vec;
+
+      struct pos {
+        tsc_logger::op_iter next, end;
+        tsc_logger *logger;
+      };
+      std::vector<pos> posns;
       std::vector<tsc_logger::op*> merged_ops;
       for(auto it = pending_.begin(); it < pending_.end(); it++) {
         it->sort_ops();
-        int sz = it->ops_before_max_tsc(max_tsc);
-        ops_size_vec.push_back(sz);
-        size += sz;
-        indices.push_back(0);
-      }
-
-      if (size == 0)
-        return;
-      // Merge the operations using heaps
-      std::vector<heap_element> min_heap;
-      for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
-        if (ops_size_vec.at(i) == 0)
+        auto end = it->ops_before_max_tsc(max_tsc);
+        if (it->ops_.begin() == end)
           continue;
-        heap_element temp;
-        temp.op = it->op_at_index(0);
-        temp.logger_index = i;
-        min_heap.push_back(temp);
+        posns.push_back({it->ops_.begin(), end, &*it});
       }
-      for(i = min_heap.size()-1; i >= 0; i--)
-        min_heapify(&min_heap, i);
-      merged_ops.push_back(min_heap.at(0).op);
+      if (posns.empty())
+        return;
 
-      i = 1;
-      while (i < size) {
-        int index = min_heap.at(0).logger_index;
-        indices.at(index)++;
-        if (indices.at(index) < ops_size_vec.at(index)) {
-          heap_element temp;
-          temp.op = pending_.at(index).op_at_index(indices.at(index));
-          temp.logger_index = index;
-          min_heap.at(0) = temp;
-          i++;
-        } else {
-          min_heap.at(0) = min_heap.back();
-          min_heap.pop_back();
-        }
-        if (min_heap.size() == 0)
-          break;
-        min_heapify(&min_heap, 0);
-        merged_ops.push_back(min_heap.at(0).op);
+      // Merge the operations using a heap of indices into posns
+      auto compare = [&](size_t a, size_t b) -> bool {
+        return (*posns[a].next)->tsc > (*posns[b].next)->tsc;
+      };
+      std::priority_queue<size_t, std::vector<size_t>, decltype(compare)> heap(
+        compare, seq_vector(posns.size()));
+      while (!heap.empty()) {
+        auto top = heap.top();
+        merged_ops.push_back(*posns[top].next);
+        ++posns[top].next;
+        heap.pop();
+        if (posns[top].next != posns[top].end)
+          heap.push(top);
       }
+      assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
+                            [](const tsc_logger::op *a, const tsc_logger::op *b)
+                            -> bool { return a->tsc <= b->tsc; }));
 
       for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
         ((tsc_logger::op *)(*it))->run();
       }
-      for(auto it = pending_.begin(); it < pending_.end(); it++)
-        it->clear_before_max_tsc(max_tsc);
+      for(auto &pos : posns)
+        pos.logger->ops_.erase(pos.logger->ops_.begin(), pos.end);
 
-      i = 0;
+      size_t i = 0;
       for(auto it = pending_.begin(); it < pending_.end(); it++, i++) {
-        if(it->ops_size() == 0) {
+        if(it->ops_.empty()) {
           pending_.erase(pending_.begin()+i);
           it--;
           i--;
