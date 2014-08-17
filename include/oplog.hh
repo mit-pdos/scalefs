@@ -263,7 +263,7 @@ namespace oplog {
     };
 
     // Logged operations in TSC order
-    std::vector<op*> ops_;
+    std::vector<std::unique_ptr<op> > ops_;
     typedef decltype(ops_)::iterator op_iter;
 
     static uint64_t rdtscp() 
@@ -279,8 +279,6 @@ namespace oplog {
     }
 
     void delete_ops() {
-      for (auto it = ops_.begin(); it != ops_.end(); it++)
-        delete (*it);
       ops_.clear();
     }
 
@@ -288,6 +286,10 @@ namespace oplog {
     friend class mfs_logged_object;
 
   public:
+    tsc_logger() = default;
+    tsc_logger(tsc_logger &&o) = default;
+    tsc_logger &operator=(tsc_logger &&o) = default;
+
     ~tsc_logger() {
       delete_ops();
     }
@@ -309,7 +311,8 @@ namespace oplog {
       // and the lock release also writes to memory, which
       // introduces a TSO dependency from the TSC memory write to
       // the lock release.
-      ops_.push_back(new op_inst<CB>(rdtscp(), std::forward<CB>(cb)));
+      ops_.push_back(std::make_unique<op_inst<CB> >(
+                       rdtscp(), std::forward<CB>(cb)));
     }
 
     // Same as push<CB>, the only difference being that the tsc value is passed
@@ -319,10 +322,13 @@ namespace oplog {
     template<typename CB>
     void push_with_tsc(CB &&cb)
     {
-      ops_.push_back(new op_inst<CB>(cb.get_tsc(), std::forward<CB>(cb)));
+      ops_.push_back(std::make_unique<op_inst<CB> >(
+                       cb.get_tsc(), std::forward<CB>(cb)));
     }
 
-    static bool compare_tsc(op *op1, op *op2) { return (op1->tsc < op2->tsc); }
+    static bool compare_tsc(const std::unique_ptr<op> &op1, const std::unique_ptr<op> &op2) {
+      return (op1->tsc < op2->tsc);
+    }
 
     void sort_ops() {
       std::sort(ops_.begin(), ops_.end(), compare_tsc);
@@ -400,7 +406,7 @@ namespace oplog {
 
       struct pos { tsc_logger::op_iter next, end; };
       std::vector<pos> posns;
-      std::vector<tsc_logger::op*> merged_ops;
+      std::vector<std::unique_ptr<tsc_logger::op> > merged_ops;
       for(auto it = pending_.begin(); it < pending_.end(); it++) {
         if (it->ops_.empty())
           continue;
@@ -418,20 +424,17 @@ namespace oplog {
         compare, seq_vector(posns.size()));
       while (!heap.empty()) {
         auto top = heap.top();
-        merged_ops.push_back(*posns[top].next);
+        merged_ops.push_back(std::move(*posns[top].next));
         ++posns[top].next;
         heap.pop();
         if (posns[top].next != posns[top].end)
           heap.push(top);
       }
       assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
-                            [](const tsc_logger::op *a, const tsc_logger::op *b)
-                            -> bool { return a->tsc <= b->tsc; }));
+                            tsc_logger::compare_tsc));
  
-      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
-        ((tsc_logger::op *)(*it))->run();
-        delete (*it);
-      }
+      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++)
+        (*it)->run();
       for(auto it = pending_.begin(); it < pending_.end(); it++)
         it->reset();
       pending_.clear();
@@ -466,7 +469,7 @@ namespace oplog {
         tsc_logger *logger;
       };
       std::vector<pos> posns;
-      std::vector<tsc_logger::op*> merged_ops;
+      std::vector<std::unique_ptr<tsc_logger::op> > merged_ops;
       for(auto it = pending_.begin(); it < pending_.end(); it++) {
         it->sort_ops();
         auto end = it->ops_before_max_tsc(max_tsc);
@@ -485,19 +488,17 @@ namespace oplog {
         compare, seq_vector(posns.size()));
       while (!heap.empty()) {
         auto top = heap.top();
-        merged_ops.push_back(*posns[top].next);
+        merged_ops.push_back(std::move(*posns[top].next));
         ++posns[top].next;
         heap.pop();
         if (posns[top].next != posns[top].end)
           heap.push(top);
       }
       assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
-                            [](const tsc_logger::op *a, const tsc_logger::op *b)
-                            -> bool { return a->tsc <= b->tsc; }));
+                            tsc_logger::compare_tsc));
 
-      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++) {
-        ((tsc_logger::op *)(*it))->run();
-      }
+      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++)
+        (*it)->run();
       for(auto &pos : posns)
         pos.logger->ops_.erase(pos.logger->ops_.begin(), pos.end);
 
