@@ -273,6 +273,22 @@ void mfs_interface::process_metadata_log() {
 
 }
 
+void mfs_interface::sync_dirty_files() {
+  superblock sb;
+  {
+    sref<buf> bp = buf::get(1, 1);
+    auto r = bp->read();
+    memmove(&sb, r->data, sizeof(sb));
+  }
+  for (int i = 0; i < sb.ninodes; i++) {
+    sref<mnode> m;
+    if (inum_to_mnode->lookup(i, &m) && m) {
+      if(m->type() == mnode::types::file)
+        m->as_file()->sync_file();
+    }
+  }
+}
+
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {

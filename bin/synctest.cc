@@ -45,12 +45,20 @@ void sync_run() {
     die("error: could not open testdir1");
   close(fd);
 
+  if ((fd = open("tmpfile", O_RDWR | O_CREAT)) < 0)
+    die("error: could not open tmpfile");
+  close(fd);
+
+  if (unlink("tmpfile") < 0)
+    die("error: unlink failed");
+
   sync();
 }
 
 void sync_verify() {
-  int fd, num_entries = 0;
+  int fd, n, num_entries = 0, size = 0;
   char namebuf[DIRSIZ+1];
+  char buf[4096];
   char *prev = nullptr;
 
   if ((fd = open("testdir1", 0)) < 0)
@@ -77,12 +85,26 @@ void sync_verify() {
     die("check failed: could not open testdir1/testsubdir");
   close(fd);
 
+  if ((fd = open("tmpfile", O_RDWR)) == 0)
+    die("check failed: tmpfile not unlinked");
+
   if ((fd = open("testdir1/testfile2", 0)) < 0)
     die("check failed: could not open testdir1/testfile2");
+  while((n = read(fd, buf, sizeof(buf))) > 0)
+    size += n;
+  if(n < 0)
+    die("check failed: testdir1/testfile2: read error");
+  assert(size == 4096);
   close(fd);
 
+  size = 0;
   if ((fd = open("testfile1", 0)) < 0)
     die("check failed: could not open testfile1");
+  while((n = read(fd, buf, sizeof(buf))) > 0)
+    size += n;
+  if(n < 0)
+    die("check failed: testfile1: read error");
+  assert(size == 4608);
   close(fd);
 }
 
