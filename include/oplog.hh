@@ -278,10 +278,6 @@ namespace oplog {
       ops_.clear();
     }
 
-    void delete_ops() {
-      ops_.clear();
-    }
-
     friend class tsc_logged_object;
     friend class mfs_logged_object;
 
@@ -289,10 +285,6 @@ namespace oplog {
     tsc_logger() = default;
     tsc_logger(tsc_logger &&o) = default;
     tsc_logger &operator=(tsc_logger &&o) = default;
-
-    ~tsc_logger() {
-      delete_ops();
-    }
 
     // Log the operation cb, which must be a callable.  cb will be
     // called with no arguments when the logs need to be
@@ -369,7 +361,7 @@ namespace oplog {
           auto way_guard = way->lock_.guard();
           auto cur_obj = way->obj_.load(std::memory_order_relaxed);
           assert(cur_obj == this);
-          way->logger_.delete_ops();
+          way->logger_.reset();
           any = true;
         }
         if (!any)
