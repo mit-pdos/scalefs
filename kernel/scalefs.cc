@@ -177,8 +177,16 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
       return;
     // The name now refers to a different inode. Unlink the old one and create a
     // new directory entry for this mapping.
+    if(di->type == T_DIR)
+      dirunlink(i, name, di->inum, true);
     else
-      dir_remove_entry(i, name);
+      dirunlink(i, name, di->inum, false);
+    if(!di->nlink()) {
+      ilock(di, 1);
+      itrunc(di, 0, tr);
+      iunlock(di);
+      inum_to_mnode->remove(di->inum);
+    }
   }
 
   ilock(i, 1);
@@ -200,12 +208,21 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
 
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
 // The file/directory names that are present in the mdir are specified in names_vec.
-void mfs_interface::unlink_old_inodes(u64 mdir_inum, std::vector<char*> names_vec,
-    transaction *tr) {
-  sref<inode> i = get_inode(mdir_inum, "unlink_old_inodes");
-
-  dir_remove_entries(i, names_vec);
-  update_dir(i, tr);
+void mfs_interface::unlink_old_inode(u64 mdir_inum, char* name, transaction *tr) {
+  sref<inode> i = get_inode(mdir_inum, "unlink_old_inode");
+  sref<inode> target = dirlookup(i, name);
+  if (!target)
+    return;
+  if (target->type == T_DIR)
+    dirunlink(i, name, target->inum, true);
+  else
+    dirunlink(i, name, target->inum, false);
+  if (!target->nlink()) {
+    ilock(target, 1);
+    itrunc(target, 0, tr);
+    iunlock(target);
+    inum_to_mnode->remove(target->inum);
+  }
 }
 
 // Calls a dir_flush on the directory.
@@ -331,9 +348,7 @@ void mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr) {
   scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
-  std::vector<char *> names_vec;
-  names_vec.push_back(str);
-  unlink_old_inodes(op->parent, names_vec, tr);
+  unlink_old_inode(op->parent, str, tr);
   update_dir_inode(op->parent, tr);
 }
 
@@ -342,13 +357,11 @@ void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
   scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
-  std::vector<char *> names_vec;
-  names_vec.push_back(str);
 
   create_directory_entry(op->new_parent, op->newname, op->mnode, op->mnode_type, tr);
   update_dir_inode(op->new_parent, tr);
 
-  unlink_old_inodes(op->parent, names_vec, tr);
+  unlink_old_inode(op->parent, str, tr);
   update_dir_inode(op->parent, tr);
 }
 

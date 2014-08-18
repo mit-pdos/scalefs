@@ -682,9 +682,9 @@ inode::nlink(void)
 void
 inode::onzero(void)
 {
-  /*acquire(&lock);
-  if (nlink())
-    panic("iput [%p]: nlink %u\n", this, nlink());
+  acquire(&lock);
+  /*if (nlink())
+    panic("iput [%d]: nlink %u\n", inum, nlink());*/
 
   // inode is no longer used: truncate and free inode.
   if(busy || readbusy) {
@@ -700,7 +700,7 @@ inode::onzero(void)
   // XXX: use gc_delayed() to truncate the inode later.
   // flag it as a victim in the meantime.
 
-  itrunc(sref<inode>::transfer(this));
+  /*itrunc(sref<inode>::transfer(this));
 
   {
     auto w = seq.write_begin();
@@ -708,7 +708,7 @@ inode::onzero(void)
     major = 0;
     minor = 0;
     gen += 1;
-  }
+  }*/
 
   release(&lock);
  
@@ -716,7 +716,7 @@ inode::onzero(void)
   ins->remove(make_pair(dev, inum), &ip);
   the_inode_cache.add(inum);
   gc_delayed(ip);
-  return;*/
+  return;
 }
 
 // Lock the given inode.
@@ -1317,6 +1317,9 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link)
   //cprintf("dirlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
   if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name), inum))
     return -1;
+  sref<inode> i = iget(1, inum);
+  if (i)
+    i->link();
   if (inc_link)
     dp->link();
 
@@ -1332,6 +1335,9 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link)
   //cprintf("dirunlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
   if (!dp->dir.load()->remove(strbuf<DIRSIZ>(name), &inum))
     return -1;
+  sref<inode> i = iget(1, inum);
+  if (i)
+    i->unlink();
   if (dec_link)
     dp->unlink();
 
