@@ -49,6 +49,19 @@ void fsync_run() {
     die("error: could not open testdir1");
   fsync(fd);
   close(fd);
+
+  if ((fd = open("tmpfile", O_RDWR | O_CREAT)) < 0)
+    die("error: could not open tmpfile");
+  fsync(fd);
+  close(fd);
+
+  if (unlink("tmpfile") < 0)
+    die("error: unlink failed");
+
+  if ((fd = open(".", 0)) < 0)
+    die("error: could not open .");
+  fsync(fd);
+  close(fd);
 }
 
 void fsync_verify() {
@@ -80,6 +93,9 @@ void fsync_verify() {
   if ((fd = open("testdir1/testsubdir", 0)) < 0)
     die("check failed: could not open testdir1/testsubdir");
   close(fd);
+
+  if ((fd = open("tmpfile", O_RDWR)) == 0)
+    die("check failed: tmpfile not unlinked");
 
   if ((fd = open("testdir1/testfile2", 0)) < 0)
     die("check failed: could not open testdir1/testfile2");
