@@ -150,7 +150,8 @@ class transaction {
     // ordered in increasing order of their timestamps. So while writing out the
     // transaction to the journal, for each block number just the block with the
     // highest timestamp needs to be written to disk. Gets rid of unnecessary I/O.
-    static bool compare_transaction_db(transaction_diskblock b1, transaction_diskblock b2) {
+    static bool compare_transaction_db(const transaction_diskblock& b1, const
+    transaction_diskblock& b2) {
       if (b1.blocknum == b2.blocknum)
         return (b1.timestamp < b2.timestamp);
       return (b1.blocknum < b2.blocknum);
@@ -304,7 +305,7 @@ class mfs_interface {
     void add_to_journal(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
     void flush_journal();
-    void write_transaction_to_journal(const std::vector<transaction_diskblock> vec, 
+    void write_transaction_to_journal(const std::vector<transaction_diskblock>& vec,
           const u64 timestamp);
     void process_journal();
     void clear_journal();
@@ -340,6 +341,7 @@ class mfs_interface {
     
     journal *fs_journal;            // The phsyical journal
     mfs_logical_log *metadata_log;  // The logical log
+    sref<inode> sv6_journal;
 
     // The free block bitmap in memory. Transactions marking a block free or not
     // free on the bitmap on disk make the corresponding changes in this vector

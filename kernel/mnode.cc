@@ -24,7 +24,7 @@ mfs::get(u64 inum)
       return m;
     }
 
-    panic("read in from disk not implemented");
+  return sref<mnode>();
   }
 }
 

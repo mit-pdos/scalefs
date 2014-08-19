@@ -119,7 +119,9 @@ void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "truncate_file");
   itrunc(i, offset, tr);
-  root_fs->get(mfile_inum)->as_file()->remove_pgtable_mappings(offset);
+  sref<mnode> m = root_fs->get(mfile_inum);
+  if (m)
+    m->as_file()->remove_pgtable_mappings(offset);
 }
 
 // Creates a new direcotry on the disk if an mnode (mdir) does not have a 
@@ -486,9 +488,9 @@ void mfs_interface::flush_journal() {
 
 // Writes out a single journal transaction to disk
 void mfs_interface::write_transaction_to_journal(
-    const std::vector<transaction_diskblock> vec, const u64 timestamp) {
+    const std::vector<transaction_diskblock>& vec, const u64 timestamp) {
   transaction *trans = new transaction(0);
-  sref<inode> ip = namei(sref<inode>(), "/sv6journal");
+  assert(sv6_journal);
   u32 offset = fs_journal->current_offset();
 
   // Each transaction begins with a start block
@@ -499,10 +501,10 @@ void mfs_interface::write_transaction_to_journal(
   char databuf[BSIZE];
   memset(databuf, 0, sizeof(databuf));
 
-  if (writei(ip, buf, offset, sizeof(buf), trans) != sizeof(buf))
+  if (writei(sv6_journal, buf, offset, sizeof(buf), trans) != sizeof(buf))
     panic("Journal write failed");
   offset += sizeof(buf);
-  if (writei(ip, databuf, offset, BSIZE, trans) != BSIZE)
+  if (writei(sv6_journal, databuf, offset, BSIZE, trans) != BSIZE)
     panic("Journal write failed");
   offset += BSIZE;
 
@@ -511,10 +513,10 @@ void mfs_interface::write_transaction_to_journal(
     journal_block_header hd(timestamp, it->blocknum, jrnl_data);
     memset(buf, 0, sizeof(buf));
     memmove(buf, (void*)&hd, sizeof(hd));
-    if (writei(ip, buf, offset, sizeof(buf), trans) != sizeof(buf))
+    if (writei(sv6_journal, buf, offset, sizeof(buf), trans) != sizeof(buf))
       panic("Journal write failed");
     offset += sizeof(buf);
-    if (writei(ip, it->blockdata, offset, BSIZE, trans) != BSIZE)
+    if (writei(sv6_journal, it->blockdata, offset, BSIZE, trans) != BSIZE)
       panic("Journal write failed");
     offset += BSIZE;
   }
@@ -524,10 +526,10 @@ void mfs_interface::write_transaction_to_journal(
   memset(buf, 0, sizeof(buf)); 
   memmove(buf, (void*)&hdcommit, sizeof(hdcommit));
   memset(databuf, 0, sizeof(databuf));
-  if (writei(ip, buf, offset, sizeof(buf), trans) != sizeof(buf))
+  if (writei(sv6_journal, buf, offset, sizeof(buf), trans) != sizeof(buf))
     panic("Journal write failed");
   offset += sizeof(buf);
-  if (writei(ip, databuf, offset, BSIZE, trans) != BSIZE)
+  if (writei(sv6_journal, databuf, offset, BSIZE, trans) != BSIZE)
     panic("Journal write failed");
   offset += BSIZE;
 
@@ -543,13 +545,14 @@ void mfs_interface::process_journal() {
   bool jrnl_error = false;
   transaction *trans = new transaction(0);
   std::vector<transaction_diskblock> block_vec;
-  sref<inode> ip = namei(sref<inode>(), "/sv6journal");
-  ilock(ip, 1);
+  sv6_journal = namei(sref<inode>(), "/sv6journal");
+  assert(sv6_journal);
+  ilock(sv6_journal, 1);
 
   while (!jrnl_error) {
     char hdbuf[sizeof(journal_block_header)];
     char databuf[BSIZE];
-    if (readi(ip, hdbuf, offset, sizeof(journal_block_header)) !=
+    if (readi(sv6_journal, hdbuf, offset, sizeof(journal_block_header)) !=
       sizeof(journal_block_header))
       break;
 
@@ -559,7 +562,7 @@ void mfs_interface::process_journal() {
       break;  // Zero-filled block indicates end of journal
 
     offset += sizeof(journal_block_header);
-    if (readi(ip, databuf, offset, BSIZE) != BSIZE)
+    if (readi(sv6_journal, databuf, offset, BSIZE) != BSIZE)
       break;
     offset += BSIZE;
 
@@ -591,18 +594,18 @@ void mfs_interface::process_journal() {
   }
 
   // Zero-fill the journal
-  zero_fill(ip, 8459264);
-  iunlock(ip);
+  zero_fill(sv6_journal, 4235264);
+  iunlock(sv6_journal);
 
   trans->write_to_disk_update_bufcache();
 }
 
 // Clear (zero-fill) the journal file on the disk
 void mfs_interface::clear_journal() {
-  sref<inode> ip = namei(sref<inode>(), "/sv6journal");
-  ilock(ip, 1);
-  zero_fill(ip, fs_journal->current_offset());
-  iunlock(ip);
+  assert(sv6_journal);
+  ilock(sv6_journal, 1);
+  zero_fill(sv6_journal, fs_journal->current_offset());
+  iunlock(sv6_journal);
   fs_journal->update_offset(0);
 }
 
