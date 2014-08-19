@@ -399,11 +399,11 @@ namespace oplog {
       struct pos { tsc_logger::op_iter next, end; };
       std::vector<pos> posns;
       std::vector<std::unique_ptr<tsc_logger::op> > merged_ops;
-      for(auto it = pending_.begin(); it < pending_.end(); it++) {
-        if (it->ops_.empty())
+      for(auto &logger : pending_) {
+        if (logger.ops_.empty())
           continue;
-        it->sort_ops();  //XXX(rasha) Are the inidividual loggers already in tsc order?
-        posns.push_back({it->ops_.begin(), it->ops_.end()});
+        logger.sort_ops();  //XXX(rasha) Are the inidividual loggers already in tsc order?
+        posns.push_back({logger.ops_.begin(), logger.ops_.end()});
       }
       if (posns.empty())
         return;
@@ -425,10 +425,10 @@ namespace oplog {
       assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
                             tsc_logger::compare_tsc));
  
-      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++)
-        (*it)->run();
-      for(auto it = pending_.begin(); it < pending_.end(); it++)
-        it->reset();
+      for(auto &op : merged_ops)
+        op->run();
+      for(auto &logger : pending_)
+        logger.reset();
       pending_.clear();
     }
 
@@ -462,12 +462,12 @@ namespace oplog {
       };
       std::vector<pos> posns;
       std::vector<std::unique_ptr<tsc_logger::op> > merged_ops;
-      for(auto it = pending_.begin(); it < pending_.end(); it++) {
-        it->sort_ops();
-        auto end = it->ops_before_max_tsc(max_tsc);
-        if (it->ops_.begin() == end)
+      for(auto &logger : pending_) {
+        logger.sort_ops();
+        auto end = logger.ops_before_max_tsc(max_tsc);
+        if (logger.ops_.begin() == end)
           continue;
-        posns.push_back({it->ops_.begin(), end, &*it});
+        posns.push_back({logger.ops_.begin(), end, &logger});
       }
       if (posns.empty())
         return;
@@ -489,8 +489,8 @@ namespace oplog {
       assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
                             tsc_logger::compare_tsc));
 
-      for(auto it = merged_ops.begin(); it < merged_ops.end(); it++)
-        (*it)->run();
+      for(auto &op : merged_ops)
+        op->run();
       for(auto &pos : posns)
         pos.logger->ops_.erase(pos.logger->ops_.begin(), pos.end);
 
