@@ -494,12 +494,16 @@ namespace oplog {
       for(auto &pos : posns)
         pos.logger->ops_.erase(pos.logger->ops_.begin(), pos.end);
 
-      for(auto it = pending_.begin(); it != pending_.end();) {
-        if(it->ops_.empty())
-          it = pending_.erase(it);
-        else
-          ++it;
+      // Remove empty loggers from pending
+      auto dst = pending_.begin();
+      for(auto src = dst, end = pending_.end(); src != end; ++src) {
+        if(!src->ops_.empty()) {
+          if(dst != src)
+            *dst = std::move(*src);
+          ++dst;
+        }
       }
+      pending_.erase(dst, pending_.end());
     }
 
   public:
