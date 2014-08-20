@@ -140,6 +140,10 @@ public:
     rmap_pte = new rmap();
   }
 
+  ~page_info() {
+    delete rmap_pte;
+  }
+
   // Only placement new is allowed, because page_info must only be
   // constructed in the page_info_array.
   static void* operator new(unsigned long nbytes, page_info *buf)
