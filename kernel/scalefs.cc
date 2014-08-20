@@ -271,7 +271,6 @@ void mfs_interface::process_metadata_log() {
     add_to_journal(tr);
     delete (*it);
   }
-  ops.clear();
 
 }
 
@@ -315,7 +314,6 @@ void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
     delete (*it);
   } while (it != dependent_ops.begin());
 
-  dependent_ops.clear();
 }
 
 // Goes through the metadata log and filters out the operations that the fsync()
@@ -394,7 +392,6 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
   for (auto a = tr->allocated_block_list.begin(); a !=
       tr->allocated_block_list.end(); a++)
     balloc_on_disk(*a, tr);
-  tr->allocated_block_list.clear();
   for (auto f = tr->free_block_list.begin(); f !=
       tr->free_block_list.end(); f++)
     bfree_on_disk(*f, tr);
@@ -419,9 +416,6 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
   for (auto b = block_vec.begin(); b != block_vec.end(); b++)
     b->writeback();
 
-  block_vec.clear();
-  tr->blocks.clear();
-
   // The blocks have been written to disk successfully. Safe to delete
   // this transaction from the journal. (This means that all the
   // transactions till this point have made it to the disk. So the journal
@@ -432,7 +426,6 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
   for (auto f = tr->free_block_list.begin(); f !=
       tr->free_block_list.end(); f++)
     free_block(*f);
-  tr->free_block_list.clear();
 }
 
 // Writes out the physical journal to the disk. Then applies the
@@ -449,8 +442,6 @@ void mfs_interface::flush_journal() {
     for (auto f = (*it)->free_block_list.begin(); f !=
         (*it)->free_block_list.end(); f++)
       bfree_on_disk(*f, *it);
-    (*it)->allocated_block_list.clear();
-    (*it)->free_block_list.clear();
 
     (*it)->prepare_for_commit();
 
@@ -472,8 +463,6 @@ void mfs_interface::flush_journal() {
     for (auto b = block_vec.begin(); b != block_vec.end(); b++)
       b->writeback();
 
-    block_vec.clear();
-    (*it)->blocks.clear();
     delete (*it);
 
     // The blocks have been written to disk successfully. Safe to delete
@@ -707,7 +696,6 @@ void mfs_interface::initialize_free_bit_vector() {
   bp = buf::get(1, 1);
   auto r = bp->read();
   memmove(&sb, r->data, sizeof(sb));
-  free_bit_vector.clear();
 
   for(b = 0; b < sb.size; b += BPB) {
     blocknum = BBLOCK(b, sb.ninodes);

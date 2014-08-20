@@ -132,7 +132,6 @@ class transaction {
     void write_to_disk() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         b->writeback();
-      blocks.clear();
     }
 
     // Writes the blocks in the transaction to disk, and updates the
@@ -141,7 +140,6 @@ class transaction {
     void write_to_disk_update_bufcache() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         b->writeback_through_bufcache();
-      blocks.clear();
     }
 
     // Comparison function to order diskblock updates. Diskblocks are ordered in

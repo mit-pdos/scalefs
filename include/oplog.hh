@@ -434,7 +434,6 @@ namespace oplog {
 
   public:
   ~tsc_logged_object() {
-    pending_.clear();
     clear_loggers();
   }
 
