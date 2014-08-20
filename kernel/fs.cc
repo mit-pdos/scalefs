@@ -1143,14 +1143,15 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       break;
     }
     m = min(n - tot, BSIZE - off%BSIZE);
-    auto locked = bp->write();
-    memmove(locked->data + off%BSIZE, src, m);
-    if (writeback) {
+    {
+      auto locked = bp->write();
+      memmove(locked->data + off%BSIZE, src, m);
       memmove(charbuf, locked->data, BSIZE);
+    }
+    if (writeback) {
       transaction_diskblock b(blocknum, charbuf);
       b.writeback();
     } else if (trans) {
-      memmove(charbuf, locked->data, BSIZE);
       transaction_diskblock b(blocknum, charbuf);
       trans->add_block(b);
     }
