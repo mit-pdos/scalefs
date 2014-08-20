@@ -132,12 +132,17 @@ public:
         rmap_vec.clear();
       }
 
+      void sync() {
+        auto guard = synchronize();
+      }
+
     protected:
       std::vector<rmap_entry> rmap_vec;
   };
   
   page_info() {
     rmap_pte = new rmap();
+    outstanding_ops = 0;
   }
 
   ~page_info() {
@@ -188,22 +193,37 @@ public:
 
   // Add an entry to the rmap for this page
   void add_pte(rmap_entry map) {
+    assert(rmap_pte);
+    if (outstanding_ops > 100) {
+      rmap_pte->sync();
+      outstanding_ops = 0;
+    }
     rmap_pte->add_mapping(map);
+    outstanding_ops++;
   }
 
   // Remove an entry from the rmap for this page
   void remove_pte(rmap_entry map) {
+    assert(rmap_pte);
+    if (outstanding_ops > 100) {
+      rmap_pte->sync();
+      outstanding_ops = 0;
+    }
     rmap_pte->remove_mapping(map);
+    outstanding_ops++;
   }
   
   // Synchronizes the oplog-maintained rmap and returns the <vmap, vaddr> pairs
   // that have this page mapped.
   void get_rmap_vector(std::vector<rmap_entry> &vec) {
+    assert(rmap_pte);
     rmap_pte->sync(vec);
+    outstanding_ops = 0;
   }
 
 private:
   rmap *rmap_pte;
+  int outstanding_ops;
 
 } __attribute__((aligned(16)));
 
