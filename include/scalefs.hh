@@ -39,6 +39,8 @@ struct transaction_diskblock {
                           // been updated several times, but the changes not
                           // necessarily logged in timestamp order.
 
+  NEW_DELETE_OPS(transaction_diskblock);
+
   transaction_diskblock(u32 n, char buf[BSIZE]) {
     blocknum = n;
     memmove(blockdata, buf, BSIZE);
@@ -81,30 +83,35 @@ class transaction {
   public:
     NEW_DELETE_OPS(transaction);
     transaction(u64 t) : timestamp_(t) {
-      blocks = std::vector<transaction_diskblock>();
+      blocks = std::vector<transaction_diskblock*>();
       allocated_block_list = std::vector<u32>();
       free_block_list = std::vector<u32>();
     }
 
     transaction() : timestamp_(get_timestamp()) {
-      blocks = std::vector<transaction_diskblock>();
+      blocks = std::vector<transaction_diskblock*>();
       allocated_block_list = std::vector<u32>();
       free_block_list = std::vector<u32>();
+    }
+
+    ~transaction() {
+      for (auto it = blocks.begin(); it < blocks.end(); it++)
+        delete (*it);
     }
 
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
     // out the changes to disk.
-    void add_block(transaction_diskblock b) {
+    void add_block(transaction_diskblock* b) {
       auto l = write_lock.guard();
       blocks.push_back(b);
     }
 
     // Add multiple disk blocks to a transaction.
-    void add_blocks(std::vector<transaction_diskblock> bvec) {
+    void add_blocks(std::vector<transaction_diskblock*> bvec) {
       auto l = write_lock.guard();
       for (auto b = bvec.begin(); b != bvec.end(); b++)
-        blocks.emplace_back(transaction_diskblock(*b));
+        blocks.push_back(*b);
     }
 
     void add_allocated_block(u32 bno) {
@@ -131,7 +138,7 @@ class transaction {
     // Write the blocks in this transaction to disk. Used to write the journal.
     void write_to_disk() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
-        b->writeback();
+        (*b)->writeback();
     }
 
     // Writes the blocks in the transaction to disk, and updates the
@@ -139,7 +146,7 @@ class transaction {
     // rebooting after the changes have been applied.
     void write_to_disk_update_bufcache() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
-        b->writeback_through_bufcache();
+        (*b)->writeback_through_bufcache();
     }
 
     // Comparison function to order diskblock updates. Diskblocks are ordered in
@@ -148,11 +155,11 @@ class transaction {
     // ordered in increasing order of their timestamps. So while writing out the
     // transaction to the journal, for each block number just the block with the
     // highest timestamp needs to be written to disk. Gets rid of unnecessary I/O.
-    static bool compare_transaction_db(const transaction_diskblock& b1, const
-    transaction_diskblock& b2) {
-      if (b1.blocknum == b2.blocknum)
-        return (b1.timestamp < b2.timestamp);
-      return (b1.blocknum < b2.blocknum);
+    static bool compare_transaction_db(const transaction_diskblock* b1, const
+    transaction_diskblock* b2) {
+      if (b1->blocknum == b2->blocknum)
+        return (b1->timestamp < b2->timestamp);
+      return (b1->blocknum < b2->blocknum);
     }
 
     // Transactions need to be applied in timestamp order too. They might not
@@ -161,7 +168,7 @@ class transaction {
 
   private:
     // List of updated diskblocks
-    std::vector<transaction_diskblock> blocks;
+    std::vector<transaction_diskblock*> blocks;
 
     // Guards updates to the transaction_diskblock vector.
     sleeplock write_lock;
@@ -303,7 +310,7 @@ class mfs_interface {
     void add_to_journal(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
     void flush_journal();
-    void write_transaction_to_journal(const std::vector<transaction_diskblock>& vec,
+    void write_transaction_to_journal(const std::vector<transaction_diskblock*> vec,
           const u64 timestamp);
     void process_journal();
     void clear_journal();

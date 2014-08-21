@@ -65,7 +65,8 @@ bzero(int dev, int bno, transaction *trans = NULL)
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans) {
-    trans->add_block(transaction_diskblock(bno));
+    transaction_diskblock *b = new transaction_diskblock(bno);
+    trans->add_block(b);
   }
 }
 
@@ -138,7 +139,7 @@ balloc(u32 dev, transaction *trans = NULL)
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          transaction_diskblock b(blocknum, charbuf);
+          transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
           trans->add_block(b);
         }
         break;
@@ -171,7 +172,7 @@ void balloc_on_disk(u32 bno, transaction *trans) {
 
   char charbuf[BSIZE];
   memmove(charbuf, locked->data, BSIZE);
-  transaction_diskblock b(blocknum, charbuf);
+  transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
   trans->add_block(b);
 }
 
@@ -214,7 +215,7 @@ bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(blocknum, charbuf);
+      transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
       trans->add_block(b);
     }
   }
@@ -235,7 +236,7 @@ void bfree_on_disk(u32 bno, transaction *trans) {
 
   char charbuf[BSIZE];
   memmove(charbuf, locked->data, BSIZE);
-  transaction_diskblock b(blocknum, charbuf);
+  transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
   trans->add_block(b);
 }
 
@@ -523,7 +524,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(IBLOCK(ip->inum), charbuf);
+      transaction_diskblock* b = new transaction_diskblock(IBLOCK(ip->inum), charbuf);
       trans->add_block(b);
     }
   }
@@ -536,7 +537,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
+      transaction_diskblock* b = new transaction_diskblock(ip->addrs[NDIRECT], charbuf);
       trans->add_block(b);
     }
   }
@@ -826,7 +827,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       if (trans) {
         char charbuf[BSIZE];
         memmove(charbuf, (void*)ip->iaddrs.load(), IADDRSSZ);
-        transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
+        transaction_diskblock *b = new transaction_diskblock(ip->addrs[NDIRECT], charbuf);
         trans->add_block(b);
       }
     }
@@ -863,7 +864,7 @@ retry3:
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          transaction_diskblock b(ip->addrs[NDIRECT+1], charbuf);
+          transaction_diskblock *b = new transaction_diskblock(ip->addrs[NDIRECT+1], charbuf);
           trans->add_block(b);
         }
       }
@@ -886,7 +887,7 @@ retry3:
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          transaction_diskblock b(addr, charbuf);
+          transaction_diskblock *b = new transaction_diskblock(addr, charbuf);
           trans->add_block(b);
         }
       }
@@ -1007,7 +1008,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       if (trans && start != 0) {
         char charbuf[BSIZE];
         memmove(charbuf, locked->data, BSIZE);
-        transaction_diskblock b(ip->addrs[NDIRECT], charbuf);
+        transaction_diskblock *b = new transaction_diskblock(ip->addrs[NDIRECT], charbuf);
         trans->add_block(b);
       }
     }
@@ -1047,7 +1048,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
           if (trans && start != 0) {
             char charbuf[BSIZE];
             memmove(charbuf, locked2->data, BSIZE);
-            transaction_diskblock b(a1[i], charbuf);
+            transaction_diskblock *b = new transaction_diskblock(a1[i], charbuf);
             trans->add_block(b);
           }
         }
@@ -1060,7 +1061,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       if (trans && bno != 0) {
         char charbuf[BSIZE];
         memmove(charbuf, locked1->data, BSIZE);
-        transaction_diskblock b(ip->addrs[NDIRECT+1], charbuf);
+        transaction_diskblock *b = new transaction_diskblock(ip->addrs[NDIRECT+1], charbuf);
         trans->add_block(b);
       }
     }
@@ -1149,10 +1150,11 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       memmove(charbuf, locked->data, BSIZE);
     }
     if (writeback) {
-      transaction_diskblock b(blocknum, charbuf);
-      b.writeback();
+      transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
+      b->writeback();
+      delete b;
     } else if (trans) {
-      transaction_diskblock b(blocknum, charbuf);
+      transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
       trans->add_block(b);
     }
   }
