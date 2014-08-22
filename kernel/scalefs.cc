@@ -695,10 +695,7 @@ void mfs_interface::initialize_free_bit_vector() {
   int b, bi;
   u32 blocknum;
   superblock sb;
-
-  bp = buf::get(1, 1);
-  auto r = bp->read();
-  memmove(&sb, r->data, sizeof(sb));
+  get_superblock(&sb);
 
   for(b = 0; b < sb.size; b += BPB) {
     blocknum = BBLOCK(b, sb.ninodes);

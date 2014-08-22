@@ -44,6 +44,8 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static sref<inode> the_root;
+static struct superblock sb_root;
+static bool superblock_read = false;
 
 #define IADDRSSZ (sizeof(u32)*NINDIRECT)
 #define BLOCKROUNDUP(off) (((off)%BSIZE) ? (off)/BSIZE+1 : (off)/BSIZE)
@@ -55,6 +57,16 @@ readsb(int dev, struct superblock *sb)
   sref<buf> bp = buf::get(dev, 1);
   auto copy = bp->read();
   memmove(sb, copy->data, sizeof(*sb));
+}
+
+void get_superblock(struct superblock *sb) {
+  if (!superblock_read) {
+    readsb(1, &sb_root);
+    superblock_read = true;
+  }
+  sb->size = sb_root.size;
+  sb->ninodes = sb_root.ninodes;
+  sb->nblocks = sb_root.nblocks;
 }
 
 // Zero a block.
@@ -107,16 +119,19 @@ throw_out_of_blocks()
 static u32
 balloc(u32 dev, transaction *trans = NULL)
 {
-  superblock sb;
-  readsb(dev, &sb);
   bool found = false;
   sref<buf> bp;
   int b, bi;
   u32 blocknum;
 
+  if (!superblock_read) {
+    readsb(dev, &sb_root);
+    superblock_read = true;
+  }
+
   if (dev == 1) {
     b = rootfs_interface->find_free_block();
-    if (b < sb.size) {
+    if (b < sb_root.size) {
       if (trans)
         trans->add_allocated_block(b);
       return b;
@@ -124,12 +139,12 @@ balloc(u32 dev, transaction *trans = NULL)
     throw_out_of_blocks();
   }
 
-  for(b = 0; b < sb.size; b += BPB){
-    blocknum = BBLOCK(b, sb.ninodes);
+  for(b = 0; b < sb_root.size; b += BPB){
+    blocknum = BBLOCK(b, sb_root.ninodes);
     bp = buf::get(dev, blocknum);
     auto locked = bp->write();
 
-    for(bi = 0; bi < BPB && bi < (sb.size - b); bi++){
+    for(bi = 0; bi < BPB && bi < (sb_root.size - b); bi++){
       int m = 1 << (bi % 8);
       if((locked->data[bi/8] & m) == 0){  // Is block free?
         locked->data[bi/8] |= m;  // Mark block in use on disk.
@@ -156,9 +171,11 @@ balloc(u32 dev, transaction *trans = NULL)
 
 // Mark a block as allocated in the disk bitmap.
 void balloc_on_disk(u32 bno, transaction *trans) {
-  superblock sb;
-  readsb(1, &sb);
-  u32 blocknum = BBLOCK(bno, sb.ninodes);
+  if (!superblock_read) {
+    readsb(1, &sb_root);
+    superblock_read = true;
+  }
+  u32 blocknum = BBLOCK(bno, sb_root.ninodes);
   sref<buf> bp = buf::get(1, blocknum);
   auto locked = bp->write();
 
@@ -184,11 +201,13 @@ bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
 {
   u32 b = x;
   bzero(dev, b, trans);
-
-  struct superblock sb;
-  readsb(dev, &sb);
   sref<buf> bp;
   u32 blocknum;
+
+  if (!superblock_read) {
+    readsb(dev, &sb_root);
+    superblock_read = true;
+  }
 
   if (dev == 1) {
     if (!delayed_free)
@@ -199,7 +218,7 @@ bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
   }
 
   {
-    blocknum = BBLOCK(b, sb.ninodes);
+    blocknum = BBLOCK(b, sb_root.ninodes);
     bp = buf::get(dev, blocknum);
     auto locked = bp->write();
 
@@ -211,17 +230,18 @@ bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      transaction_diskblock *b = new transaction_diskblock(blocknum, charbuf);
-      trans->add_block(b);
+      trans->add_block(std::move(new transaction_diskblock(blocknum,charbuf)));
     }
   }
 }
 
 // Mark a block as free in the disk bitmap.
 void bfree_on_disk(u32 bno, transaction *trans) {
-  superblock sb;
-  readsb(1, &sb);
-  u32 blocknum = BBLOCK(bno, sb.ninodes);
+  if (!superblock_read) {
+    readsb(1, &sb_root);
+    superblock_read = true;
+  }
+  u32 blocknum = BBLOCK(bno, sb_root.ninodes);
   sref<buf> bp = buf::get(1, blocknum);
   auto locked = bp->write();
 
@@ -451,8 +471,6 @@ ialloc(u32 dev, short type)
   // XXX should be replaced with lb?
 
   scoped_gc_epoch e;
-
-  superblock sb;
   sref<inode> ip;
   int inum;
 
@@ -466,9 +484,12 @@ ialloc(u32 dev, short type)
   }
 
   // search through this core's inodes
-  readsb(dev, &sb);
-  for (int k = myid()*IPB; k < sb.ninodes; k += (NCPU*IPB)) {
-    for(inum = k; inum < k+IPB && inum < sb.ninodes; inum++) {
+  if (!superblock_read) {
+    readsb(dev, &sb_root);
+    superblock_read = true;
+  }
+  for (int k = myid()*IPB; k < sb_root.ninodes; k += (NCPU*IPB)) {
+    for(inum = k; inum < k+IPB && inum < sb_root.ninodes; inum++) {
       if (inum == 0)
         continue;
       ip = try_ialloc(inum, dev, type);
@@ -480,7 +501,7 @@ ialloc(u32 dev, short type)
   }
 
   // search through all inodes
-  for (int inum = 0; inum < sb.ninodes; inum++) {
+  for (int inum = 0; inum < sb_root.ninodes; inum++) {
     if (inum == 0)
       continue;
     ip = try_ialloc(inum, dev, type);
@@ -490,7 +511,7 @@ ialloc(u32 dev, short type)
     }
   }
 
-  cprintf("ialloc: 0/%u inodes\n", sb.ninodes);
+  cprintf("ialloc: 0/%u inodes\n", sb_root.ninodes);
   return sref<inode>();
 }
 
