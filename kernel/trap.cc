@@ -156,6 +156,9 @@ trap(struct trapframe *tf)
     return;
   }
 
+  if (tf->trapno == T_DBLFLT)
+    kerneltrap(tf);
+
 #if MTRACE
   if (myproc()->mtrace_stacks.curr >= 0)
     mtpause(myproc());
@@ -427,11 +430,21 @@ initmsr(void)
 void
 initnmi(void)
 {
-  void *nmistackbase = ksalloc(slab_stack);
+  void *nmistackbase = kalloc("kstack", KSTACKSIZE);
   mycpu()->ts.ist[1] = (u64) nmistackbase + KSTACKSIZE;
 
   if (mycpu()->id == 0)
     idt[T_NMI].ist = 1;
+}
+
+void
+initdblflt(void)
+{
+  void *dfaultstackbase = kalloc("kstack", KSTACKSIZE);
+  mycpu()->ts.ist[2] = (uintptr_t)dfaultstackbase + KSTACKSIZE;
+
+  if (mycpu()->id == 0)
+    idt[T_DBLFLT].ist = 2;
 }
 
 void

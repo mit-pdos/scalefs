@@ -1,6 +1,6 @@
 #pragma once
 #define NPROC        64  // maximum number of processes
-#define KSTACKSIZE 8192  // size of per-process kernel stack
+#define KSTACKSIZE 32768 // size of per-process kernel stack
 #define NOFILE      100  // open files per process
 #define NFILE       100  // open files per system
 #define NBUF      10000  // size of disk block cache
@@ -23,6 +23,8 @@
 #define BUDDY_DEBUG   DEBUG
 #define REFCACHE_DEBUG DEBUG
 #define RADIX_DEBUG   DEBUG
+#define SEQLOCK_DEBUG DEBUG
+#define KSTACK_DEBUG  DEBUG // use guard pages for over/underflow protection
 #define USTACKPAGES   8
 #define GCINTERVAL    10000 // max. time between GC runs (in msec)
 #define GC_GLOBAL     true

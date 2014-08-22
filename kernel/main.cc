@@ -22,6 +22,7 @@ void initpg(void);
 void cleanuppg(void);
 void inittls(struct cpu *);
 void initnmi(void);
+void initdblflt(void);
 void initcodex(void);
 void inittrap(void);
 void initfpu(void);
@@ -87,6 +88,7 @@ mpboot(void)
   initmsr();
   initsamp();
   initidle();
+  initdblflt();
   initnmi();
   initwd();                     // Requires initnmi
   bstate.store(1);
@@ -146,7 +148,7 @@ bootothers(void)
     // Tell bootother.S what stack to use and the address of apstart;
     // it expects to find these two addresses stored just before
     // its first instruction.
-    stack = (char*) ksalloc(slab_stack);
+    stack = (char*) kalloc("kstack", KSTACKSIZE);
     *(u32*)(code-4) = (u32)v2p(&apstart);
     *(u64*)(code-12) = (u64)stack + KSTACKSIZE;
     // bootother.S sets this to 0x0a55face early on
@@ -241,6 +243,7 @@ cmain(u64 mbmagic, u64 mbaddr)
     cprintf("ncpu %d %lu MHz\n", ncpu, cpuhz / 1000000);
 
   inituser();      // first user process
+  initdblflt();    // Requires inittrap
   initnmi();
   
   initfs();
