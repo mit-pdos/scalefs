@@ -443,6 +443,7 @@ namespace oplog {
     typedef struct mfs_tsc {
       u64 tsc_value;
       seqcount<u32> seq;
+      spinlock write_lock;
     } mfs_tsc;
     // The starting time of the latest mfs metadata operation on each core
     percpu<mfs_tsc> mfs_start_tsc;
@@ -507,11 +508,13 @@ namespace oplog {
 
   public:
     void update_start_tsc(size_t cpu, u64 start_tsc) {
+      auto lock = mfs_start_tsc[cpu].write_lock.guard();
       auto w = mfs_start_tsc[cpu].seq.write_begin();
       mfs_start_tsc[cpu].tsc_value = start_tsc;
     }
 
     void update_end_tsc(size_t cpu, u64 end_tsc) {
+      auto lock = mfs_end_tsc[cpu].write_lock.guard();
       auto w = mfs_end_tsc[cpu].seq.write_begin();
       mfs_end_tsc[cpu].tsc_value = end_tsc;
     }
