@@ -403,11 +403,11 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
   // Make a list of the most current version of the diskblocks. For each
   // block number pick the diskblock with the highest timestamp and
   // discard the rest.
-  std::vector<transaction_diskblock*> block_vec;
+  std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
   for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++) {
     if ((b+1) != tr->blocks.end() && (*b)->blocknum == (*(b+1))->blocknum)
       continue;
-    block_vec.push_back(*b);
+    block_vec.push_back(std::move(*b));
   }
 
   // Write out the transaction blocks to the disk journal in timestamp order. 
@@ -450,11 +450,11 @@ void mfs_interface::flush_journal() {
     // Make a list of the most current version of the diskblocks. For each
     // block number pick the diskblock with the highest timestamp and
     // discard the rest.
-    std::vector<transaction_diskblock*> block_vec;
+    std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
     for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++) {
       if ((b+1) != (*it)->blocks.end() && (*b)->blocknum == (*(b+1))->blocknum)
         continue;
-      block_vec.push_back(*b);
+      block_vec.push_back(std::move(*b));
     }
 
     // Write out the transaction blocks to the disk journal in timestamp order. 
@@ -479,7 +479,7 @@ void mfs_interface::flush_journal() {
 
 // Writes out a single journal transaction to disk
 void mfs_interface::write_transaction_to_journal(
-    const std::vector<transaction_diskblock*> vec, const u64 timestamp) {
+    const std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp) {
   transaction *trans = new transaction(0);
   assert(sv6_journal);
   u32 offset = fs_journal->current_offset();
@@ -564,22 +564,18 @@ void mfs_interface::process_journal() {
     switch (hd.block_type) {
       case jrnl_start:
         current_transaction = hd.timestamp;
-        for (auto it = block_vec.begin(); it != block_vec.end(); it++)
-          delete (*it);
         block_vec.clear();
         break;
       case jrnl_data:
         if (hd.timestamp == current_transaction) {
-          transaction_diskblock* b = new transaction_diskblock(hd.blocknum,
-                                                              databuf);
-          block_vec.push_back(b);
+          block_vec.push_back(new transaction_diskblock(hd.blocknum,databuf));
         }
         else
           jrnl_error = true;
         break;
       case jrnl_commit:
         if (hd.timestamp == current_transaction)
-          trans->add_blocks(block_vec);
+          trans->add_blocks(std::move(block_vec));
         else
           jrnl_error = true;
         break;
@@ -588,9 +584,6 @@ void mfs_interface::process_journal() {
         break;
     }
   }
-
-  for (auto it = block_vec.begin(); it != block_vec.end(); it++)
-    delete (*it);
 
   // Zero-fill the journal
   zero_fill(sv6_journal, 4235264);

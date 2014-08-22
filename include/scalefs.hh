@@ -60,6 +60,9 @@ struct transaction_diskblock {
     timestamp = db.timestamp;
   }
 
+  transaction_diskblock(transaction_diskblock&& db) = default;
+  transaction_diskblock& operator=(transaction_diskblock&& db) = default;
+
   // Write out the block contents to disk block # blocknum.
   void writeback() {
     idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
@@ -83,20 +86,15 @@ class transaction {
   public:
     NEW_DELETE_OPS(transaction);
     transaction(u64 t) : timestamp_(t) {
-      blocks = std::vector<transaction_diskblock*>();
+      blocks = std::vector<std::unique_ptr<transaction_diskblock> >();
       allocated_block_list = std::vector<u32>();
       free_block_list = std::vector<u32>();
     }
 
     transaction() : timestamp_(get_timestamp()) {
-      blocks = std::vector<transaction_diskblock*>();
+      blocks = std::vector<std::unique_ptr<transaction_diskblock> >();
       allocated_block_list = std::vector<u32>();
       free_block_list = std::vector<u32>();
-    }
-
-    ~transaction() {
-      for (auto it = blocks.begin(); it < blocks.end(); it++)
-        delete (*it);
     }
 
     // Add a diskblock to the transaction. These diskblocks are not necessarily
@@ -104,14 +102,14 @@ class transaction {
     // out the changes to disk.
     void add_block(transaction_diskblock* b) {
       auto l = write_lock.guard();
-      blocks.push_back(b);
+      blocks.push_back(std::make_unique<transaction_diskblock>(std::move(*b)));
     }
 
     // Add multiple disk blocks to a transaction.
     void add_blocks(std::vector<transaction_diskblock*> bvec) {
       auto l = write_lock.guard();
       for (auto b = bvec.begin(); b != bvec.end(); b++)
-        blocks.push_back(*b);
+        blocks.push_back(std::make_unique<transaction_diskblock>(std::move(*(*b))));
     }
 
     void add_allocated_block(u32 bno) {
@@ -155,8 +153,9 @@ class transaction {
     // ordered in increasing order of their timestamps. So while writing out the
     // transaction to the journal, for each block number just the block with the
     // highest timestamp needs to be written to disk. Gets rid of unnecessary I/O.
-    static bool compare_transaction_db(const transaction_diskblock* b1, const
-    transaction_diskblock* b2) {
+    static bool compare_transaction_db(const
+    std::unique_ptr<transaction_diskblock>& b1, const
+    std::unique_ptr<transaction_diskblock>& b2) {
       if (b1->blocknum == b2->blocknum)
         return (b1->timestamp < b2->timestamp);
       return (b1->blocknum < b2->blocknum);
@@ -168,7 +167,7 @@ class transaction {
 
   private:
     // List of updated diskblocks
-    std::vector<transaction_diskblock*> blocks;
+    std::vector<std::unique_ptr<transaction_diskblock> > blocks;
 
     // Guards updates to the transaction_diskblock vector.
     sleeplock write_lock;
@@ -310,8 +309,8 @@ class mfs_interface {
     void add_to_journal(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
     void flush_journal();
-    void write_transaction_to_journal(const std::vector<transaction_diskblock*> vec,
-          const u64 timestamp);
+    void write_transaction_to_journal(const
+    std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp);
     void process_journal();
     void clear_journal();
 
