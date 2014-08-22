@@ -625,7 +625,7 @@ public:
   blocking_io(sref<mfile> mf, u64 pageidx)
     : mf_(std::move(mf)), pageidx_(pageidx) { }
 
-  ~blocking_io()
+  ~blocking_io() noexcept
   {
     if (mf_)
       panic("blocking_io not retried or aborted");
