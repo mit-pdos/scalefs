@@ -464,7 +464,8 @@ vmap::pagefault(uptr va, u32 err)
   // page.
   va = PGROUNDDOWN(va);
 
-  {
+ retry:
+  try {
     auto it = vpfs_.find(va / PGSIZE);
     auto lock = vpfs_.acquire(it);
     if (!it.is_set())
@@ -516,6 +517,11 @@ vmap::pagefault(uptr va, u32 err)
     }
 
     shootdown.perform();
+  } catch (blocking_io &e) {
+    // ensure_page attempted to do IO.  Retry the IO now that we've
+    // dropped the vpf range lock.
+    e.retry();
+    goto retry;
   }
   return 1;
 }

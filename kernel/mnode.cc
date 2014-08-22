@@ -183,6 +183,13 @@ mfile::get_page(u64 pageidx)
   if (!it.is_set())
     return mfile::page_state();
   if (it->get_page_info() == nullptr && fs_ == root_fs) {
+      // We may block.  If scheduling is disabled, this could lead to
+      // deadlock, so throw a blocking_io exception with an IO retry.
+      // Currently this is used by pagefault and may need to be
+      // generalized to be used in other situations.
+      if (check_critical(critical_mask::NO_SCHED))
+        throw blocking_io(sref<mfile>::newref(this), pageidx);
+
       // Read page from disk
       char *p = zalloc("file page");
       assert(p);

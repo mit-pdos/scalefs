@@ -612,3 +612,38 @@ mnode::as_sock() const
   assert(type() == types::sock);
   return static_cast<const msock*>(this);
 }
+
+// Exception thrown by mfile::get_page if IO is required but
+// scheduling is disabled.  The exception allows the get_page to be
+// retried outside the holder of the lock or scoped_critical.
+class blocking_io : public std::exception
+{
+  sref<mfile> mf_;
+  u64 pageidx_;
+
+public:
+  blocking_io(sref<mfile> mf, u64 pageidx)
+    : mf_(std::move(mf)), pageidx_(pageidx) { }
+
+  ~blocking_io()
+  {
+    if (mf_)
+      panic("blocking_io not retried or aborted");
+  }
+
+  void retry()
+  {
+    mf_->get_page(pageidx_);
+    mf_.reset();
+  }
+
+  void abort()
+  {
+    mf_.reset();
+  }
+
+  const char *what() const throw() override
+  {
+    return "Blocking IO attempted while scheduler disabled";
+  }
+};
