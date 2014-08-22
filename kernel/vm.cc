@@ -315,40 +315,48 @@ vmap::remove_mapping(uptr addr)
 int
 vmap::willneed(uptr start, uptr len)
 {
-  auto begin = vpfs_.find(start / PGSIZE);
-  auto end = vpfs_.find((start + len) / PGSIZE);
-  auto lock = vpfs_.acquire(begin, end);
+retry:
+  try {
+    auto begin = vpfs_.find(start / PGSIZE);
+    auto end = vpfs_.find((start + len) / PGSIZE);
+    auto lock = vpfs_.acquire(begin, end);
 
-  page_holder pages;
-  mmu::shootdown shootdown;
+    page_holder pages;
+    mmu::shootdown shootdown;
 
-  for (auto it = begin; it < end; it += it.span()) {
-    if (!it.is_set())
-      continue;
+    for (auto it = begin; it < end; it += it.span()) {
+      if (!it.is_set())
+        continue;
 
-    bool writable = (it->flags & vmdesc::FLAG_WRITE);
-    if (writable && (it->flags & vmdesc::FLAG_COW)) {
-      sref<page_info> old_page = it->page;
-      if (myproc() != bootproc && old_page && it->inode) {
-        std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
-        pages.add(std::move(old_page), rmap);
-      } else
-        pages.add(std::move(old_page));
-      cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
+      bool writable = (it->flags & vmdesc::FLAG_WRITE);
+      if (writable && (it->flags & vmdesc::FLAG_COW)) {
+        sref<page_info> old_page = it->page;
+        if (myproc() != bootproc && old_page && it->inode) {
+          std::pair<vmap*, uptr> rmap = std::make_pair(&*this, it.index()*PGSIZE);
+          pages.add(std::move(old_page), rmap);
+        } else
+          pages.add(std::move(old_page));
+        cache.invalidate(it.index() * PGSIZE, PGSIZE, it, &shootdown);
+      }
+
+      page_info *page = ensure_page(it, writable ? access_type::WRITE
+          : access_type::READ);
+      if (!page)
+        continue;
+
+      if (it->flags & vmdesc::FLAG_COW || !writable)
+        cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U);
+      else
+        cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U | PTE_W);
     }
-
-    page_info *page = ensure_page(it, writable ? access_type::WRITE
-                                               : access_type::READ);
-    if (!page)
-      continue;
-
-    if (it->flags & vmdesc::FLAG_COW || !writable)
-      cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U);
-    else
-      cache.insert(it.index() * PGSIZE, &*it, page->pa() | PTE_P | PTE_U | PTE_W);
+    shootdown.perform();
+  } catch (blocking_io &e) {
+    // ensure_page attempted to do IO.  Retry the IO now that we've
+    // dropped the vpf range lock.
+    e.retry();
+    goto retry;
   }
 
-  shootdown.perform();
   return 0;
 }
 
@@ -559,19 +567,27 @@ vmap::pagelookup(uptr va)
   // atomically assignable, so I could observe a half-updated vmdesc
   // if I try.  Could use a seqlock.
 
-  auto it = vpfs_.find(va / PGSIZE);
-  if (!it.is_set())
-    return nullptr;
-  auto lock = vpfs_.acquire(it);
-  if (!it.is_set())
-    return nullptr;
+retry:
+  try {
+    auto it = vpfs_.find(va / PGSIZE);
+    if (!it.is_set())
+      return nullptr;
+    auto lock = vpfs_.acquire(it);
+    if (!it.is_set())
+      return nullptr;
 
-  page_info* pi = ensure_page(it, access_type::READ);
-  if (!pi)
-    return nullptr;
+    page_info* pi = ensure_page(it, access_type::READ);
+    if (!pi)
+      return nullptr;
 
-  char* kptr = (char*)pi->va();
-  return &kptr[va & (PGSIZE-1)];
+    char* kptr = (char*)pi->va();
+    return &kptr[va & (PGSIZE-1)];
+  } catch (blocking_io &e) {
+    // ensure_page attempted to do IO.  Retry the IO now that we've
+    // dropped the vpf range lock.
+    e.retry();
+    goto retry;
+  }
 }
 
 void*
@@ -600,25 +616,33 @@ pagelookup(vmap* vmap, uptr va)
 int
 vmap::copyout(uptr va, const void *p, u64 len)
 {
-  char *buf = (char*)p;
-  auto it = vpfs_.find(va / PGSIZE);
-  auto end = vpfs_.find(PGROUNDUP(va + len) / PGSIZE);
-  auto lock = vpfs_.acquire(it, end);
-  for (; it != end; ++it) {
-    if (!it.is_set())
-      return -1;
-    uptr va0 = (uptr)PGROUNDDOWN(va);
-    page_info* pi = ensure_page(it, access_type::READ);
-    if (!pi)
-      return -1;
-    char *p0 = (char*)pi->va();
-    uptr n = PGSIZE - (va - va0);
-    if(n > len)
-      n = len;
-    memmove(p0 + (va - va0), buf, n);
-    len -= n;
-    buf += n;
-    va = va0 + PGSIZE;
+retry:
+  try {
+    char *buf = (char*)p;
+    auto it = vpfs_.find(va / PGSIZE);
+    auto end = vpfs_.find(PGROUNDUP(va + len) / PGSIZE);
+    auto lock = vpfs_.acquire(it, end);
+    for (; it != end; ++it) {
+      if (!it.is_set())
+        return -1;
+      uptr va0 = (uptr)PGROUNDDOWN(va);
+      page_info* pi = ensure_page(it, access_type::READ);
+      if (!pi)
+        return -1;
+      char *p0 = (char*)pi->va();
+      uptr n = PGSIZE - (va - va0);
+      if(n > len)
+        n = len;
+      memmove(p0 + (va - va0), buf, n);
+      len -= n;
+      buf += n;
+      va = va0 + PGSIZE;
+    }
+  } catch (blocking_io &e) {
+    // ensure_page attempted to do IO.  Retry the IO now that we've
+    // dropped the vpf range lock.
+    e.retry();
+    goto retry;
   }
   return 0;
 }
