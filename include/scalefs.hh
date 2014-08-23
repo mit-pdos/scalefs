@@ -48,17 +48,14 @@ struct transaction_diskblock {
   }
 
   // A disk block that has been zeroed out.
-  transaction_diskblock(u32 n) {
+  explicit transaction_diskblock(u32 n) {
     blocknum = n;
     memset(blockdata, 0, BSIZE);
     timestamp = get_timestamp();
   }
 
-  transaction_diskblock(const transaction_diskblock& db) {
-    blocknum = db.blocknum;
-    memmove(blockdata, db.blockdata, BSIZE);
-    timestamp = db.timestamp;
-  }
+  transaction_diskblock(const transaction_diskblock&) = delete;
+  transaction_diskblock& operator=(const transaction_diskblock&) = delete;
 
   transaction_diskblock(transaction_diskblock&& db) = default;
   transaction_diskblock& operator=(transaction_diskblock&& db) = default;
