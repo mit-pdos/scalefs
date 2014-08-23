@@ -90,14 +90,14 @@ class transaction {
     // out the changes to disk.
     void add_block(transaction_diskblock* b) {
       auto l = write_lock.guard();
-      blocks.push_back(std::make_unique<transaction_diskblock>(std::move(*b)));
+      blocks.push_back(std::unique_ptr<transaction_diskblock>(b));
     }
 
     // Add multiple disk blocks to a transaction.
     void add_blocks(std::vector<transaction_diskblock*> bvec) {
       auto l = write_lock.guard();
       for (auto b = bvec.begin(); b != bvec.end(); b++)
-        blocks.push_back(std::make_unique<transaction_diskblock>(std::move(*(*b))));
+        blocks.push_back(std::unique_ptr<transaction_diskblock>(*b));
     }
 
     void add_allocated_block(u32 bno) {
