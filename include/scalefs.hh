@@ -82,17 +82,8 @@ class transaction {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
-    transaction(u64 t) : timestamp_(t) {
-      blocks = std::vector<std::unique_ptr<transaction_diskblock> >();
-      allocated_block_list = std::vector<u32>();
-      free_block_list = std::vector<u32>();
-    }
-
-    transaction() : timestamp_(get_timestamp()) {
-      blocks = std::vector<std::unique_ptr<transaction_diskblock> >();
-      allocated_block_list = std::vector<u32>();
-      free_block_list = std::vector<u32>();
-    }
+    explicit transaction(u64 t) : timestamp_(t) { }
+    transaction() : timestamp_(get_timestamp()) { }
 
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
