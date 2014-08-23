@@ -388,6 +388,8 @@ void mfs_interface::add_to_journal(transaction *tr) {
 
 // Logs a transaction in the disk journal and then applies it to the disk
 void mfs_interface::add_fsync_to_journal(transaction *tr) {
+  auto journal_lock = fs_journal->prepare_for_commit();
+
   // Update free bitmap on disk.
   for (auto a = tr->allocated_block_list.begin(); a !=
       tr->allocated_block_list.end(); a++)
