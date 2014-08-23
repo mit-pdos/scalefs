@@ -527,6 +527,7 @@ void mfs_interface::write_transaction_to_journal(
   // Update the journal file inode too.
   fs_journal->update_offset(offset);
   trans->write_to_disk();
+  delete trans;
 }
 
 // Called on reboot after a crash. Applies committed transactions.
@@ -590,6 +591,7 @@ void mfs_interface::process_journal() {
   iunlock(sv6_journal);
 
   trans->write_to_disk_update_bufcache();
+  delete trans;
 }
 
 // Clear (zero-fill) the journal file on the disk
