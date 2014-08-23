@@ -158,16 +158,7 @@ sys_fsync(int fd)
   sref<file> f = getfile(fd);
   if (!f)
     return -1;
-  file *ff = f.get();
-  file_inode *fi = static_cast<file_inode*>(ff);
-  sref<mnode> m = fi->get_mnode();
-  if (!m)
-    return -1;
-  if (m->type() == mnode::types::file)
-    m->as_file()->sync_file();
-  else if (m->type() == mnode::types::dir)
-    m->as_dir()->sync_dir();
-  return 0;
+  return f->fsync();
 }
 
 //SYSCALL

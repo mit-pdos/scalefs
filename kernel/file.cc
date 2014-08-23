@@ -9,6 +9,18 @@
 
 struct devsw __mpalign__ devsw[NDEV];
 
+int
+file_inode::fsync() {
+  if (!readable)
+    return -1;
+  if (!ip)
+    return -1;
+  if (ip->type() == mnode::types::file)
+    ip->as_file()->sync_file();
+  else if (ip->type() == mnode::types::dir)
+    ip->as_dir()->sync_dir();
+  return 0;
+}
 
 int
 file_inode::stat(struct stat *st, enum stat_flags flags)

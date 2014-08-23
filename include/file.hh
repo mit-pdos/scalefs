@@ -18,6 +18,7 @@ class dirns;
 u64 namehash(const strbuf<DIRSIZ>&);
 
 struct file {
+  virtual int fsync() { return -1; }
   // Duplicate this file so it can be bound to a FD.
   virtual file* dup() { inc(); return this; }
 
@@ -79,6 +80,7 @@ public:
   u32 off;
   sleeplock off_lock;
 
+  int fsync() override;
   int stat(struct stat*, enum stat_flags) override;
   ssize_t read(char *addr, size_t n) override;
   ssize_t write(const char *addr, size_t n) override;
