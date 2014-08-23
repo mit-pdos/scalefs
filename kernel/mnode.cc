@@ -212,14 +212,6 @@ mfile::get_page(u64 pageidx)
   return it->copy_consistent();
 }
 
-void
-mfile::dirty_page(u64 pageidx)
-{
-  auto it = pages_.find(pageidx);
-  assert(it.is_set());
-  it->set_dirty_bit(true);
-}
-
 // This function gets called when a file is truncated. Page table mappings for
 // any pages that are no longer a part of the file need to be cleared from vmaps
 // that have the file mmapped. Each page_info object keeps track of these vmaps
