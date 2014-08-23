@@ -88,16 +88,16 @@ class transaction {
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
     // out the changes to disk.
-    void add_block(transaction_diskblock* b) {
+    void add_block(std::unique_ptr<transaction_diskblock> b) {
       auto l = write_lock.guard();
-      blocks.push_back(std::unique_ptr<transaction_diskblock>(b));
+      blocks.push_back(std::move(b));
     }
 
     // Add multiple disk blocks to a transaction.
-    void add_blocks(std::vector<transaction_diskblock*> bvec) {
+    void add_blocks(std::vector<std::unique_ptr<transaction_diskblock> > bvec) {
       auto l = write_lock.guard();
       for (auto b = bvec.begin(); b != bvec.end(); b++)
-        blocks.push_back(std::unique_ptr<transaction_diskblock>(*b));
+        blocks.push_back(std::move(*b));
     }
 
     void add_allocated_block(u32 bno) {

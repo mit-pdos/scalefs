@@ -535,7 +535,7 @@ void mfs_interface::process_journal() {
   u64 current_transaction = 0;
   bool jrnl_error = false;
   transaction *trans = new transaction(0);
-  std::vector<transaction_diskblock*> block_vec;
+  std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
   sv6_journal = namei(sref<inode>(), "/sv6journal");
   assert(sv6_journal);
   ilock(sv6_journal, 1);
@@ -568,7 +568,7 @@ void mfs_interface::process_journal() {
         break;
       case jrnl_data:
         if (hd.timestamp == current_transaction) {
-          block_vec.push_back(new transaction_diskblock(hd.blocknum,databuf));
+          block_vec.push_back(std::make_unique<transaction_diskblock>(hd.blocknum,databuf));
         }
         else
           jrnl_error = true;
