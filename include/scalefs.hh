@@ -96,8 +96,8 @@ class transaction {
     // Add multiple disk blocks to a transaction.
     void add_blocks(std::vector<std::unique_ptr<transaction_diskblock> > bvec) {
       auto l = write_lock.guard();
-      for (auto b = bvec.begin(); b != bvec.end(); b++)
-        blocks.push_back(std::move(*b));
+      for (auto &b : bvec)
+        blocks.push_back(std::move(b));
     }
 
     void add_allocated_block(u32 bno) {
