@@ -257,8 +257,13 @@ void mfs_interface::add_to_metadata_log(mfs_operation *op) {
 // Applies all metadata operations logged in the logical log. Called on sync.
 void mfs_interface::process_metadata_log() {
   mfs_operation_vec ops;
+  u64 sync_tsc = 0;
+  if (cpuid::features().rdtscp)
+    sync_tsc = rdtscp();
+  else
+    sync_tsc = rdtsc_serialized();
   {
-    auto guard = metadata_log->synchronize();
+    auto guard = metadata_log->wait_synchronize(sync_tsc);
     for (auto it = metadata_log->operation_vec.begin(); it !=
       metadata_log->operation_vec.end(); it++)
       ops.push_back(*it);
