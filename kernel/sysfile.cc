@@ -273,41 +273,29 @@ sys_link(userptr_str old_path, userptr_str new_path)
   if (!olddir)
     return -1;
 
-  if (olddir->fs_ == root_fs) {
-    is_root_fs = true;
-    rootfs_interface->metadata_op_start(myid(), get_tsc());
-  }
-
   /* Check if the old name exists; if not, abort right away */
-  if (!olddir->as_dir()->exists(oldname)) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (!olddir->as_dir()->exists(oldname))
     return -1;
-  }
 
   strbuf<DIRSIZ> name;
   sref<mnode> md = nameiparent(myproc()->cwd_m, newn, &name);
-  if (!md) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (!md)
     return -1;
-  }
 
   /*
    * Check if the target name already exists; if so,
    * no need to grab a link count on the old name.
    */
-  if (md->as_dir()->exists(name)) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (md->as_dir()->exists(name))
     return -1;
-  }
 
   mlinkref mflink = olddir->as_dir()->lookup_link(oldname);
-  if (!mflink.mn() || mflink.mn()->type() == mnode::types::dir) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (!mflink.mn() || mflink.mn()->type() == mnode::types::dir)
     return -1;
+
+  if (md->fs_ == root_fs) {
+    is_root_fs = true;
+    rootfs_interface->metadata_op_start(myid(), get_tsc());
   }
 
   if (!md->as_dir()->insert(name, &mflink, &tsc)) {
@@ -341,30 +329,16 @@ sys_rename(userptr_str old_path, userptr_str new_path)
   if (!mdold)
     return -1;
 
-  if (mdold->fs_ == root_fs) {
-    is_root_fs = true;
-    rootfs_interface->metadata_op_start(myid(), get_tsc());
-  }
-
-  if (!mdold->as_dir()->exists(oldname)) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (!mdold->as_dir()->exists(oldname))
     return -1;
-  }
 
   strbuf<DIRSIZ> newname;
   sref<mnode> mdnew = nameiparent(myproc()->cwd_m, newn, &newname);
-  if (!mdnew) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (!mdnew)
     return -1;
-  }
 
-  if (mdold == mdnew && oldname == newname) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+  if (mdold == mdnew && oldname == newname)
     return 0;
-  }
 
   for (;;) {
     sref<mnode> mfold = mdold->as_dir()->lookup(oldname);
@@ -380,8 +354,6 @@ sys_rename(userptr_str old_path, userptr_str new_path)
        * dealing with a possible rmdir / rename race, and
        * checking for "." and "..".
        */
-      if (is_root_fs)
-        rootfs_interface->metadata_op_end(myid(), get_tsc());
       return -1;
     }
 
@@ -392,9 +364,12 @@ sys_rename(userptr_str old_path, userptr_str new_path)
        * directory, and we currently don't support directory rename (see
        * above).
        */
-      if (is_root_fs)
-        rootfs_interface->metadata_op_end(myid(), get_tsc());
       return -1;
+    }
+
+    if (mdold->fs_ == root_fs && !is_root_fs) {
+      is_root_fs = true;
+      rootfs_interface->metadata_op_start(myid(), get_tsc());
     }
 
     if (mfroadblock == mfold) {
@@ -450,16 +425,13 @@ sys_unlink(userptr_str path)
   if (name == "." || name == "..")
     return -1;
 
+  sref<mnode> mf = md->as_dir()->lookup(name);
+  if (!mf)
+    return -1;
+
   if (md->fs_ == root_fs) {
     is_root_fs = true;
     rootfs_interface->metadata_op_start(myid(), get_tsc());
-  }
-
-  sref<mnode> mf = md->as_dir()->lookup(name);
-  if (!mf) {
-    if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
-    return -1;
   }
 
   if (mf->type() == mnode::types::dir) {
