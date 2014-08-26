@@ -273,7 +273,6 @@ mfile::sync_file()
       continue;
     }
 
-    auto lock = pages_.acquire(it);
     if (!it->is_dirty_page()) {
       ++it;
       continue;
