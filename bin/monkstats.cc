@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
+#include <vector>
+
 static void
 read_kstats(kstats *out)
 {
@@ -24,6 +26,9 @@ main(int ac, char * const av[])
 {
   struct kstats kstats_before, kstats_after;
 
+  if (ac <= 1)
+    die("usage: %s command...", av[0]);
+
   read_kstats(&kstats_before);
 
   int pid = fork();
@@ -31,7 +36,9 @@ main(int ac, char * const av[])
     die("monkstats: fork failed");
 
   if (pid == 0) {
-    execv(av[1], av + 1);
+    std::vector<const char *> args(av + 1, av + ac);
+    args.push_back(nullptr);
+    execv(args[0], const_cast<char * const *>(args.data()));
     die("monkstats: exec failed");
   }
 
