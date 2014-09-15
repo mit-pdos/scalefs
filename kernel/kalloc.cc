@@ -992,6 +992,10 @@ initkalloc(void)
     // Divide the node into at least subnodes buddy allocators
 #if KALLOC_BUDDY_PER_CPU
     size_t subnodes = node.cpus.size();
+    if (subnodes < 1) {
+      console.println("kalloc: Warning: NUMA node ", node.id, " has no CPUs");
+      subnodes = 1;
+    }
 #else
     size_t subnodes = 1;
 #endif
