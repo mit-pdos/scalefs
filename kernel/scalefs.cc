@@ -709,11 +709,10 @@ void mfs_interface::initialize_free_bit_vector() {
 
     for(bi = 0; bi < BPB && bi < (sb.size - b); bi++){
       int m = 1 << (bi % 8);
-      free_bit_vector.emplace_back(free_bit(((copy->data[bi/8] & m) ==
-      0)?true:false));
+      bool f = ((copy->data[bi/8] & m) == 0) ? true : false;
+      free_bit_vector.emplace_back(f);
     }
   }
-
 }
 
 // Return the block number of a free block in the free_bit_vector.
