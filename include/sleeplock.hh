@@ -36,6 +36,14 @@ class sleeplock {
     return lock_guard<sleeplock>(this, lock_guard<sleeplock>::try_guard_tag);
   }
 
+  // Sleeplocks cannot be copied.
+  sleeplock(const sleeplock &o) = delete;
+  sleeplock &operator=(const sleeplock &o) = delete;
+
+  // Sleeplocks can be moved.
+  sleeplock(sleeplock &&o) = default;
+  sleeplock &operator=(sleeplock &&o) = default;
+
  private:
   spinlock spinlock_;
   condvar cv_;
