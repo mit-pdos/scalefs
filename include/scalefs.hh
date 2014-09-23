@@ -263,6 +263,11 @@ class mfs_interface {
       free_bit(bool b): is_free(b) {}
       NEW_DELETE_OPS(free_bit);
 
+      free_bit& operator=(const free_bit&) = delete;
+      free_bit(const free_bit&) = delete;
+
+      free_bit& operator=(free_bit&&) = default;
+      free_bit(free_bit&&) = default;
     } free_bit;
 
     NEW_DELETE_OPS(mfs_interface);
