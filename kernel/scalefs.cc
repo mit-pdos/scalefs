@@ -11,9 +11,7 @@ mfs_interface::mfs_interface() {
   mnode_to_inode = new linearhash<u64, u64>(4099);
   fs_journal = new journal();
   metadata_log = new mfs_logical_log();
-  free_bit_vector = std::vector<free_bit>();
   // XXX(rasha) Set up the physical journal file
-
 }
 
 // Returns an sref to an inode if mnode_inum is mapped to one.
