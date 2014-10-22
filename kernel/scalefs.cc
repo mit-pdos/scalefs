@@ -6,6 +6,8 @@
 #include "mfs.hh"
 #include "scalefs.hh"
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 mfs_interface::mfs_interface() {
   inum_to_mnode = new linearhash<u64, sref<mnode>>(4099);
   mnode_to_inode = new linearhash<u64, u64>(4099);
@@ -697,7 +699,7 @@ sref<mnode> mfs_interface::load_root() {
 // Initialize the free bit vector from the disk when the system boots.
 void mfs_interface::initialize_free_bit_vector() {
   sref<buf> bp;
-  int b, bi;
+  int b, bi, free_bit_count;
   u32 blocknum;
   superblock sb;
   get_superblock(&sb);
@@ -707,7 +709,12 @@ void mfs_interface::initialize_free_bit_vector() {
     bp = buf::get(1, blocknum);
     auto copy = bp->read();
 
-    for(bi = 0; bi < BPB && bi < (sb.size - b); bi++){
+    // Allocate the memory for free_bit_vector in one shot, instead
+    // of doing it piecemeal using .emplace_back() in a loop.
+    free_bit_count = min(BPB, sb.size - b);
+    free_bit_vector.reserve(free_bit_count);
+
+    for(bi = 0; bi < free_bit_count; bi++) {
       int m = 1 << (bi % 8);
       bool f = ((copy->data[bi/8] & m) == 0) ? true : false;
       free_bit_vector.emplace_back(f);
