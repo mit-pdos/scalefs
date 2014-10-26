@@ -24,7 +24,7 @@ public:
   bool dirty() { return dirty_; }
 
   seq_reader<bufdata> read() {
-    return seq_reader<bufdata>(&data_, &seq_);
+    return seq_reader<bufdata>(data_, &seq_);
   }
 
   class buf_dirty {
@@ -49,7 +49,7 @@ public:
   };
 
   buf_writer write() {
-    return buf_writer(&data_, &write_lock_, &seq_, this);
+    return buf_writer(data_, &write_lock_, &seq_, this);
   }
 
 private:
@@ -61,12 +61,20 @@ private:
   sleeplock writeback_lock_;
   std::atomic<bool> dirty_;
 
-  bufdata data_;
+  bufdata *data_;
 
   buf(u32 dev, u64 block)
-    : dev_(dev), block_(block), dirty_(false) {}
+    : dev_(dev), block_(block), dirty_(false)
+  {
+    data_ = (bufdata *) kmalloc(sizeof(bufdata), "bufdata");
+  }
   void onzero() override;
   NEW_DELETE_OPS(buf);
+
+  ~buf()
+  {
+    kmfree(data_, sizeof(bufdata));
+  }
 
   void mark_dirty() {
     if (cmpxch(&dirty_, false, true))

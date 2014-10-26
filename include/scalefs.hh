@@ -33,7 +33,7 @@ static u64 get_timestamp() {
 // list in the transaction object.
 struct transaction_diskblock {
   u32 blocknum;           // The disk block number
-  char blockdata[BSIZE];  // Disk block contents
+  char *blockdata;        // Disk block contents
   u64 timestamp;          // Updates within a transaction should be written out
                           // in timestamp order. A single disk block might have
                           // been updated several times, but the changes not
@@ -42,6 +42,7 @@ struct transaction_diskblock {
   NEW_DELETE_OPS(transaction_diskblock);
 
   transaction_diskblock(u32 n, char buf[BSIZE]) {
+    blockdata = (char *) kmalloc(BSIZE, "transaction_diskblock");
     blocknum = n;
     memmove(blockdata, buf, BSIZE);
     timestamp = get_timestamp();
@@ -49,9 +50,15 @@ struct transaction_diskblock {
 
   // A disk block that has been zeroed out.
   explicit transaction_diskblock(u32 n) {
+    blockdata = (char *) kmalloc(BSIZE, "transaction_diskblock");
     blocknum = n;
     memset(blockdata, 0, BSIZE);
     timestamp = get_timestamp();
+  }
+
+  ~transaction_diskblock()
+  {
+    kmfree(blockdata, BSIZE);
   }
 
   transaction_diskblock(const transaction_diskblock&) = delete;
