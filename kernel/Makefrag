@@ -79,6 +79,7 @@ OBJS = \
 	heapprof.o \
 	eager_refcache.o \
 	disk.o \
+	zlib-decompress.o \
 
 OBJS := $(addprefix $(O)/kernel/, $(OBJS))
 
