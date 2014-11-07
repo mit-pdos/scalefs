@@ -12,17 +12,24 @@
 
 #include "buf.hh"
 
-extern u8 _fs_img_start[];
-extern u64 _fs_img_size;
+extern u8 _fs_imgz_start[];
+extern u64 _fs_imgz_size;
 
 #if MEMIDE
+
+#include "zlib-decompress.hh"
+
+static const u64 _fs_img_size = BSIZE*BLKCNT;
+static unsigned char _fs_img_start[_fs_img_size];
 
 static u8 *memdisk;
 
 void
 initdisk(void)
 {
-  memdisk = _fs_img_start;
+  zlib_decompress(_fs_imgz_start, _fs_imgz_size,
+                  _fs_img_start, _fs_img_size);
+  memdisk = (u8 *) _fs_img_start;
 }
 
 // Interrupt handler.
