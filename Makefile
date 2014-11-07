@@ -127,6 +127,7 @@ endif
 include libutil/Makefrag
 include bin/Makefrag
 include tools/Makefrag
+include tools/zlib-1.2.8/Makefrag
 include metis/Makefrag
 
 $(O)/%.o: %.c $(O)/sysroot
@@ -176,6 +177,10 @@ FSEXTRA += sv6journal testfile1 README
 $(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS)
 	@echo "  MKFS   $@"
 	$(Q)$(O)/tools/mkfs $@ $(FSEXTRA) $(UPROGS)
+
+$(O)/fs.imgz: $(O)/tools/zlib-1.2.8/zlib-compress $(O)/fs.img $(O)/libz.a
+	@echo "  ZLIB   $@"
+	$(Q)$(O)/tools/zlib-1.2.8/zlib-compress < $(O)/fs.img > $@
 
 .PRECIOUS: $(O)/%.o
 .PHONY: clean qemu gdb rsync codex
@@ -285,6 +290,7 @@ bench:
 
 clean: 
 	rm -fr $(O)
+	cd tools/zlib-1.2.8/; make clean; cd ../../;
 
 all:	$(ALL)
 
