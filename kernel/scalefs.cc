@@ -728,8 +728,15 @@ u32 mfs_interface::find_free_block() {
   for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
     if (it->is_free) {
       auto lock = it->write_lock.guard();
-      it->is_free = false;
-      break;
+      //Re-confirm that the block is indeed free, with the lock held.
+      if (it->is_free) {
+        it->is_free = false;
+        break;
+      }
+
+      //We need to release the lock explicitly, since 'it' doesn't go out
+      //of scope until we quit the for-loop.
+      it->write_lock.release();
     }
     index++;
   }
