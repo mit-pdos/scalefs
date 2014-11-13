@@ -733,10 +733,6 @@ u32 mfs_interface::find_free_block() {
         it->is_free = false;
         break;
       }
-
-      //We need to release the lock explicitly, since 'it' doesn't go out
-      //of scope until we quit the for-loop.
-      it->write_lock.release();
     }
     index++;
   }
