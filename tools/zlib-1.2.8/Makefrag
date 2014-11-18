@@ -4,7 +4,7 @@ CFLAGS += -Itools/zlib-1.2.8
 
 $(O)/libz.a: $(O)/tools/zlib-1.2.8/zlib-compress
 	$(Q)mkdir -p $(@D)
-	$(Q)$(shell) mv tools/zlib-1.2.8/libz.a $(O)
+	$(Q)$(shell) cp tools/zlib-1.2.8/libz.a $(O)
 
 $(O)/tools/zlib-1.2.8/zlib-compress: tools/zlib-1.2.8/examples/zpipe.c
 	$(Q)$(shell) cd tools/zlib-1.2.8; make libz.a; cd ../../;
