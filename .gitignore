@@ -29,3 +29,5 @@ mscan.*.out
 cscope.*
 /libutil/testgen.c
 /libutil/testgen.*.c
+/tools/zlib-1.2.8/*.o
+/tools/zlib-1.2.8/*.a
