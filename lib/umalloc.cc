@@ -363,7 +363,7 @@ namespace {
 
   // Page free lists indexed by size class.  The smaller size classes
   // are unused.
-  __thread block_list free_runs[MAX_LARGE_CLASS];
+  __thread block_list free_runs[MAX_LARGE_CLASS] = {};
 
   // Page info radix array.  The +1 on the size is a lame way to avoid
   // having to constantly check our iterators against pages.end().
@@ -547,7 +547,7 @@ namespace {
   // Fragment free lists by size class (ceil(log2(bytes))).  Fragments
   // must be at least sizeof(block_list::block), so the smaller
   // classes are unused.
-  __thread block_list free_fragments[13];
+  __thread block_list free_fragments[13] = {};
 
   // Header for pages owned by the small allocator.  Following this
   // header, a page is divided into equal-size fragments.
