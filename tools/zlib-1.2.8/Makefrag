@@ -2,12 +2,13 @@
 
 CFLAGS += -Itools/zlib-1.2.8
 
-$(O)/libz.a: $(O)/tools/zlib-1.2.8/zlib-compress
+$(O)/libz.a:
+	$(Q)$(shell) make -C tools/zlib-1.2.8 libz.a
 	$(Q)mkdir -p $(@D)
 	$(Q)$(shell) cp tools/zlib-1.2.8/libz.a $(O)
 
 $(O)/tools/zlib-1.2.8/zlib-compress: tools/zlib-1.2.8/examples/zpipe.c
-	$(Q)$(shell) cd tools/zlib-1.2.8; make libz.a; cd ../../;
+	$(Q)$(shell) make -C tools/zlib-1.2.8 libz.a
 	$(Q)mkdir -p $(@D)
 	gcc -Werror -Wall -o $@ $< -Ltools/zlib-1.2.8 -lz
 
