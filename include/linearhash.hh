@@ -71,6 +71,7 @@ public:
       if (s->data.key == k) {
         auto w = s->seq.write_begin();
         s->data.valid = false;
+        s->data.val = V();
         return true;
       }
     }
