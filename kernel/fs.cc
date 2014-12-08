@@ -477,10 +477,8 @@ ialloc(u32 dev, short type)
   // Try the local cache first..
   while ((inum = the_inode_cache.alloc()) > 0) {
     ip = try_ialloc(inum, dev, type);
-    if (ip) {
-      ip->link();
+    if (ip)
       return ip;
-    }
   }
 
   // search through this core's inodes
@@ -493,10 +491,8 @@ ialloc(u32 dev, short type)
       if (inum == 0)
         continue;
       ip = try_ialloc(inum, dev, type);
-      if (ip) {
-        ip->link();
+      if (ip)
         return ip;
-      }
     }
   }
 
@@ -505,10 +501,8 @@ ialloc(u32 dev, short type)
     if (inum == 0)
       continue;
     ip = try_ialloc(inum, dev, type);
-    if (ip) {
-      ip->link();
+    if (ip)
       return ip;
-    }
   }
 
   cprintf("ialloc: 0/%u inodes\n", sb_root.ninodes);
