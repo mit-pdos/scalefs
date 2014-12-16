@@ -821,6 +821,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       if (!cmpxch(&ip->iaddrs, (volatile u32*)nullptr, iaddrs)) {
         bfree(ip->dev, addr, trans);
         kmfree((void*)iaddrs, IADDRSSZ);
+        ip->addrs[NDIRECT] = 0;
         goto retry1;
       }
     }
