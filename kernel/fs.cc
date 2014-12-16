@@ -69,7 +69,7 @@ void get_superblock(struct superblock *sb) {
   sb->nblocks = sb_root.nblocks;
 }
 
-// Zero a block.
+// Zero a block, and log it in the transaction.
 static void
 bzero(int dev, int bno, transaction *trans = NULL)
 {
@@ -80,7 +80,9 @@ bzero(int dev, int bno, transaction *trans = NULL)
     trans->add_block(std::make_unique<transaction_diskblock>(bno));
 }
 
-// Zero a block and writeback to disk. Used to zero out journal blocks
+// Zero a block and immediately writeback to disk.
+// Used to zero out journal blocks, as well as data-blocks that are about to
+// be freed.
 static void
 bzero_writeback(int dev, int bno)
 {
@@ -189,11 +191,14 @@ void balloc_on_disk(u32 bno, transaction *trans) {
   trans->add_block(std::make_unique<transaction_diskblock>(blocknum, charbuf));
 }
 
+
 // Free a disk block, without zeroing it out.
-// For the root device this makes changes only to the bitmap in memory
+//
+// For the root device this makes changes only to the in-memory free-bit-vector
 // (maintained by rootfs_interface), not the one on the disk.
+//
 // delayed_free = true indicates that the block should not be marked free in the
-// memory free bit vector just yet. This is delayed until the time that the
+// in-memory free-bit-vector just yet. This is delayed until the time that the
 // transaction is processed. This is needed when we do not want truncated blocks
 // to be available for use until the file fsync commits.
 static void
@@ -234,13 +239,35 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
   }
 }
 
+
+// When freeing metadata blocks, log the zeroing of metadata blocks to the
+// journal.
+#define bfree_metadata(dev, x, trans, delayed_free) \
+                                bfree(dev, x, trans, delayed_free, false)
+
+// When freeing data blocks, directly writeback the zeroed out datablocks
+// to the disk.
+#define bfree_datablock(dev, x, trans, delayed_free) \
+                                bfree(dev, x, trans, delayed_free, true)
+
+
 // Free a disk block after zeroing it out.
+//
+// zero_writeback = true indicates that the zeroed out block should be
+// immediately written back to the disk, without logging it in the transaction.
+// This is used when freeing data blocks of a file, to avoid wasting precious
+// space in the journal.
 static void
-bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
+bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false,
+      bool zero_writeback = false)
 {
   u32 b = x;
 
-  bzero(dev, b, trans);
+  if (zero_writeback)
+    bzero_writeback(dev, b);
+  else
+    bzero(dev, b, trans);
+
   bfree_nozero(dev, x, trans, delayed_free);
 }
 
@@ -979,7 +1006,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
 
   for(int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
     if(ip->addrs[i]){
-      bfree(ip->dev, ip->addrs[i], trans, true);
+      bfree_datablock(ip->dev, ip->addrs[i], trans, true);
       ip->addrs[i] = 0;
     }
   }
@@ -996,7 +1023,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       u32* a = (u32*)locked->data;
       for(int i = start; i < NINDIRECT; i++) {
         if(a[i]) {
-          bfree(ip->dev, a[i], trans, true);
+          bfree_datablock(ip->dev, a[i], trans, true);
           a[i] = 0;
         }
       }
@@ -1008,7 +1035,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
 
     if (start == 0) {
-      bfree(ip->dev, ip->addrs[NDIRECT], trans, true);
+      bfree_metadata(ip->dev, ip->addrs[NDIRECT], trans, true);
       ip->addrs[NDIRECT] = 0;
     }
     if (ip->iaddrs.load() != nullptr) {
@@ -1036,7 +1063,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
             if(!a2[j])
               continue;
 
-            bfree(ip->dev, a2[j], trans, true);
+            bfree_datablock(ip->dev, a2[j], trans, true);
             a2[j] = 0;
           }
           if (trans && start != 0) {
@@ -1047,7 +1074,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
         }
 
         if (start == 0) { 
-          bfree(ip->dev, a1[i], trans, true);
+          bfree_metadata(ip->dev, a1[i], trans, true);
           a1[i] = 0;
         }
       }
@@ -1059,7 +1086,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
 
     if (bno == 0) {
-      bfree(ip->dev, ip->addrs[NDIRECT+1], trans, true);
+      bfree_metadata(ip->dev, ip->addrs[NDIRECT+1], trans, true);
       ip->addrs[NDIRECT+1] = 0;
     }
   }
