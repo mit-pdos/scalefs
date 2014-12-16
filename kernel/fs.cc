@@ -208,17 +208,17 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
   sref<buf> bp;
   u32 blocknum;
 
-  if (!superblock_read) {
-    readsb(dev, &sb_root);
-    superblock_read = true;
-  }
-
   if (dev == 1) {
     if (!delayed_free)
       rootfs_interface->free_block(b);
     if (trans)
       trans->add_free_block(b);
     return;
+  }
+
+  if (!superblock_read) {
+    readsb(dev, &sb_root);
+    superblock_read = true;
   }
 
   {
