@@ -189,7 +189,7 @@ void balloc_on_disk(u32 bno, transaction *trans) {
   trans->add_block(std::make_unique<transaction_diskblock>(blocknum, charbuf));
 }
 
-// Free a disk block.
+// Free a disk block, without zeroing it out.
 // For the root device this makes changes only to the bitmap in memory
 // (maintained by rootfs_interface), not the one on the disk.
 // delayed_free = true indicates that the block should not be marked free in the
@@ -197,10 +197,9 @@ void balloc_on_disk(u32 bno, transaction *trans) {
 // transaction is processed. This is needed when we do not want truncated blocks
 // to be available for use until the file fsync commits.
 static void
-bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
+bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
 {
   u32 b = x;
-  bzero(dev, b, trans);
   sref<buf> bp;
   u32 blocknum;
 
@@ -233,6 +232,16 @@ bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
       trans->add_block(std::make_unique<transaction_diskblock>(blocknum,charbuf));
     }
   }
+}
+
+// Free a disk block after zeroing it out.
+static void
+bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
+{
+  u32 b = x;
+
+  bzero(dev, b, trans);
+  bfree_nozero(dev, x, trans, delayed_free);
 }
 
 // Mark a block as free in the disk bitmap.
@@ -794,7 +803,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
     if((addr = ip->addrs[bn]) == 0) {
       addr = balloc(ip->dev, trans);
       if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
-        bfree(ip->dev, addr, trans);
+        bfree_nozero(ip->dev, addr, trans);
         goto retry0;
       }
     }
@@ -808,7 +817,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       if((addr = ip->addrs[NDIRECT]) == 0) {
         addr = balloc(ip->dev, trans);
         if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
-          bfree(ip->dev, addr, trans);
+          bfree_nozero(ip->dev, addr, trans);
           goto retry1;
         }
       }
@@ -819,7 +828,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       memmove((void*)iaddrs, copy->data, IADDRSSZ);
 
       if (!cmpxch(&ip->iaddrs, (volatile u32*)nullptr, iaddrs)) {
-        bfree(ip->dev, addr, trans);
+        bfree_nozero(ip->dev, addr, trans);
         kmfree((void*)iaddrs, IADDRSSZ);
         ip->addrs[NDIRECT] = 0;
         goto retry1;
@@ -830,7 +839,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
     if ((addr = ip->iaddrs[bn]) == 0) {
       addr = balloc(ip->dev, trans);
       if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
-        bfree(ip->dev, addr, trans);
+        bfree_nozero(ip->dev, addr, trans);
         goto retry2;
       }
       if (trans) {
@@ -854,7 +863,7 @@ retry3:
   if (ip->addrs[NDIRECT+1] == 0) {
     addr = balloc(ip->dev, trans);
     if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
-      bfree(ip->dev, addr, trans);
+      bfree_nozero(ip->dev, addr, trans);
       goto retry3;
     }
   }
