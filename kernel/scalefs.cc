@@ -470,6 +470,11 @@ void mfs_interface::flush_journal() {
     for (auto b = block_vec.begin(); b != block_vec.end(); b++)
       (*b)->writeback();
 
+    // Mark freed blocks as free in the in-memory free-bit-vector
+    for (auto f = (*it)->free_block_list.begin();
+         f != (*it)->free_block_list.end(); f++)
+      free_block(*f);
+
     delete (*it);
 
     // The blocks have been written to disk successfully. Safe to delete
