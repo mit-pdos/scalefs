@@ -218,6 +218,9 @@ void            sampconf(void);
 void            sampidle(bool);
 void            wdpoke(void);
 
+// scalefs.cc
+void            kfreeblockprint(print_stream *s);
+
 // sched.cc
 void            addrun(struct proc *);
 void            sched(void);

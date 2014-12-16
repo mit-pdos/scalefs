@@ -331,6 +331,7 @@ class mfs_interface {
     void initialize_free_bit_vector();
     u32 find_free_block();
     void free_block(u32 bno);
+    void print_free_blocks(print_stream *s);
 
   private:
     void load_dir(sref<inode> i, sref<mnode> m); 

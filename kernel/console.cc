@@ -319,6 +319,9 @@ consoleintr(int (*getc)(void))
     case C('F'):  // kmem stats
       kmemprint(&console);
       break;
+    case C('B'):  // free (disk) block stats
+      kfreeblockprint(&console);
+      break;
     case C('Y'):  // scopedperf stats
       // scopedperf::perfsum_base::printall();
       // scopedperf::perfsum_base::resetall();

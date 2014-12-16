@@ -747,6 +747,29 @@ void mfs_interface::free_block(u32 bno) {
   free_bit_vector.at(bno).is_free = true;
 }
 
+void mfs_interface::print_free_blocks(print_stream *s)
+{
+  u32 count = 0;
+
+  for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
+    if (it->is_free) {
+      // No need to re-confirm that it is free with the lock held, since this
+      // count is approximate (like a snapshot) anyway.
+      count++;
+    }
+  }
+
+  s->println();
+  s->print("Num free blocks: ", count);
+  s->print(" / ", free_bit_vector.size());
+  s->println();
+}
+
+void kfreeblockprint(print_stream *s)
+{
+  rootfs_interface->print_free_blocks(s);
+}
+
 void initfs() {
   root_fs = new mfs();
   anon_fs = new mfs();
