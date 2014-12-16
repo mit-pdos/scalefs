@@ -905,26 +905,6 @@ retry3:
   return addr;
 }
 
-// Truncate inode (discard contents).
-// Only called after the last dirent referring
-// to this inode has been erased on disk.
-class diskblock : public rcu_freed {
- private:
-  int _dev;
-  u64 _block;
-
- public:
-  diskblock(int dev, u64 block)
-    : rcu_freed("diskblock", this, sizeof(*this)),
-      _dev(dev), _block(block) {}
-  virtual void do_gc() override {
-    scoped_gc_epoch e;
-    bfree(_dev, _block);
-    delete this;
-  }
-
-  NEW_DELETE_OPS(diskblock)
-};
 
 // Fill the file with zeroes till offset. Used to "clear" the journal file.
 void
