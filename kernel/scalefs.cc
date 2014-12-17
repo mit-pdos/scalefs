@@ -728,7 +728,7 @@ void mfs_interface::initialize_free_bit_vector() {
 }
 
 // Return the block number of a free block in the free_bit_vector.
-u32 mfs_interface::find_free_block() {
+u32 mfs_interface::alloc_block() {
   u32 index = 0;
   for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
     if (it->is_free) {

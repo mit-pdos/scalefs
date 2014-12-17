@@ -132,7 +132,7 @@ balloc(u32 dev, transaction *trans = NULL)
   }
 
   if (dev == 1) {
-    b = rootfs_interface->find_free_block();
+    b = rootfs_interface->alloc_block();
     if (b < sb_root.size) {
       if (trans)
         trans->add_allocated_block(b);

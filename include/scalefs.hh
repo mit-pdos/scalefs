@@ -329,7 +329,7 @@ class mfs_interface {
 
     // Block free bit vector functions
     void initialize_free_bit_vector();
-    u32 find_free_block();
+    u32  alloc_block();
     void free_block(u32 bno);
     void print_free_blocks(print_stream *s);
 
