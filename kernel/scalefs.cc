@@ -780,10 +780,13 @@ void initfs() {
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
 
-  rootfs_interface->initialize_free_bit_vector();
-
   // Check the journal and reapply committed transactions
   rootfs_interface->process_journal();
+
+  // Initialize the free-bit-vector *after* processing the journal,
+  // because those transactions could include updates to the free
+  // bitmap blocks too!
+  rootfs_interface->initialize_free_bit_vector();
 
   root_inum = rootfs_interface->load_root()->inum_;
   /* the root inode gets an extra reference because of its own ".." */
