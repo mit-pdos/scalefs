@@ -597,7 +597,7 @@ void mfs_interface::process_journal() {
   }
 
   // Zero-fill the journal
-  zero_fill(sv6_journal, 4235264);
+  zero_fill(sv6_journal, PHYS_JOURNAL_SIZE);
   iunlock(sv6_journal);
 
   trans->write_to_disk_update_bufcache();

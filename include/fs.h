@@ -24,6 +24,44 @@ struct superblock {
 #define NINDIRECT (BSIZE / sizeof(u32))
 #define MAXFILE (NDIRECT + NINDIRECT + NINDIRECT*NINDIRECT)
 
+// Size of the physical journal file - /sv6journal
+#define PHYS_JOURNAL_SIZE ((NDIRECT + NINDIRECT) * BSIZE)
+
+// Considerations in determining the value of PHYS_JOURNAL_SIZE:
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// A simple example for a large transaction would be unlinking (or truncating)
+// a large file: it involves logging all the updated metadata blocks of the
+// file. The largest file that the filesystem can support has upto 1026 metadata
+// blocks:
+//
+// Indirect blocks: 1
+// Doubly-indirect blocks: 1 + 1024 (BSIZE/sizeof(u32) i.e. 4096/4)
+//
+// So a transaction logging the unlink of this file would look like this:
+//
+// [ Size of header = 16 (i.e., sizeof(journal_block_header)) ]
+//
+// Start header : 16 + 4096 (BSIZE)
+//
+// Transaction data blocks:
+// Every datablock goes with a header, so: Num-data-blocks * (16 + BSIZE)
+//
+// Along with the file metadata, we will also need to log changes to the
+// free bitmap blocks. This could span NUM_FS_BLOCKS / (BSIZE * 8) blocks, which
+// fits in 1 diskblock for a filesystem of size 128 MB.
+//
+// So Num-data-blocks = 1026 + 1 = 1027.
+//
+// Commit header: 16 + 4096 (BSIZE)
+//
+// So in total, a transaction updating 1027 blocks will consume upto 1034 blocks
+// in the journal, as shown below:
+// 4112 + 1027 * (16 + 4096) + 4112 = 4231248 bytes (~ 1034 blocks)
+//
+// So if you are about to surpass transactions of this size, remember to enlarge
+// the physical journal!
+
+
 // On-disk inode structure
 // (BSIZE % sizeof(dinode)) == 0
 struct dinode {
