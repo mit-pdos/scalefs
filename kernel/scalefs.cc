@@ -5,6 +5,8 @@
 #include "mnode.hh"
 #include "mfs.hh"
 #include "scalefs.hh"
+#include "kstream.hh"
+#include "major.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
@@ -775,6 +777,14 @@ void kfreeblockprint(print_stream *s)
   rootfs_interface->print_free_blocks(s);
 }
 
+static int
+blkstatsread(mdev*, char *dst, u32 off, u32 n)
+{
+  window_stream s(dst, off, n);
+  kfreeblockprint(&s);
+  return s.get_used();
+}
+
 void initfs() {
   root_fs = new mfs();
   anon_fs = new mfs();
@@ -787,6 +797,8 @@ void initfs() {
   // because those transactions could include updates to the free
   // bitmap blocks too!
   rootfs_interface->initialize_free_bit_vector();
+
+  devsw[MAJ_BLKSTATS].pread = blkstatsread;
 
   root_inum = rootfs_interface->load_root()->inum_;
   /* the root inode gets an extra reference because of its own ".." */
