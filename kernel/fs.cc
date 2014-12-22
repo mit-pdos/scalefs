@@ -171,24 +171,43 @@ balloc(u32 dev, transaction *trans = NULL)
   return 0;
 }
 
-// Mark a block as allocated in the disk bitmap.
-void balloc_on_disk(u32 bno, transaction *trans) {
+// Mark blocks as allocated in the disk bitmap.
+void balloc_on_disk(std::vector<u32>& blocks, transaction *trans)
+{
   if (!superblock_read) {
     readsb(1, &sb_root);
     superblock_read = true;
   }
-  u32 blocknum = BBLOCK(bno, sb_root.ninodes);
-  sref<buf> bp = buf::get(1, blocknum);
-  auto locked = bp->write();
 
-  int bi = bno % BPB;
-  int m = 1 << (bi % 8);
-  assert((locked->data[bi/8] & m) == 0);
-  locked->data[bi/8] |= m;
+  // Sort the blocks in ascending order, so that we update the bitmap blocks
+  // on the disk one after another, without going back and forth.
+  std::sort(blocks.begin(), blocks.end());
 
-  char charbuf[BSIZE];
-  memmove(charbuf, locked->data, BSIZE);
-  trans->add_block(std::make_unique<transaction_diskblock>(blocknum, charbuf));
+  // Aggregate all updates to the same free bitmap block and write it out
+  // just once, using a single transaction_diskblock.
+  for (auto bno = blocks.begin(); bno != blocks.end(); ++bno) {
+    u32 blocknum = BBLOCK(*bno, sb_root.ninodes);
+    sref<buf> bp = buf::get(1, blocknum);
+    auto locked = bp->write();
+
+    // Record the highest block-number represented in this free bitmap block,
+    // to facilitate merging of all updates that touch the same bitmap block.
+    u32 max_bno = *bno | (BPB - 1);
+
+    do {
+      int bi = *bno % BPB;
+      int m = 1 << (bi % 8);
+      assert((locked->data[bi/8] & m) == 0);
+      locked->data[bi/8] |= m;
+    } while (++bno && bno != blocks.end() && *bno <= max_bno);
+
+    char charbuf[BSIZE];
+    memmove(charbuf, locked->data, BSIZE);
+    trans->add_block(std::make_unique<transaction_diskblock>(blocknum, charbuf));
+
+    // Retry the last update, in case we crossed over to the next bitmap block.
+    --bno;
+  }
 }
 
 

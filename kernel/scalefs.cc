@@ -398,9 +398,8 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
   auto journal_lock = fs_journal->prepare_for_commit();
 
   // Update free bitmap on disk.
-  for (auto a = tr->allocated_block_list.begin(); a !=
-      tr->allocated_block_list.end(); a++)
-    balloc_on_disk(*a, tr);
+  balloc_on_disk(tr->allocated_block_list, tr);
+
   for (auto f = tr->free_block_list.begin(); f !=
       tr->free_block_list.end(); f++)
     bfree_on_disk(*f, tr);
@@ -444,10 +443,10 @@ void mfs_interface::flush_journal() {
 
   for (auto it = fs_journal->transaction_log.begin();
       it != fs_journal->transaction_log.end(); it++) {
+
     // Add free bitmap changes to the transaction.
-    for (auto a = (*it)->allocated_block_list.begin(); a !=
-        (*it)->allocated_block_list.end(); a++)
-      balloc_on_disk(*a, *it);
+    balloc_on_disk((*it)->allocated_block_list, *it);
+
     for (auto f = (*it)->free_block_list.begin(); f !=
         (*it)->free_block_list.end(); f++)
       bfree_on_disk(*f, *it);
