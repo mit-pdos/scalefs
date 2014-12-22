@@ -33,6 +33,8 @@ public:
     std::size_t waste_bytes;
     // The total number of free bytes of memory in this allocator.
     std::size_t free;
+    // The total number of free bytes of memory when memory usage was maximum.
+    std::size_t lowest_free;
     // The number of free blocks at each order.
     std::size_t nfree[MAX_ORDER + 1];
   };
@@ -97,8 +99,11 @@ public:
   void *alloc_nothrow(std::size_t size)
   {
     void *ptr = alloc_order(size_to_order(size));
-    if (ptr)
+    if (ptr) {
       free_bytes -= size;
+      if (free_bytes < lowest_free_bytes)
+        lowest_free_bytes = free_bytes;
+    }
     return ptr;
   }
 
@@ -154,6 +159,9 @@ private:
 
   // The number of bytes of free memory in this buddy allocator.
   std::size_t free_bytes;
+
+  // The number of bytes of free memory at its lowest ever (maximum usage).
+  std::size_t lowest_free_bytes;
 
   // The number of bytes allocated to the tracking bitmaps.
   std::size_t bitmap_bytes;

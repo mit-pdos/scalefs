@@ -79,6 +79,7 @@ buddy_allocator::buddy_allocator(void *base, size_t len,
   }
 
   free_bytes = block_end - block_base;
+  lowest_free_bytes = free_bytes;
   bitmap_bytes = (uintptr_t)base - free_base;
   waste_bytes = block_base - (uintptr_t)base;
 
@@ -228,5 +229,6 @@ buddy_allocator::get_stats() const
   assert(out.free == get_free_bytes());
   out.metadata_bytes = bitmap_bytes;
   out.waste_bytes = waste_bytes;
+  out.lowest_free = lowest_free_bytes;
   return out;
 }
