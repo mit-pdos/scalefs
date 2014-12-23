@@ -48,14 +48,6 @@ struct transaction_diskblock {
     timestamp = get_timestamp();
   }
 
-  // A disk block that has been zeroed out.
-  explicit transaction_diskblock(u32 n) {
-    blockdata = (char *) kmalloc(BSIZE, "transaction_diskblock");
-    blocknum = n;
-    memset(blockdata, 0, BSIZE);
-    timestamp = get_timestamp();
-  }
-
   ~transaction_diskblock()
   {
     kmfree(blockdata, BSIZE);
