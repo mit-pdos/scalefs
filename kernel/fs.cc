@@ -77,7 +77,7 @@ bzero(int dev, int bno, transaction *trans = NULL)
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans)
-    trans->add_block(std::make_unique<transaction_diskblock>(bno));
+    trans->add_unique_block(bno, locked->data);
 }
 
 // Zero a block and immediately writeback to disk.
@@ -154,7 +154,7 @@ balloc(u32 dev, transaction *trans = NULL)
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          trans->add_block(std::make_unique<transaction_diskblock>(blocknum,charbuf));
+          trans->add_unique_block(blocknum, charbuf);
         }
         break;
       }
@@ -210,7 +210,7 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 
     char charbuf[BSIZE];
     memmove(charbuf, locked->data, BSIZE);
-    trans->add_block(std::make_unique<transaction_diskblock>(blocknum, charbuf));
+    trans->add_unique_block(blocknum, charbuf);
 
     // Retry the last update, in case we crossed over to the next bitmap block.
     --bno;
@@ -268,7 +268,7 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      trans->add_block(std::make_unique<transaction_diskblock>(blocknum,charbuf));
+      trans->add_unique_block(blocknum, charbuf);
     }
   }
 }
@@ -591,7 +591,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      trans->add_block(std::make_unique<transaction_diskblock>(IBLOCK(ip->inum),charbuf));
+      trans->add_unique_block(IBLOCK(ip->inum), charbuf);
     }
   }
 
@@ -603,7 +603,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans) {
       char charbuf[BSIZE];
       memmove(charbuf, locked->data, BSIZE);
-      trans->add_block(std::make_unique<transaction_diskblock>(ip->addrs[NDIRECT],charbuf));
+      trans->add_unique_block(ip->addrs[NDIRECT], charbuf);
     }
   }
 
@@ -893,7 +893,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       if (trans) {
         char charbuf[BSIZE];
         memmove(charbuf, (void*)ip->iaddrs.load(), IADDRSSZ);
-        trans->add_block(std::make_unique<transaction_diskblock>(ip->addrs[NDIRECT],charbuf));
+        trans->add_unique_block(ip->addrs[NDIRECT], charbuf);
       }
     }
 
@@ -929,7 +929,7 @@ retry3:
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          trans->add_block(std::make_unique<transaction_diskblock>(ip->addrs[NDIRECT+1],charbuf));
+          trans->add_unique_block(ip->addrs[NDIRECT+1], charbuf);
         }
       }
       continue;
@@ -951,7 +951,7 @@ retry3:
         if (trans) {
           char charbuf[BSIZE];
           memmove(charbuf, locked->data, BSIZE);
-          trans->add_block(std::make_unique<transaction_diskblock>(addr,charbuf));
+          trans->add_unique_block(addr, charbuf);
         }
       }
       continue;
@@ -1051,7 +1051,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       if (trans && start != 0) {
         char charbuf[BSIZE];
         memmove(charbuf, locked->data, BSIZE);
-        trans->add_block(std::make_unique<transaction_diskblock>(ip->addrs[NDIRECT],charbuf));
+        trans->add_unique_block(ip->addrs[NDIRECT], charbuf);
       }
     }
 
@@ -1090,7 +1090,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
           if (trans && start != 0) {
             char charbuf[BSIZE];
             memmove(charbuf, locked2->data, BSIZE);
-            trans->add_block(std::make_unique<transaction_diskblock>(a1[i],charbuf));
+            trans->add_unique_block(a1[i], charbuf);
           }
         }
 
@@ -1102,7 +1102,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       if (trans && bno != 0) {
         char charbuf[BSIZE];
         memmove(charbuf, locked1->data, BSIZE);
-        trans->add_block(std::make_unique<transaction_diskblock>(ip->addrs[NDIRECT+1],charbuf));
+        trans->add_unique_block(ip->addrs[NDIRECT+1], charbuf);
       }
     }
 
@@ -1189,11 +1189,11 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       memmove(locked->data + off%BSIZE, src, m);
       memmove(charbuf, locked->data, BSIZE);
     }
-    auto b = std::make_unique<transaction_diskblock>(blocknum, charbuf);
     if (writeback) {
+      auto b = std::make_unique<transaction_diskblock>(blocknum, charbuf);
       b->writeback();
     } else if (trans) {
-      trans->add_block(std::move(b));
+      trans->add_unique_block(blocknum, charbuf);
     }
   }
   // Don't update inode yet. Wait till all the pages have been written to and then

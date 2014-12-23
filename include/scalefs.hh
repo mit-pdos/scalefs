@@ -89,15 +89,73 @@ class transaction {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
-    explicit transaction(u64 t) : timestamp_(t) { }
-    transaction() : timestamp_(get_timestamp()) { }
+    explicit transaction(u64 t) : timestamp_(t)
+    {
+      // XXX: What would be the ideal size for this hash table?
+      trans_blocks = new linearhash<u64, transaction_diskblock *>(4099);
+    }
+
+    transaction() : timestamp_(get_timestamp())
+    {
+      // XXX: What would be the ideal size for this hash table?
+      trans_blocks = new linearhash<u64, transaction_diskblock *>(4099);
+    }
+
+    ~transaction()
+    {
+      delete trans_blocks;
+    }
 
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
     // out the changes to disk.
+    // Note: This API is for internal use only, so don't use it directly.
+    // Use add_unique_block() instead.
     void add_block(std::unique_ptr<transaction_diskblock> b) {
       auto l = write_lock.guard();
       blocks.push_back(std::move(b));
+    }
+
+    // Add a unique diskblock to the transaction. Never add the same diskblock
+    // (i.e, the same block-number) twice, even if it has different contents.
+    // Instead, update that existing diskblock with the new contents.
+    void add_unique_block(u32 bno, char buf[BSIZE])
+    {
+      transaction_diskblock *tdp;
+      u64 new_timestamp = get_timestamp();
+      u64 blocknum = bno;
+
+      // Lookup the hash-table to see if we have already logged that block in
+      // this transaction.
+      if (trans_blocks->lookup(blocknum, &tdp)) {
+
+        // Nothing to do if that logged block already has the latest contents.
+        if (tdp->timestamp > new_timestamp)
+          return;
+
+        // Update the transaction-diskblock with new contents and re-insert it
+        // into the hash table.
+        trans_blocks->remove(blocknum);
+        {
+          auto l = write_lock.guard();
+          memmove(tdp->blockdata, buf, BSIZE);
+          tdp->timestamp = new_timestamp;
+        }
+        trans_blocks->insert(blocknum, tdp);
+
+      } else {
+        // This is the first time this diskblock is being logged in the
+        // transaction. So create a new one.
+        auto b = std::make_unique<transaction_diskblock>(bno, buf);
+
+        // Get a raw pointer to that block (don't grab its ownership).
+        tdp = b.get();
+
+        add_block(std::move(b));
+
+        // Now insert a (non-owning) pointer to that block in the hash-table.
+        trans_blocks->insert(blocknum, tdp);
+      }
     }
 
     // Add multiple disk blocks to a transaction.
@@ -163,6 +221,10 @@ class transaction {
   private:
     // List of updated diskblocks
     std::vector<std::unique_ptr<transaction_diskblock> > blocks;
+
+    // Hash-table of blocks updated within the transaction. Used to ensure that
+    // we don't log the same blocks repeatedly in the transaction.
+    linearhash<u64, transaction_diskblock *> *trans_blocks;
 
     // Guards updates to the transaction_diskblock vector.
     sleeplock write_lock;
