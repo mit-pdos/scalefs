@@ -405,18 +405,8 @@ mfs_interface::__flush_transaction(transaction *tr)
 
   tr->prepare_for_commit();
 
-  // Make a list of the most current version of the diskblocks. For each
-  // block number pick the diskblock with the highest timestamp and
-  // discard the rest.
-  std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
-  for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++) {
-    if ((b+1) != tr->blocks.end() && (*b)->blocknum == (*(b+1))->blocknum)
-      continue;
-    block_vec.push_back(std::move(*b));
-  }
-
   // Write out the transaction blocks to the disk journal in timestamp order.
-  write_transaction_to_journal(block_vec, tr->timestamp_);
+  write_transaction_to_journal(tr->blocks, tr->timestamp_);
 
   // Now that the transaction has been committed, mark the freed blocks as
   // free in the in-memory free-bit-vector.
@@ -426,7 +416,7 @@ mfs_interface::__flush_transaction(transaction *tr)
 
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
-  for (auto b = block_vec.begin(); b != block_vec.end(); b++)
+  for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
     (*b)->writeback();
 
   // The blocks have been written to disk successfully. Safe to delete

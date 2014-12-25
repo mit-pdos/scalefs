@@ -173,19 +173,15 @@ class transaction {
       free_block_list.push_back(bno);
     }
 
-    // Prepare the transaction for two phase commit. The transaction diskblocks
-    // are ordered by timestamp. (This is needed to ensure that mutliple changes
-    // to the same block are written to disk in the correct order.)
-    void prepare_for_commit() {
+    // Prepare the transaction for two phase commit.
+    void prepare_for_commit()
+    {
       // All relevant blocks must have been added to the transaction at
       // this point. A try acquire must succeed.
       auto l = write_lock.try_guard();
       assert(static_cast<bool>(l));
-
-      // Sort the diskblocks in timestamp order.
-      std::sort(blocks.begin(), blocks.end(), compare_transaction_db);
     }
-    
+
     // Write the blocks in this transaction to disk. Used to write the journal.
     void write_to_disk() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
@@ -198,20 +194,6 @@ class transaction {
     void write_to_disk_update_bufcache() {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback_through_bufcache();
-    }
-
-    // Comparison function to order diskblock updates. Diskblocks are ordered in
-    // increasing order of (blocknum, timestamp). This ensure that all
-    // diskblocks with the same blocknum are present in the list in sequence and
-    // ordered in increasing order of their timestamps. So while writing out the
-    // transaction to the journal, for each block number just the block with the
-    // highest timestamp needs to be written to disk. Gets rid of unnecessary I/O.
-    static bool compare_transaction_db(const
-    std::unique_ptr<transaction_diskblock>& b1, const
-    std::unique_ptr<transaction_diskblock>& b2) {
-      if (b1->blocknum == b2->blocknum)
-        return (b1->timestamp < b2->timestamp);
-      return (b1->blocknum < b2->blocknum);
     }
 
     // Transactions need to be applied in timestamp order too. They might not
