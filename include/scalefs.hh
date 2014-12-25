@@ -307,6 +307,7 @@ class mfs_interface {
 
     // Journal functions
     void add_to_journal(transaction *tr);
+    void __flush_transaction(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
     void flush_journal();
     void write_transaction_to_journal(const

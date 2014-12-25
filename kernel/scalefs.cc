@@ -393,11 +393,13 @@ void mfs_interface::add_to_journal(transaction *tr) {
   fs_journal->add_transaction(tr);
 }
 
-// Logs a transaction in the disk journal and then applies it to the disk
-void mfs_interface::add_fsync_to_journal(transaction *tr) {
-  auto journal_lock = fs_journal->prepare_for_commit();
-
-  // Update free bitmap on disk.
+// Commit a transaction to the journal and apply the committed changes to
+// the original locations on the disk filesystem.
+// Locking rule: The caller needs to hold the journal's write_lock.
+void
+mfs_interface::__flush_transaction(transaction *tr)
+{
+  // Update the free bitmap on the disk.
   balloc_on_disk(tr->allocated_block_list, tr);
   bfree_on_disk(tr->free_block_list, tr);
 
@@ -413,18 +415,19 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
     block_vec.push_back(std::move(*b));
   }
 
-  // Write out the transaction blocks to the disk journal in timestamp order. 
+  // Write out the transaction blocks to the disk journal in timestamp order.
   write_transaction_to_journal(block_vec, tr->timestamp_);
 
-  // This transaction has been written to the journal. Writeback the changes 
-  // to original location on disk. 
+  // This transaction has been committed to the journal. Writeback the changes
+  // to the original locations on the disk.
   for (auto b = block_vec.begin(); b != block_vec.end(); b++)
     (*b)->writeback();
 
   // The blocks have been written to disk successfully. Safe to delete
   // this transaction from the journal. (This means that all the
   // transactions till this point have made it to the disk. So the journal
-  // can simply be truncated.)
+  // can simply be truncated.) Since the journal is static, the journal file
+  // simply needs to be zero-filled.)
   clear_journal();
 
   // Mark freed blocks as free in memory free_block_list
@@ -433,52 +436,30 @@ void mfs_interface::add_fsync_to_journal(transaction *tr) {
     free_block(*f);
 }
 
-// Writes out the physical journal to the disk. Then applies the
-// flushed out transactions to the disk filesystem.
-void mfs_interface::flush_journal() {
+// Logs a transaction in the disk journal and then applies it to the disk
+void
+mfs_interface::add_fsync_to_journal(transaction *tr)
+{
+  auto journal_lock = fs_journal->prepare_for_commit();
+
+  __flush_transaction(tr);
+}
+
+// Writes out the physical journal to the disk, and applies the committed
+// transactions to the disk filesystem.
+void
+mfs_interface::flush_journal()
+{
   auto journal_lock = fs_journal->prepare_for_commit();
 
   for (auto it = fs_journal->transaction_log.begin();
-      it != fs_journal->transaction_log.end(); it++) {
+       it != fs_journal->transaction_log.end(); it++) {
 
-    // Add free bitmap changes to the transaction.
-    balloc_on_disk((*it)->allocated_block_list, *it);
-    bfree_on_disk((*it)->free_block_list, *it);
-
-    (*it)->prepare_for_commit();
-
-    // Make a list of the most current version of the diskblocks. For each
-    // block number pick the diskblock with the highest timestamp and
-    // discard the rest.
-    std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
-    for (auto b = (*it)->blocks.begin(); b != (*it)->blocks.end(); b++) {
-      if ((b+1) != (*it)->blocks.end() && (*b)->blocknum == (*(b+1))->blocknum)
-        continue;
-      block_vec.push_back(std::move(*b));
-    }
-
-    // Write out the transaction blocks to the disk journal in timestamp order. 
-    write_transaction_to_journal(block_vec, (*it)->timestamp_);
-
-    // This transaction has been written to the journal. Writeback the changes 
-    // to original location on disk. 
-    for (auto b = block_vec.begin(); b != block_vec.end(); b++)
-      (*b)->writeback();
-
-    // Mark freed blocks as free in the in-memory free-bit-vector
-    for (auto f = (*it)->free_block_list.begin();
-         f != (*it)->free_block_list.end(); f++)
-      free_block(*f);
+    __flush_transaction(*it);
 
     delete (*it);
-
-    // The blocks have been written to disk successfully. Safe to delete
-    // this transaction from the journal. (This means that all the
-    // transactions till this point have made it to the disk. So the journal
-    // can simply be truncated. Since the journal is static, the journal file
-    // simply needs to be zero-filled.)
-    clear_journal();
   }
+
   fs_journal->transaction_log.clear();
 }
 
