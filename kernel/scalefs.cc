@@ -418,6 +418,12 @@ mfs_interface::__flush_transaction(transaction *tr)
   // Write out the transaction blocks to the disk journal in timestamp order.
   write_transaction_to_journal(block_vec, tr->timestamp_);
 
+  // Now that the transaction has been committed, mark the freed blocks as
+  // free in the in-memory free-bit-vector.
+  for (auto f = tr->free_block_list.begin();
+       f != tr->free_block_list.end(); f++)
+    free_block(*f);
+
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
   for (auto b = block_vec.begin(); b != block_vec.end(); b++)
@@ -429,11 +435,6 @@ mfs_interface::__flush_transaction(transaction *tr)
   // can simply be truncated.) Since the journal is static, the journal file
   // simply needs to be zero-filled.)
   clear_journal();
-
-  // Mark freed blocks as free in memory free_block_list
-  for (auto f = tr->free_block_list.begin(); f !=
-      tr->free_block_list.end(); f++)
-    free_block(*f);
 }
 
 // Logs a transaction in the disk journal and then applies it to the disk
