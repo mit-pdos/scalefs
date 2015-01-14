@@ -44,9 +44,11 @@ skipelem(const char **rpath, char *name)
   while (*path != '/' && *path != 0)
     path++;
   len = path - s;
-  if (len > DIRSIZ)
+  if (len > DIRSIZ) {
+    cprintf("Error: Path component longer than DIRSIZ"
+            " (%d characters)\n", DIRSIZ);
     return -1;
-  else {
+  } else {
     memmove(name, s, len);
     if (len < DIRSIZ)
       name[len] = 0;
