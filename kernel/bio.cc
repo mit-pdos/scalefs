@@ -2,6 +2,9 @@
 #include "kernel.hh"
 #include "buf.hh"
 #include "weakcache.hh"
+#include "mfs.hh"
+#include "scalefs.hh"
+
 
 static weakcache<buf::key_t, buf> bufcache(BSIZE << 10);
             //I don't think this was changed when BSIZE was changed from 512 to 4096
@@ -39,6 +42,13 @@ buf::writeback()
   // write copy[] to disk; don't need to wait for write to finish,
   // as long as write order to disk has been established.
   idewrite(dev_, copy->data, BSIZE, block_*BSIZE);
+}
+
+void
+buf::add_to_transaction(transaction *trans, u32 bno, char buf[BSIZE])
+{
+  assert(bno == (u32) block_);
+  trans->add_unique_block(bno, buf);
 }
 
 void

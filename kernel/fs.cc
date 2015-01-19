@@ -77,7 +77,7 @@ bzero(int dev, int bno, transaction *trans = NULL)
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans)
-    trans->add_unique_block(bno, locked->data);
+    bp->add_to_transaction(trans, bno, locked->data);
 }
 
 // Zero a block and immediately writeback to disk.
@@ -151,11 +151,8 @@ balloc(u32 dev, transaction *trans = NULL)
       if((locked->data[bi/8] & m) == 0){  // Is block free?
         locked->data[bi/8] |= m;  // Mark block in use on disk.
         found = true;
-        if (trans) {
-          char charbuf[BSIZE];
-          memmove(charbuf, locked->data, BSIZE);
-          trans->add_unique_block(blocknum, charbuf);
-        }
+        if (trans)
+          bp->add_to_transaction(trans, blocknum, locked->data);
         break;
       }
     }
@@ -208,9 +205,7 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
       }
     } while (++bno && bno != blocks.end() && *bno <= max_bno);
 
-    char charbuf[BSIZE];
-    memmove(charbuf, locked->data, BSIZE);
-    trans->add_unique_block(blocknum, charbuf);
+    bp->add_to_transaction(trans, blocknum, locked->data);
 
     // Retry the last update, in case we crossed over to the next bitmap block.
     --bno;
@@ -265,11 +260,8 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
     if((locked->data[bi/8] & m) == 0)
       panic("freeing free block");
     locked->data[bi/8] &= ~m;  // Mark block free on disk.
-    if (trans) {
-      char charbuf[BSIZE];
-      memmove(charbuf, locked->data, BSIZE);
-      trans->add_unique_block(blocknum, charbuf);
-    }
+    if (trans)
+      bp->add_to_transaction(trans, blocknum, locked->data);
   }
 }
 
@@ -588,11 +580,8 @@ iupdate(sref<inode> ip, transaction *trans)
     dip->size = ip->size;
     dip->gen = ip->gen;
     memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
-    if (trans) {
-      char charbuf[BSIZE];
-      memmove(charbuf, locked->data, BSIZE);
-      trans->add_unique_block(IBLOCK(ip->inum), charbuf);
-    }
+    if (trans)
+      bp->add_to_transaction(trans, IBLOCK(ip->inum), locked->data);
   }
 
   if (ip->addrs[NDIRECT] != 0) {
@@ -600,11 +589,8 @@ iupdate(sref<inode> ip, transaction *trans)
     auto locked = bp->write();
     if (ip->iaddrs.load() != nullptr)
       memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
-    if (trans) {
-      char charbuf[BSIZE];
-      memmove(charbuf, locked->data, BSIZE);
-      trans->add_unique_block(ip->addrs[NDIRECT], charbuf);
-    }
+    if (trans)
+      bp->add_to_transaction(trans, ip->addrs[NDIRECT], locked->data);
   }
 
 }
@@ -926,11 +912,8 @@ retry3:
       ap = (u32*)locked->data;
       if (ap[bn / NINDIRECT] == 0) {
         ap[bn / NINDIRECT] = balloc(ip->dev, trans);
-        if (trans) {
-          char charbuf[BSIZE];
-          memmove(charbuf, locked->data, BSIZE);
-          trans->add_unique_block(ip->addrs[NDIRECT+1], charbuf);
-        }
+        if (trans)
+          wb->add_to_transaction(trans, ip->addrs[NDIRECT+1], locked->data);
       }
       continue;
     }
@@ -948,11 +931,8 @@ retry3:
       ap = (u32*)locked->data;
       if (ap[bn % NINDIRECT] == 0) {
         ap[bn % NINDIRECT] = balloc(ip->dev, trans);
-        if (trans) {
-          char charbuf[BSIZE];
-          memmove(charbuf, locked->data, BSIZE);
-          trans->add_unique_block(addr, charbuf);
-        }
+        if (trans)
+          wb->add_to_transaction(trans, addr, locked->data);
       }
       continue;
     }
@@ -1048,11 +1028,8 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
           a[i] = 0;
         }
       }
-      if (trans && start != 0) {
-        char charbuf[BSIZE];
-        memmove(charbuf, locked->data, BSIZE);
-        trans->add_unique_block(ip->addrs[NDIRECT], charbuf);
-      }
+      if (trans && start != 0)
+        bp->add_to_transaction(trans, ip->addrs[NDIRECT], locked->data);
     }
 
     if (start == 0) {
@@ -1087,11 +1064,8 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
             bfree_datablock(ip->dev, a2[j], trans, true);
             a2[j] = 0;
           }
-          if (trans && start != 0) {
-            char charbuf[BSIZE];
-            memmove(charbuf, locked2->data, BSIZE);
-            trans->add_unique_block(a1[i], charbuf);
-          }
+          if (trans && start != 0)
+            bp2->add_to_transaction(trans, a1[i], locked2->data);
         }
 
         if (start == 0) { 
@@ -1099,11 +1073,8 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
           a1[i] = 0;
         }
       }
-      if (trans && bno != 0) {
-        char charbuf[BSIZE];
-        memmove(charbuf, locked1->data, BSIZE);
-        trans->add_unique_block(ip->addrs[NDIRECT+1], charbuf);
-      }
+      if (trans && bno != 0)
+        bp1->add_to_transaction(trans, ip->addrs[NDIRECT+1], locked1->data);
     }
 
     if (bno == 0) {
