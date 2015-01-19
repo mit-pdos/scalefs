@@ -53,6 +53,13 @@ public:
     return buf_writer(data_, &write_lock_, &seq_, this);
   }
 
+  // Same as write(), except that the block is not marked dirty.
+  // Used to get exclusive (i.e., write) access to the block without
+  // disturbing the dirty flag or the reference count.
+  buf_writer write_clean() {
+    return buf_writer(data_, &write_lock_, &seq_, nullptr);
+  }
+
 private:
   const u32 dev_;
   const u64 block_;
