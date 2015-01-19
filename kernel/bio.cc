@@ -33,6 +33,21 @@ buf::get(u32 dev, u64 block)
   }
 }
 
+// Evict a (clean) block from the buffer-cache
+void
+buf::put(u32 dev, u64 block)
+{
+  buf::key_t k = { dev, block };
+
+  sref<buf> bp = bufcache.lookup(k);
+  if (bp.get() != nullptr) {
+    auto locked = bp->write_clean();
+    if (!bp->dirty()) {
+      bp->cache_pin(false); // drop it from the cache
+    }
+  }
+}
+
 void
 buf::writeback()
 {

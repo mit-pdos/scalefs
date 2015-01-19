@@ -17,6 +17,7 @@ public:
   typedef pair<u32, u64> key_t;
 
   static sref<buf> get(u32 dev, u64 block);
+  static void put(u32 dev, u64 block);
   void writeback();
   void add_to_transaction(transaction *trans, u32 bno, char buf[BSIZE]);
 
