@@ -25,7 +25,7 @@ buf::get(u32 dev, u64 block)
     sref<buf> nb = sref<buf>::transfer(new buf(dev, block));
     auto locked = nb->write(); // marks the block as dirty automatically
     if (bufcache.insert(k, nb.get())) {
-      nb->inc();  // keep it in the cache
+      nb->cache_pin(true); // keep it in the cache
       ideread(dev, locked->data, BSIZE, block*BSIZE);
       nb->mark_clean(); // we just loaded the contents from the disk!
       return nb;

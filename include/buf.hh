@@ -24,6 +24,13 @@ public:
   u64 block() { return block_; }
   bool dirty() { return dirty_; }
 
+  void cache_pin(bool flag) {
+    if (flag)
+      inc();
+    else
+      dec();
+  }
+
   seq_reader<bufdata> read() {
     return seq_reader<bufdata>(data_, &seq_);
   }
