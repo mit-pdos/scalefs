@@ -36,12 +36,12 @@ void
 buf::writeback()
 {
   lock_guard<sleeplock> l(&writeback_lock_);
-  mark_clean();
   auto copy = read();
 
   // write copy[] to disk; don't need to wait for write to finish,
   // as long as write order to disk has been established.
   idewrite(dev_, copy->data, BSIZE, block_*BSIZE);
+  mark_clean();
 }
 
 void
@@ -49,6 +49,7 @@ buf::add_to_transaction(transaction *trans, u32 bno, char buf[BSIZE])
 {
   assert(bno == (u32) block_);
   trans->add_unique_block(bno, buf);
+  mark_clean();
 }
 
 void

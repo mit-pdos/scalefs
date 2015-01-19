@@ -30,8 +30,8 @@ public:
 
   class buf_dirty {
   public:
-    buf_dirty(buf* b) : b_(b) {}
-    ~buf_dirty() { if (b_) b_->mark_dirty(); }
+    buf_dirty(buf* b) : b_(b) { if (b_) b_->mark_dirty(); }
+    ~buf_dirty() { }
     buf_dirty(buf_dirty&& o) : b_(o.b_) { o.b_ = nullptr; }
     void operator=(buf_dirty&& o) { b_ = o.b_; o.b_ = nullptr; }
 

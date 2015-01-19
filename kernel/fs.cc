@@ -1160,12 +1160,10 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       memmove(locked->data + off%BSIZE, src, m);
       memmove(charbuf, locked->data, BSIZE);
     }
-    if (writeback) {
-      auto b = std::make_unique<transaction_diskblock>(blocknum, charbuf);
-      b->writeback();
-    } else if (trans) {
-      trans->add_unique_block(blocknum, charbuf);
-    }
+    if (writeback)
+      bp->writeback();
+    else if (trans)
+      bp->add_to_transaction(trans, blocknum, charbuf);
   }
   // Don't update inode yet. Wait till all the pages have been written to and then
   // call update_size to update the inode just once.
