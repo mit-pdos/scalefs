@@ -19,7 +19,7 @@ public:
   static sref<buf> get(u32 dev, u64 block);
   static void put(u32 dev, u64 block);
   void writeback();
-  void add_to_transaction(transaction *trans, u32 bno, char buf[BSIZE]);
+  void add_to_transaction(transaction *trans, char buf[BSIZE]);
 
   u32 dev() { return dev_; }
   u64 block() { return block_; }

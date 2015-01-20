@@ -61,10 +61,9 @@ buf::writeback()
 }
 
 void
-buf::add_to_transaction(transaction *trans, u32 bno, char buf[BSIZE])
+buf::add_to_transaction(transaction *trans, char buf[BSIZE])
 {
-  assert(bno == (u32) block_);
-  trans->add_unique_block(bno, buf);
+  trans->add_unique_block(block_, buf);
   mark_clean();
 }
 
