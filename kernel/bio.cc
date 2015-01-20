@@ -58,11 +58,19 @@ buf::writeback()
   // contents (note that we haven't acquired the write_lock_). Such an update
   // will mark the buf as dirty; so if we postpone marking the buf as clean
   // here, we will risk losing the dirty-bit, since we might overwrite it.
+  //
+  // One might wonder if there is a risk of freeing up the buf prematurely
+  // during eviction, since the buf is marked clean even before it has been
+  // written out. Luckily this won't happen because the buf is still alive
+  // (in scope) as long as we are executing this function.
+  // However, asynchronous disk-writes might get us into trouble!
   mark_clean();
   auto copy = read();
 
-  // write copy[] to disk; don't need to wait for write to finish,
-  // as long as write order to disk has been established.
+  // This write has to be synchronous, so that we don't free up the buf
+  // while the copy operation is still in progress. Supporting asynchronous
+  // disk-writes would need a more careful design, to manage the buf's
+  // lifetime properly!
   idewrite(dev_, copy->data, BSIZE, block_*BSIZE);
 }
 
