@@ -493,7 +493,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
     sref<mnode> mf = md->as_dir()->lookup(name);
     if (mf) {
-      if (type != T_FILE || mf->type() != mnode::types::file || excl)
+      if (type != T_FILE || !(mf->type() == mnode::types::file
+          || mf->type() == mnode::types::dev) || excl)
         return sref<mnode>();
       return mf;
     }
