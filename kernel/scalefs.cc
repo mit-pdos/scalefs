@@ -281,13 +281,13 @@ void mfs_interface::process_metadata_log() {
 
 }
 
-void mfs_interface::sync_dirty_files() {
+void
+mfs_interface::sync_dirty_files()
+{
   superblock sb;
-  {
-    sref<buf> bp = buf::get(1, 1);
-    auto r = bp->read();
-    memmove(&sb, r->data, sizeof(sb));
-  }
+
+  get_superblock(&sb);
+
   for (int i = 0; i < sb.ninodes; i++) {
     sref<mnode> m;
     if (inum_to_mnode->lookup(i, &m) && m) {
