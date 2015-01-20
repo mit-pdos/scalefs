@@ -74,9 +74,14 @@ buf::writeback()
   idewrite(dev_, copy->data, BSIZE, block_*BSIZE);
 }
 
+// Must be invoked with the buf's write_lock_ held.
 void
 buf::add_to_transaction(transaction *trans, char buf[BSIZE])
 {
+  // It doesn't matter whether we mark it clean before or after we add it to
+  // the transaction, as long as we mark it clean while still holding the
+  // write_lock_. But we mark it clean early, just to be consistent with
+  // ->writeback().
   mark_clean();
   trans->add_unique_block(block_, buf);
 }

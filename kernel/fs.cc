@@ -1207,11 +1207,16 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       auto locked = bp->write();
       memmove(locked->data + off%BSIZE, src, m);
       memmove(charbuf, locked->data, BSIZE);
+
+      // If adding the block to the transaction, we need to copy the contents
+      // of the block with the write-lock held, so that we add *this* particular
+      // version of the block-contents to the transaction. Also, this placement
+      // helps ensure that the buf is marked clean at the right moment.
+      if (!writeback && trans)
+        bp->add_to_transaction(trans, locked->data);
     }
     if (writeback)
       bp->writeback();
-    else if (trans)
-      bp->add_to_transaction(trans, charbuf);
   }
   // Don't update inode yet. Wait till all the pages have been written to and then
   // call update_size to update the inode just once.
