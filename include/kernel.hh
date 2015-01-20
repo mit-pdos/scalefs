@@ -107,6 +107,7 @@ void            ilock(sref<inode>, int writer);
 void            iupdate(sref<inode>, transaction *trans = NULL);
 void            iunlock(sref<inode>);
 void            zero_fill(sref<inode>, u32 offset);
+void            drop_bufcache(sref<inode> ip);
 void            itrunc(sref<inode>, u32 offset = 0, transaction *trans = NULL);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);

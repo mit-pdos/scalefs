@@ -993,6 +993,54 @@ zero_fill(sref<inode> ip, u32 offset)
   }
 }
 
+// Drop the (clean) buffer-cache blocks associated with this file.
+void
+drop_bufcache(sref<inode> ip)
+{
+  scoped_gc_epoch e;
+
+  for (int i = 0; i < NDIRECT; i++) {
+    if (ip->addrs[i])
+      buf::put(ip->dev, ip->addrs[i]);
+  }
+
+  if (ip->addrs[NDIRECT]) {
+    sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+    auto copy = bp->read();
+    u32 *a = (u32*)copy->data;
+    for (int i = 0; i < NINDIRECT; i++) {
+      if (a[i])
+        buf::put(ip->dev, a[i]);
+    }
+    // Drop the indirect block too, from the buffer-cache.
+    buf::put(ip->dev, ip->addrs[NDIRECT]);
+  }
+
+  if (ip->addrs[NDIRECT+1]) {
+    sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+    auto copy1 = bp1->read();
+    u32 *a1 = (u32*)copy1->data;
+
+    for (int i = 0; i < NINDIRECT; i++) {
+      if (a1[i]) {
+        sref<buf> bp2 = buf::get(ip->dev, a1[i]);
+        auto copy2 = bp2->read();
+        u32 *a2 = (u32*)copy2->data;
+        for (int j = 0; j < NINDIRECT; j++) {
+          if (a2[j])
+            buf::put(ip->dev, a2[j]);
+        }
+        // Drop the second-level doubly-indirect block too, from the
+        // buffer-cache.
+        buf::put(ip->dev, a1[i]);
+      }
+    }
+
+    // Drop the first-level doubly-indirect block too, from the buffer-cache.
+    buf::put(ip->dev, ip->addrs[NDIRECT+1]);
+  }
+}
+
 void
 itrunc(sref<inode> ip, u32 offset, transaction *trans)
 {

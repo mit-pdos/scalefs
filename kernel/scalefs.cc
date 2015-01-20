@@ -297,6 +297,25 @@ mfs_interface::sync_dirty_files()
   }
 }
 
+void
+mfs_interface::evict_bufcache()
+{
+  superblock sb;
+
+  get_superblock(&sb);
+
+  for (int i = 0; i < sb.ninodes; i++) {
+    sref<mnode> m;
+
+    if (inum_to_mnode->lookup(i, &m) && m) {
+      if(m->type() == mnode::types::file) {
+        sref<inode> ip = get_inode(m->inum_, "evict_bufcache");
+        drop_bufcache(ip);
+      }
+    }
+  }
+}
+
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
