@@ -52,19 +52,25 @@ void
 buf::writeback()
 {
   lock_guard<sleeplock> l(&writeback_lock_);
+
+  // We need to mark the buf as clean at this point (even though we haven't
+  // written it out yet) because a concurrent writer can update the block's
+  // contents (note that we haven't acquired the write_lock_). Such an update
+  // will mark the buf as dirty; so if we postpone marking the buf as clean
+  // here, we will risk losing the dirty-bit, since we might overwrite it.
+  mark_clean();
   auto copy = read();
 
   // write copy[] to disk; don't need to wait for write to finish,
   // as long as write order to disk has been established.
   idewrite(dev_, copy->data, BSIZE, block_*BSIZE);
-  mark_clean();
 }
 
 void
 buf::add_to_transaction(transaction *trans, char buf[BSIZE])
 {
-  trans->add_unique_block(block_, buf);
   mark_clean();
+  trans->add_unique_block(block_, buf);
 }
 
 void
