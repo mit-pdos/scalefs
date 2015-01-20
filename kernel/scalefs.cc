@@ -316,6 +316,26 @@ mfs_interface::evict_bufcache()
   }
 }
 
+// Usage: To evict the (clean) blocks cached in the buffer-cache, do:
+// $ echo 1 > /dev/evict_caches
+static int
+evict_caches(mdev*, const char *buf, u32 n)
+{
+  cprintf("evict_caches: dropping buffer-cache blocks\n");
+
+  if (n != 1) {
+    cprintf("evict_caches: invalid number of characters (%d)\n", n);
+    return n;
+  }
+
+  if (*buf == '1')
+    rootfs_interface->evict_bufcache();
+  else
+    cprintf("evict_caches: invalid option %c\n", *buf);
+
+  return n;
+}
+
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
@@ -783,6 +803,7 @@ void initfs() {
   rootfs_interface->initialize_free_bit_vector();
 
   devsw[MAJ_BLKSTATS].pread = blkstatsread;
+  devsw[MAJ_EVICTCACHES].write = evict_caches;
 
   root_inum = rootfs_interface->load_root()->inum_;
   /* the root inode gets an extra reference because of its own ".." */
