@@ -77,7 +77,7 @@ bzero(int dev, int bno, transaction *trans = NULL)
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans)
-    bp->add_to_transaction(trans, locked->data);
+    bp->add_to_transaction(trans);
 }
 
 // Zero a block and immediately writeback to disk.
@@ -152,7 +152,7 @@ balloc(u32 dev, transaction *trans = NULL)
         locked->data[bi/8] |= m;  // Mark block in use on disk.
         found = true;
         if (trans)
-          bp->add_to_transaction(trans, locked->data);
+          bp->add_to_transaction(trans);
         break;
       }
     }
@@ -205,7 +205,7 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
       }
     } while (++bno && bno != blocks.end() && *bno <= max_bno);
 
-    bp->add_to_transaction(trans, locked->data);
+    bp->add_to_transaction(trans);
 
     // Retry the last update, in case we crossed over to the next bitmap block.
     --bno;
@@ -261,7 +261,7 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
       panic("freeing free block");
     locked->data[bi/8] &= ~m;  // Mark block free on disk.
     if (trans)
-      bp->add_to_transaction(trans, locked->data);
+      bp->add_to_transaction(trans);
   }
 }
 
@@ -581,7 +581,7 @@ iupdate(sref<inode> ip, transaction *trans)
     dip->gen = ip->gen;
     memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
     if (trans)
-      bp->add_to_transaction(trans, locked->data);
+      bp->add_to_transaction(trans);
   }
 
   if (ip->addrs[NDIRECT] != 0) {
@@ -590,7 +590,7 @@ iupdate(sref<inode> ip, transaction *trans)
     if (ip->iaddrs.load() != nullptr)
       memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
     if (trans)
-      bp->add_to_transaction(trans, locked->data);
+      bp->add_to_transaction(trans);
   }
 
 }
@@ -913,7 +913,7 @@ retry3:
       if (ap[bn / NINDIRECT] == 0) {
         ap[bn / NINDIRECT] = balloc(ip->dev, trans);
         if (trans)
-          wb->add_to_transaction(trans, locked->data);
+          wb->add_to_transaction(trans);
       }
       continue;
     }
@@ -932,7 +932,7 @@ retry3:
       if (ap[bn % NINDIRECT] == 0) {
         ap[bn % NINDIRECT] = balloc(ip->dev, trans);
         if (trans)
-          wb->add_to_transaction(trans, locked->data);
+          wb->add_to_transaction(trans);
       }
       continue;
     }
@@ -1077,7 +1077,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
         }
       }
       if (trans && start != 0)
-        bp->add_to_transaction(trans, locked->data);
+        bp->add_to_transaction(trans);
     }
 
     if (start == 0) {
@@ -1113,7 +1113,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
             a2[j] = 0;
           }
           if (trans && start != 0)
-            bp2->add_to_transaction(trans, locked2->data);
+            bp2->add_to_transaction(trans);
         }
 
         if (start == 0) { 
@@ -1122,7 +1122,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
         }
       }
       if (trans && bno != 0)
-        bp1->add_to_transaction(trans, locked1->data);
+        bp1->add_to_transaction(trans);
     }
 
     if (bno == 0) {
@@ -1213,7 +1213,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       // version of the block-contents to the transaction. Also, this placement
       // helps ensure that the buf is marked clean at the right moment.
       if (!writeback && trans)
-        bp->add_to_transaction(trans, locked->data);
+        bp->add_to_transaction(trans);
     }
     if (writeback)
       bp->writeback();
