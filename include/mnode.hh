@@ -439,6 +439,10 @@ public:
       return sref<page_info>::newref(get_page_info_raw());
     }
 
+    void reset_page_info() {
+      value_ = value_ & 0xF;
+    }
+
     bool is_valid() const {
       return !!(value_ & FLAG_VALID);
     }
@@ -521,6 +525,7 @@ public:
   }
 
   page_state get_page(u64 pageidx);
+  void put_page(u64 pageidx);
   void sync_file();
   void remove_pgtable_mappings(u64 start_offset);
 };

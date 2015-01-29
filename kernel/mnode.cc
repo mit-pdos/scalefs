@@ -212,6 +212,32 @@ mfile::get_page(u64 pageidx)
   return it->copy_consistent();
 }
 
+// Evict a (clean) page from the page-cache.
+void
+mfile::put_page(u64 pageidx)
+{
+  auto it = pages_.find(pageidx);
+  if (!it.is_set())
+    return;
+
+  sref<page_info> pi = it->get_page_info();
+  if (pi != nullptr && fs_ == root_fs) {
+    // Don't evict dirty pages.
+    if (it->is_dirty_page())
+      return;
+
+    it->reset_page_info();
+
+    std::vector<page_info::rmap_entry> rmap_vec;
+    pi->get_rmap_vector(rmap_vec);
+    for (auto rmap_it = rmap_vec.begin(); rmap_it != rmap_vec.end(); rmap_it++)
+      rmap_it->first->remove_mapping(rmap_it->second);
+
+    pi->dec();
+
+  }
+}
+
 // This function gets called when a file is truncated. Page table mappings for
 // any pages that are no longer a part of the file need to be cleared from vmaps
 // that have the file mmapped. Each page_info object keeps track of these vmaps
