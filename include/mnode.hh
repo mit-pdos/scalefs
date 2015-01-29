@@ -528,6 +528,7 @@ public:
   void put_page(u64 pageidx);
   void sync_file();
   void remove_pgtable_mappings(u64 start_offset);
+  void drop_pagecache();
 };
 
 inline mfile*

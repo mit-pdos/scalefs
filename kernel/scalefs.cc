@@ -316,6 +316,28 @@ mfs_interface::evict_bufcache()
   }
 }
 
+void
+mfs_interface::evict_pagecache()
+{
+  superblock sb;
+
+  get_superblock(&sb);
+
+  for (int i = 0; i < sb.ninodes; i++) {
+    sref<mnode> m;
+
+    if (inum_to_mnode->lookup(i, &m) && m) {
+      if (m->type() == mnode::types::file) {
+          // Skip uninitialized files, as they won't have any page-cache
+          // pages yet. Moreover, file initialization itself consumes
+          // some memory (for the radix array), which is undesirable here.
+          if (m->is_initialized())
+            m->as_file()->drop_pagecache();
+      }
+    }
+  }
+}
+
 // Usage: To evict the (clean) blocks cached in the buffer-cache, do:
 // $ echo 1 > /dev/evict_caches
 static int

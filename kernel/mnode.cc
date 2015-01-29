@@ -263,6 +263,35 @@ mfile::remove_pgtable_mappings(u64 start_offset) {
   }
 }
 
+// Drop the (clean) page-cache pages associated with this file.
+void
+mfile::drop_pagecache()
+{
+  u64 mlen = *read_size();
+  auto page_end = pages_.find(PGROUNDUP(mlen) / PGSIZE);
+  for (auto it = pages_.begin(); it != page_end; ) {
+    // Skip unset spans
+    if (!it.is_set()) {
+      mlen = *read_size();
+      if (mlen <= it.index()*PGSIZE)
+        break;
+      it += it.base_span();
+      if (mlen <= it.index()*PGSIZE)
+        break;
+      continue;
+    }
+
+    // Don't evict dirty pages.
+    if (it->is_dirty_page()) {
+      ++it;
+      continue;
+    }
+
+    put_page(it.index());
+    ++it;
+  }
+}
+
 void
 mfile::sync_file()
 {
