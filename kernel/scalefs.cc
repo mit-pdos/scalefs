@@ -302,6 +302,8 @@ mfs_interface::evict_bufcache()
 {
   superblock sb;
 
+  cprintf("evict_caches: dropping buffer-cache blocks\n");
+
   get_superblock(&sb);
 
   for (int i = 0; i < sb.ninodes; i++) {
@@ -321,6 +323,8 @@ mfs_interface::evict_pagecache()
 {
   superblock sb;
 
+  cprintf("evict_caches: dropping page-cache pages\n");
+
   get_superblock(&sb);
 
   for (int i = 0; i < sb.ninodes; i++) {
@@ -338,12 +342,15 @@ mfs_interface::evict_pagecache()
   }
 }
 
-// Usage: To evict the (clean) blocks cached in the buffer-cache, do:
+// Usage:
+// To evict the (clean) blocks cached in the buffer-cache, do:
 // $ echo 1 > /dev/evict_caches
+//
+// To evict the (clean) pages cached in the page-cache, do:
+// $ echo 2 > /dev/evict_caches
 static int
 evict_caches(mdev*, const char *buf, u32 n)
 {
-  cprintf("evict_caches: dropping buffer-cache blocks\n");
 
   if (n != 1) {
     cprintf("evict_caches: invalid number of characters (%d)\n", n);
@@ -352,6 +359,8 @@ evict_caches(mdev*, const char *buf, u32 n)
 
   if (*buf == '1')
     rootfs_interface->evict_bufcache();
+  else if (*buf == '2')
+    rootfs_interface->evict_pagecache();
   else
     cprintf("evict_caches: invalid option %c\n", *buf);
 
