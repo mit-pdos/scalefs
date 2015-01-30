@@ -62,6 +62,7 @@ protected:
   void onzero()
   {
     kfree(va());
+    this->~page_info();
   }
 
 public:
