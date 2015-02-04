@@ -59,6 +59,7 @@ public:
   bool is_dirty();
   u8 type() const { return inumber(inum_).type(); }
   void initialized(bool flag) { initialized_ = flag; }
+  bool is_initialized() { return initialized_; }
 
   mdir* as_dir();
   const mdir* as_dir() const;
