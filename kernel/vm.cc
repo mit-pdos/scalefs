@@ -305,11 +305,13 @@ vmap::remove(uptr start, uptr len)
 void
 vmap::remove_mapping(uptr addr)
 {
+  mmu::shootdown shootdown;
   auto vpf = vpfs_.find(addr/PGSIZE);
   auto lock = vpfs_.acquire(vpf,vpf+1);
   if (vpf.is_set())
     vpfs_.unset(vpf,vpf+1);
-  cache.invalidate(addr, PGSIZE, vpf, NULL);
+  cache.invalidate(addr, PGSIZE, vpf, &shootdown);
+  shootdown.perform();
 }
 
 int
