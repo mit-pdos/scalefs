@@ -231,7 +231,7 @@ mfile::put_page(u64 pageidx)
     std::vector<page_info::rmap_entry> rmap_vec;
     pi->get_rmap_vector(rmap_vec);
     for (auto rmap_it = rmap_vec.begin(); rmap_it != rmap_vec.end(); rmap_it++)
-      rmap_it->first->remove_mapping(rmap_it->second);
+      rmap_it->first->clear_mapping(rmap_it->second);
 
     pi->dec();
 
@@ -257,7 +257,7 @@ mfile::remove_pgtable_mappings(u64 start_offset) {
       std::vector<page_info::rmap_entry> rmap_vec;
       pg_info->get_rmap_vector(rmap_vec);
       for (auto rmap_it = rmap_vec.begin(); rmap_it != rmap_vec.end(); rmap_it++)
-        rmap_it->first->remove_mapping(rmap_it->second);
+        rmap_it->first->delete_mapping(rmap_it->second);
     }
     ++it;
   }

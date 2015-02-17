@@ -303,13 +303,36 @@ vmap::remove(uptr start, uptr len)
 }
 
 void
-vmap::remove_mapping(uptr addr)
+vmap::delete_mapping(uptr addr)
 {
   mmu::shootdown shootdown;
   auto vpf = vpfs_.find(addr/PGSIZE);
   auto lock = vpfs_.acquire(vpf,vpf+1);
   if (vpf.is_set())
     vpfs_.unset(vpf,vpf+1);
+  cache.invalidate(addr, PGSIZE, vpf, &shootdown);
+  shootdown.perform();
+}
+
+void
+vmap::clear_mapping(uptr addr)
+{
+  mmu::shootdown shootdown;
+  auto vpf = vpfs_.find(addr/PGSIZE);
+  auto lock = vpfs_.acquire(vpf);
+
+  if (vpf.is_set()) {
+    auto &desc = *vpf;
+    if (vpf.base_span() == 1) {
+      // Safe to update in place
+      desc.page = sref<page_info>();
+    } else {
+      vmdesc n(desc);
+      n.page = sref<page_info>();
+      vpfs_.fill(vpf, std::move(n));
+    }
+  }
+
   cache.invalidate(addr, PGSIZE, vpf, &shootdown);
   shootdown.perform();
 }

@@ -139,8 +139,12 @@ struct vmap : public referenced {
   int remove(uptr start, uptr len);
 
   // Unmap a single virtual page. Called when the mapped file page has been
-  // truncated (or swapped out)
-  void remove_mapping(uptr addr);
+  // truncated (or swapped out). The entry is unset from vpfs_ as well.
+  void delete_mapping(uptr addr);
+
+  // Unmap a single virtual page, but don't unset it from vpfs_. Clear the
+  // mapping from vmdesc. Used while evicting pages from the page-cache.
+  void clear_mapping(uptr addr);
 
   // Populate vmdesc's.
   int willneed(uptr start, uptr len);
