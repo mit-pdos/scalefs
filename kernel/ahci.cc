@@ -21,10 +21,8 @@ struct ahci_port_page
   volatile struct ahci_recv_fis rfis __attribute__((aligned (256)));
   u8 pad[0x300];
 
-  volatile struct ahci_cmd_header cmdh __attribute__((aligned (1024)));
-  struct ahci_cmd_header cmdh_unused[31];
-
-  volatile struct ahci_cmd_table cmdt __attribute__((aligned (128)));
+  volatile struct ahci_cmd_header cmdh[32] __attribute__((aligned (1024)));
+  volatile struct ahci_cmd_table cmdt[32] __attribute__((aligned (128)));
 };
 
 class ahci_port : public disk
@@ -46,14 +44,14 @@ private:
   volatile ahci_reg_port *const preg;
   ahci_port_page *portpage;
 
-  u64 fill_prd(void* addr, u64 nbytes);
-  u64 fill_prd_v(kiovec* iov, int iov_cnt);
-  void fill_fis(sata_fis_reg* fis);
+  u64 fill_prd(int cmdslot, void* addr, u64 nbytes);
+  u64 fill_prd_v(int, kiovec* iov, int iov_cnt);
+  void fill_fis(int, sata_fis_reg* fis);
 
   void dump();
   int wait();
 
-  void issue(kiovec* iov, int iov_cnt, u64 off, int cmd);
+  void issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd);
 
   // For the disk read/write interface..
   spinlock io_lock;
@@ -106,6 +104,9 @@ private:
   const u32 membase;
   volatile ahci_reg *const reg;
   ahci_port* port[32];
+
+public:
+  const int ncs;  // max number of command slots in each port
 };
 
 void
@@ -133,7 +134,8 @@ ahci_hba::attach(struct pci_func *pcif)
 
 ahci_hba::ahci_hba(struct pci_func *pcif)
   : membase(pcif->reg_base[5]),
-    reg((ahci_reg*) p2v(membase))
+    reg((ahci_reg*) p2v(membase)),
+    ncs(((reg->g.cap >> AHCI_CAP_NCS_SHIFT) & AHCI_CAP_NCS_MASK) + 1)
 {
   reg->g.ghc |= AHCI_GHC_AE;
 
@@ -192,7 +194,8 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   }
 
   /* Initialize memory buffers */
-  portpage->cmdh.ctba = v2p((void*) &portpage->cmdt);
+  for (int cmdslot = 0; cmdslot < 32; cmdslot++)
+    portpage->cmdh[cmdslot].ctba = v2p((void*) &portpage->cmdt[cmdslot]);
   preg->clb = v2p((void*) &portpage->cmdh);
   preg->fb = v2p((void*) &portpage->rfis);
   preg->ci = 0;
@@ -226,8 +229,8 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   fis.command = IDE_CMD_IDENTIFY;
   fis.sector_count = 1;
 
-  fill_prd(&id_buf, sizeof(id_buf));
-  fill_fis(&fis);
+  fill_prd(0, &id_buf, sizeof(id_buf));
+  fill_fis(0, &fis);
   preg->ci |= 1;
 
   if (wait() < 0) {
@@ -257,8 +260,8 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   fis.command = IDE_CMD_SETFEATURES;
   fis.features = IDE_FEATURE_WCACHE_ENA;
 
-  fill_prd(0, 0);
-  fill_fis(&fis);
+  fill_prd(0, 0, 0);
+  fill_fis(0, &fis);
   preg->ci |= 1;
 
   if (wait() < 0) {
@@ -267,7 +270,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   }
 
   fis.features = IDE_FEATURE_RLA_ENA;
-  fill_fis(&fis);
+  fill_fis(0, &fis);
   preg->ci |= 1;
 
   if (wait() < 0) {
@@ -282,11 +285,11 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 }
 
 u64
-ahci_port::fill_prd_v(kiovec* iov, int iov_cnt)
+ahci_port::fill_prd_v(int cmdslot, kiovec* iov, int iov_cnt)
 {
   u64 nbytes = 0;
 
-  volatile ahci_cmd_table *cmd = (ahci_cmd_table *) &portpage->cmdt;
+  volatile ahci_cmd_table *cmd = (ahci_cmd_table *) &portpage->cmdt[cmdslot];
   assert(iov_cnt < sizeof(cmd->prdt) / sizeof(cmd->prdt[0]));
 
   for (int slot = 0; slot < iov_cnt; slot++) {
@@ -295,15 +298,15 @@ ahci_port::fill_prd_v(kiovec* iov, int iov_cnt)
     nbytes += iov[slot].iov_len;
   }
 
-  portpage->cmdh.prdtl = iov_cnt;
+  portpage->cmdh[cmdslot].prdtl = iov_cnt;
   return nbytes;
 }
 
 u64
-ahci_port::fill_prd(void* addr, u64 nbytes)
+ahci_port::fill_prd(int cmdslot, void* addr, u64 nbytes)
 {
   kiovec iov = { addr, nbytes };
-  return fill_prd_v(&iov, 1);
+  return fill_prd_v(cmdslot, &iov, 1);
 }
 
 static void
@@ -328,10 +331,10 @@ print_fis(sata_fis_reg *r)
 }
 
 void
-ahci_port::fill_fis(sata_fis_reg* fis)
+ahci_port::fill_fis(int cmdslot, sata_fis_reg* fis)
 {
-  memcpy((void*) &portpage->cmdt.cfis[0], fis, sizeof(*fis));
-  portpage->cmdh.flags = sizeof(*fis) / sizeof(u32);
+  memcpy((void*) &portpage->cmdt[cmdslot].cfis[0], fis, sizeof(*fis));
+  portpage->cmdh[cmdslot].flags = sizeof(*fis) / sizeof(u32);
   if (fis_debug)
     print_fis(fis);
 }
@@ -398,7 +401,7 @@ void
 ahci_port::readv(kiovec* iov, int iov_cnt, u64 off)
 {
   scoped_io x(this);
-  issue(iov, iov_cnt, off, IDE_CMD_READ_DMA_EXT);
+  issue(0, iov, iov_cnt, off, IDE_CMD_READ_DMA_EXT);
   io_wait();
 }
 
@@ -406,7 +409,7 @@ void
 ahci_port::writev(kiovec* iov, int iov_cnt, u64 off)
 {
   scoped_io x(this);
-  issue(iov, iov_cnt, off, IDE_CMD_WRITE_DMA_EXT);
+  issue(0, iov, iov_cnt, off, IDE_CMD_WRITE_DMA_EXT);
   io_wait();
 }
 
@@ -414,12 +417,12 @@ void
 ahci_port::flush()
 {
   scoped_io x(this);
-  issue(nullptr, 0, 0, IDE_CMD_FLUSH_CACHE);
+  issue(0, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE);
   io_wait();
 }
 
 void
-ahci_port::issue(kiovec* iov, int iov_cnt, u64 off, int cmd)
+ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
 {
   assert((off % 512) == 0);
 
@@ -429,7 +432,7 @@ ahci_port::issue(kiovec* iov, int iov_cnt, u64 off, int cmd)
   fis.cflag = SATA_FIS_REG_CFLAG;
   fis.command = cmd;
 
-  u64 len = fill_prd_v(iov, iov_cnt);
+  u64 len = fill_prd_v(cmdslot, iov, iov_cnt);
   assert((len % 512) == 0);
   assert(len <= DISK_REQMAX);
 
@@ -448,15 +451,15 @@ ahci_port::issue(kiovec* iov, int iov_cnt, u64 off, int cmd)
     fis.lba_5 = (sector_off >> 40) & 0xff;
 
     if (cmd == IDE_CMD_READ_DMA_EXT) {
-      portpage->cmdh.prdbc = 0;
+      portpage->cmdh[cmdslot].prdbc = 0;
     }
 
     if (cmd == IDE_CMD_WRITE_DMA_EXT) {
-      portpage->cmdh.flags |= AHCI_CMD_FLAGS_WRITE;
-      portpage->cmdh.prdbc = len;
+      portpage->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
+      portpage->cmdh[cmdslot].prdbc = len;
     }
   }
 
-  fill_fis(&fis);
-  preg->ci |= 1;
+  fill_fis(cmdslot, &fis);
+  preg->ci |= (1 << cmdslot);
 }

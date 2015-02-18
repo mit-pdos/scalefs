@@ -20,6 +20,8 @@ struct ahci_reg_global {
   u32 bohc;		/* BIOS/OS handoff control and status */
 };
 
+#define AHCI_CAP_NCS_SHIFT      8
+#define AHCI_CAP_NCS_MASK       0x1f
 #define AHCI_GHC_AE		(1 << 31)
 #define AHCI_GHC_IE		(1 << 1)
 #define AHCI_GHC_HR		(1 << 0)
