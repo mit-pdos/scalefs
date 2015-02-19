@@ -157,6 +157,7 @@ namespace oplog {
           assert(cur_obj == this);
           flush_logger(&way->logger_);
           cpus_.atomic_reset(cpu);
+          way->obj_.store(nullptr, std::memory_order_relaxed);
           any = true;
         }
         if (!any)
@@ -363,6 +364,7 @@ namespace oplog {
           assert(cur_obj == this);
           way->logger_.reset();
           cpus_.atomic_reset(cpu);
+          way->obj_.store(nullptr, std::memory_order_relaxed);
           any = true;
         }
         if (!any)
