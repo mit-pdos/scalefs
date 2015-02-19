@@ -1,5 +1,8 @@
 #pragma once
 
+#include "spinlock.hh"
+#include "condvar.hh"
+
 // IDE supports at most a 64K DMA request
 #define DISK_REQMAX     65536
 
@@ -7,6 +10,35 @@ struct kiovec
 {
   void *iov_base;
   u64 iov_len;
+};
+
+class disk_completion : public referenced
+{
+public:
+  disk_completion() : done_(false) {}
+  NEW_DELETE_OPS(disk_completion);
+
+  void notify() {
+    scoped_acquire a(&lock_);
+    done_ = true;
+    cv_.wake_all();
+  }
+
+  void wait() {
+    scoped_acquire a(&lock_);
+    while (!done_)
+      cv_.sleep(&lock_);
+  }
+
+  bool done() {
+    scoped_acquire a(&lock_);
+    return done_;
+  }
+
+private:
+  spinlock lock_;
+  condvar cv_;
+  bool done_;
 };
 
 class disk
@@ -25,6 +57,12 @@ public:
   virtual void readv(kiovec *iov, int iov_cnt, u64 off) = 0;
   virtual void writev(kiovec *iov, int iov_cnt, u64 off) = 0;
   virtual void flush() = 0;
+
+  virtual void areadv(kiovec *iov, int iov_cnt, u64 off,
+                      sref<disk_completion> dc) = 0;
+  virtual void awritev(kiovec *iov, int iov_cnt, u64 off,
+                      sref<disk_completion> dc) = 0;
+  virtual void aflush(sref<disk_completion> dc) = 0;
 
   void read(char* buf, u64 nbytes, u64 off) {
     kiovec iov = { (void*) buf, nbytes };

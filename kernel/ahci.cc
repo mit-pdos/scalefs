@@ -33,8 +33,14 @@ public:
   void readv(kiovec *iov, int iov_cnt, u64 off) override;
   void writev(kiovec *iov, int iov_cnt, u64 off) override;
   void flush() override;
+
+  void areadv(kiovec *iov, int iov_cnt, u64 off,
+              sref<disk_completion> dc) override;
+  void awritev(kiovec *iov, int iov_cnt, u64 off,
+              sref<disk_completion> dc) override;
+  void aflush(sref<disk_completion> dc) override;
+
   void handle_port_irq();
-  void handle_port_irq_locked();
 
   NEW_DELETE_OPS(ahci_port);
 
@@ -54,34 +60,18 @@ private:
   void issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd);
 
   // For the disk read/write interface..
-  spinlock io_lock;
-  condvar io_cv;
-  bool io_busy;
-  bool io_done;
+  spinlock cmdslot_alloc_lock;
+  condvar cmdslot_alloc_cv;
+  sref<disk_completion> cmdslot_dc[32];
 
-  class scoped_io : scoped_acquire {
-  public:
-    scoped_io(ahci_port* pp) : scoped_acquire(&pp->io_lock), p(pp) {
-      while (p->io_busy)
-        p->io_cv.sleep(&p->io_lock);
-      p->io_busy = true;
-      p->io_done = false;
-    }
+  int alloc_cmdslot(sref<disk_completion> dc);
 
-    ~scoped_io() {
-      p->io_busy = false;
-    }
-
-  private:
-    ahci_port* p;
-  };
-
-  void io_wait() {
-    while (!io_done) {
+  void blocking_wait(sref<disk_completion> dc) {
+    while (!dc->done()) {
       if (myproc()->get_state() == RUNNING) {
-        io_cv.sleep(&io_lock);
+        dc->wait();
       } else {
-        handle_port_irq_locked();
+        handle_port_irq();
       }
     }
   };
@@ -175,7 +165,7 @@ ahci_hba::handle_irq()
 
 
 ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
-  : hba(h), pid(p), preg(reg), io_busy(false)
+  : hba(h), pid(p), preg(reg)
 {
   portpage = (ahci_port_page*) kalloc("ahci_port_page");
   assert(portpage);
@@ -231,7 +221,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 
   fill_prd(0, &id_buf, sizeof(id_buf));
   fill_fis(0, &fis);
-  preg->ci |= 1;
+  preg->ci = 1;
 
   if (wait() < 0) {
     cprintf("AHCI: port %d: cannot identify\n", pid);
@@ -262,7 +252,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 
   fill_prd(0, 0, 0);
   fill_fis(0, &fis);
-  preg->ci |= 1;
+  preg->ci = 1;
 
   if (wait() < 0) {
     cprintf("AHCI: port %d: cannot enable write caching\n", pid);
@@ -271,7 +261,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 
   fis.features = IDE_FEATURE_RLA_ENA;
   fill_fis(0, &fis);
-  preg->ci |= 1;
+  preg->ci = 1;
 
   if (wait() < 0) {
     cprintf("AHCI: port %d: cannot enable read lookahead\n", pid);
@@ -282,6 +272,23 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   preg->ie = AHCI_PORT_INTR_DHRE;
 
   disk_register(this);
+}
+
+int
+ahci_port::alloc_cmdslot(sref<disk_completion> dc)
+{
+  scoped_acquire a(&cmdslot_alloc_lock);
+
+  for (;;) {
+    for (int cmdslot = 0; cmdslot < hba->ncs; cmdslot++) {
+      if (!cmdslot_dc[cmdslot]) {
+        cmdslot_dc[cmdslot] = dc;
+        return cmdslot;
+      }
+    }
+
+    cmdslot_alloc_cv.sleep(&cmdslot_alloc_lock);
+  }
 }
 
 u64
@@ -376,23 +383,19 @@ ahci_port::wait()
 void
 ahci_port::handle_port_irq()
 {
-  scoped_acquire x(&io_lock);
+  scoped_acquire a(&cmdslot_alloc_lock);
 
-  preg->is = ~0;
-  handle_port_irq_locked();
-}
+  for (int cmdslot = 0; cmdslot < 32; cmdslot++) {
+    if (cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot))) {
+      cmdslot_dc[cmdslot]->notify();
+      cmdslot_dc[cmdslot].reset();
+      cmdslot_alloc_cv.wake_all();
 
-void
-ahci_port::handle_port_irq_locked()
-{
-  if (io_busy && !io_done && !(preg->ci & 1)) {
-    io_done = true;
-    io_cv.wake_all();
-
-    u32 tfd = preg->tfd;
-    if (AHCI_PORT_TFD_STAT(tfd) & (IDE_STAT_ERR | IDE_STAT_DF)) {
-      cprintf("AHCI: port %d: status %02x, err %02x\n",
-              pid, AHCI_PORT_TFD_STAT(tfd), AHCI_PORT_TFD_ERR(tfd));
+      u32 tfd = preg->tfd;
+      if (AHCI_PORT_TFD_STAT(tfd) & (IDE_STAT_ERR | IDE_STAT_DF)) {
+        cprintf("AHCI: port %d: status %02x, err %02x\n",
+                pid, AHCI_PORT_TFD_STAT(tfd), AHCI_PORT_TFD_ERR(tfd));
+      }
     }
   }
 }
@@ -400,25 +403,48 @@ ahci_port::handle_port_irq_locked()
 void
 ahci_port::readv(kiovec* iov, int iov_cnt, u64 off)
 {
-  scoped_io x(this);
-  issue(0, iov, iov_cnt, off, IDE_CMD_READ_DMA_EXT);
-  io_wait();
+  auto dc = sref<disk_completion>::transfer(new disk_completion());
+  areadv(iov, iov_cnt, off, dc);
+  blocking_wait(dc);
+}
+
+void
+ahci_port::areadv(kiovec* iov, int iov_cnt, u64 off,
+                  sref<disk_completion> dc)
+{
+  int cmdslot = alloc_cmdslot(dc);
+  issue(cmdslot, iov, iov_cnt, off, IDE_CMD_READ_DMA_EXT);
 }
 
 void
 ahci_port::writev(kiovec* iov, int iov_cnt, u64 off)
 {
-  scoped_io x(this);
-  issue(0, iov, iov_cnt, off, IDE_CMD_WRITE_DMA_EXT);
-  io_wait();
+  auto dc = sref<disk_completion>::transfer(new disk_completion());
+  awritev(iov, iov_cnt, off, dc);
+  blocking_wait(dc);
+}
+
+void
+ahci_port::awritev(kiovec* iov, int iov_cnt, u64 off,
+                   sref<disk_completion> dc)
+{
+  int cmdslot = alloc_cmdslot(dc);
+  issue(cmdslot, iov, iov_cnt, off, IDE_CMD_WRITE_DMA_EXT);
 }
 
 void
 ahci_port::flush()
 {
-  scoped_io x(this);
-  issue(0, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE);
-  io_wait();
+  auto dc = sref<disk_completion>::transfer(new disk_completion());
+  aflush(dc);
+  blocking_wait(dc);
+}
+
+void
+ahci_port::aflush(sref<disk_completion> dc)
+{
+  int cmdslot = alloc_cmdslot(dc);
+  issue(cmdslot, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE);
 }
 
 void
@@ -461,5 +487,5 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
   }
 
   fill_fis(cmdslot, &fis);
-  preg->ci |= (1 << cmdslot);
+  preg->ci = (1 << cmdslot);
 }
