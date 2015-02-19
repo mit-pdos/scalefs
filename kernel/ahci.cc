@@ -350,6 +350,8 @@ void
 ahci_port::dump()
 {
   cprintf("AHCI port %d dump:\n", pid);
+  cprintf("PxIS     = 0x%x\n", preg->is);
+  cprintf("PxIE     = 0x%x\n", preg->ie);
   cprintf("PxCMD    = 0x%x\n", preg->cmd);
   cprintf("PxTFD    = 0x%x\n", preg->tfd);
   cprintf("PxSIG    = 0x%x\n", preg->sig);
@@ -384,6 +386,8 @@ void
 ahci_port::handle_port_irq()
 {
   scoped_acquire a(&cmdslot_alloc_lock);
+
+  preg->is = ~0;
 
   for (int cmdslot = 0; cmdslot < 32; cmdslot++) {
     if (cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot))) {
