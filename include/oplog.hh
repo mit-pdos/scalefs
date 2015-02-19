@@ -362,6 +362,7 @@ namespace oplog {
           auto cur_obj = way->obj_.load(std::memory_order_relaxed);
           assert(cur_obj == this);
           way->logger_.reset();
+          cpus_.atomic_reset(cpu);
           any = true;
         }
         if (!any)
