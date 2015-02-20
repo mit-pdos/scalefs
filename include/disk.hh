@@ -59,10 +59,19 @@ public:
   virtual void flush() = 0;
 
   virtual void areadv(kiovec *iov, int iov_cnt, u64 off,
-                      sref<disk_completion> dc) = 0;
+                      sref<disk_completion> dc) {
+    readv(iov, iov_cnt, off);
+    dc->notify();
+  }
   virtual void awritev(kiovec *iov, int iov_cnt, u64 off,
-                      sref<disk_completion> dc) = 0;
-  virtual void aflush(sref<disk_completion> dc) = 0;
+                      sref<disk_completion> dc) {
+    writev(iov, iov_cnt, off);
+    dc->notify();
+  }
+  virtual void aflush(sref<disk_completion> dc) {
+    flush();
+    dc->notify();
+  }
 
   void read(char* buf, u64 nbytes, u64 off) {
     kiovec iov = { (void*) buf, nbytes };
