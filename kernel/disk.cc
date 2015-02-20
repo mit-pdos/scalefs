@@ -54,8 +54,6 @@ sys_disktest(void)
   disk_test_all();
 }
 
-#if AHCIIDE
-
 // compat for a single IDE disk..
 void
 ideread(u32 dev, char* data, u64 count, u64 offset)
@@ -71,7 +69,8 @@ idewrite(u32 dev, const char* data, u64 count, u64 offset)
   disks[0]->write(data, count, offset);
 }
 
+#if AHCIIDE
+
 void initdisk() {}
-void ideintr() {}
 
 #endif

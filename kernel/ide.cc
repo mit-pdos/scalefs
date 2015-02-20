@@ -6,6 +6,7 @@
 #include "spinlock.hh"
 #include "amd64.h"
 #include "traps.h"
+#include "disk.hh"
 
 #define IDE_BSY       0x80
 #define IDE_DRDY      0x40
@@ -15,7 +16,7 @@
 #define IDE_CMD_READ  0x20
 #define IDE_CMD_WRITE 0x30
 
-#define BSIZE 512
+#define IDEBSIZE 512
 #if !MEMIDE && !AHCIIDE
 
 static struct spinlock idelock;
@@ -34,6 +35,65 @@ idewait(int checkerr)
   return 0;
 }
 
+static void
+ide_select(u32 dev, u64 count, u64 offset)
+{
+  assert(offset % IDEBSIZE == 0);
+  assert(count > 0);
+  assert(count % IDEBSIZE == 0);
+  assert(count / IDEBSIZE < 256);
+
+  u64 sector = offset / IDEBSIZE;
+  idewait(0);
+  outb(0x3f6, 0);  // generate interrupt
+  outb(0x1f2, count / IDEBSIZE);  // number of sectors
+  outb(0x1f3, sector & 0xff);
+  outb(0x1f4, (sector >> 8) & 0xff);
+  outb(0x1f5, (sector >> 16) & 0xff);
+  outb(0x1f6, 0xe0 | (dev<<4) | ((sector>>24)&0x0f));
+}
+
+class ide : public disk
+{
+public:
+  ide() : dev_(1) {}
+
+  void readv(kiovec *iov, int iov_cnt, u64 off) override
+  {
+    assert(havedisk1);
+    assert(iov_cnt == 1);
+    scoped_acquire l(&idelock);
+
+    ide_select(dev_, iov[0].iov_len, off);
+    outb(0x1f7, IDE_CMD_READ);
+
+    assert(idewait(1) >= 0);
+    insl(0x1f0, iov[0].iov_base, iov[0].iov_len/4);
+  }
+
+  void writev(kiovec *iov, int iov_cnt, u64 off) override
+  {
+    assert(havedisk1);
+    assert(iov_cnt == 1);
+    scoped_acquire l(&idelock);
+
+    ide_select(dev_, iov[0].iov_len, off);
+    outb(0x1f7, IDE_CMD_WRITE);
+    outsl(0x1f0, iov[0].iov_base, iov[0].iov_len/4);
+
+    assert(idewait(1) >= 0);
+  }
+
+  void flush() override
+  {
+  }
+
+private:
+  int dev_;
+};
+
+static ide the_ide_disk;
+
 void
 initdisk(void)
 {
@@ -50,57 +110,13 @@ initdisk(void)
 
   // Switch back to disk 0.
   outb(0x1f6, 0xe0 | (0<<4));
+
+  disk_register(&the_ide_disk);
 }
 
-static void
-ide_select(u32 dev, u64 count, u64 offset)
-{
-  assert(offset % BSIZE == 0);
-  assert(count > 0);
-  assert(count % BSIZE == 0);
-  assert(count / BSIZE < 256);
-
-  u64 sector = offset / BSIZE;
-  idewait(0);
-  outb(0x3f6, 0);  // generate interrupt
-  outb(0x1f2, count / BSIZE);  // number of sectors
-  outb(0x1f3, sector & 0xff);
-  outb(0x1f4, (sector >> 8) & 0xff);
-  outb(0x1f5, (sector >> 16) & 0xff);
-  outb(0x1f6, 0xe0 | (dev<<4) | ((sector>>24)&0x0f));
-}
-
-void
-ideread(u32 dev, char* data, u64 count, u64 offset)
-{
-  assert(dev == 1);
-  assert(havedisk1);
-  scoped_acquire l(&idelock);
-
-  ide_select(dev, count, offset);
-  outb(0x1f7, IDE_CMD_READ);
-
-  assert(idewait(1) >= 0);
-  insl(0x1f0, data, count/4);
-}
-
-void
-idewrite(u32 dev, const char* data, u64 count, u64 offset)
-{
-  assert(dev == 1);
-  assert(havedisk1);
-  scoped_acquire l(&idelock);
-
-  ide_select(dev, count, offset);
-  outb(0x1f7, IDE_CMD_WRITE);
-  outsl(0x1f0, data, count/4);
-
-  assert(idewait(1) >= 0);
-}
+#endif
 
 void
 ideintr(void)
 {
 }
-
-#endif
