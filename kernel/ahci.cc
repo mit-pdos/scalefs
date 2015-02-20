@@ -14,6 +14,13 @@
 
 enum { fis_debug = 0 };
 
+static struct {
+  char model[40];
+  char serial[20];
+} allowed_disks[] = {
+  { "QEMU HARDDISK                          ", "QM00005            " },
+};
+
 class ahci_hba;
 
 struct ahci_port_page
@@ -166,6 +173,17 @@ ahci_hba::handle_irq()
 }
 
 
+static void
+ata_byteswap(char* buf, u64 len)
+{
+  for (u64 i = 0; i < len; i += 2) {
+    char c = buf[i];
+    buf[i] = buf[i+1];
+    buf[i+1] = c;
+  }
+}
+
+
 ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   : hba(h), pid(p), preg(reg)
 {
@@ -237,13 +255,33 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 
   u64 sectors = id_buf.id.lba48_sectors;
   dk_nbytes = sectors * 512;
+
   memcpy(dk_model, id_buf.id.model, sizeof(id_buf.id.model));
+  ata_byteswap(dk_model, sizeof(dk_model));
   dk_model[sizeof(dk_model) - 1] = '\0';
+
   memcpy(dk_serial, id_buf.id.serial, sizeof(id_buf.id.serial));
+  ata_byteswap(dk_serial, sizeof(dk_serial));
   dk_serial[sizeof(dk_serial) - 1] = '\0';
+
   memcpy(dk_firmware, id_buf.id.firmware, sizeof(id_buf.id.firmware));
+  ata_byteswap(dk_firmware, sizeof(dk_firmware));
   dk_firmware[sizeof(dk_firmware) - 1] = '\0';
+
   snprintf(dk_busloc, sizeof(dk_busloc), "ahci.%d", pid);
+
+  bool disk_allowed = false;
+  for (int i = 0; i < sizeof(allowed_disks) / sizeof(allowed_disks[0]); i++) {
+    if (!strcmp(dk_model,  allowed_disks[i].model) &&
+        !strcmp(dk_serial, allowed_disks[i].serial))
+      disk_allowed = true;
+  }
+
+  if (!disk_allowed) {
+    cprintf("%s: disallowed AHCI disk: <%s> <%s>\n",
+            dk_busloc, dk_model, dk_serial);
+    return;
+  }
 
   /* Enable write-caching, read look-ahead */
   memset(&fis, 0, sizeof(fis));

@@ -9,8 +9,8 @@ static static_vector<disk*, 64> disks;
 void
 disk_register(disk* d)
 {
-  cprintf("disk_register: %s: %ld bytes: %s\n",
-          d->dk_busloc, d->dk_nbytes, d->dk_model);
+  cprintf("disk_register: %s: %ld bytes: %s %s\n",
+          d->dk_busloc, d->dk_nbytes, d->dk_model, d->dk_serial);
   disks.push_back(d);
 }
 
