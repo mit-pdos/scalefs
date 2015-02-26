@@ -1,5 +1,5 @@
 /*
- * largefile.c
+ * lfs-largefile.c
  *
  * Implementation of the test described in Figure 9 of Rosenblum's LFS paper
  * ("The Design and Implementation of a Log-Structured File System", 13th
@@ -20,7 +20,7 @@
  * random?  My first implementation used the latter, this uses the former.
  *
  * Usage:
- *      largefile [-f file_size] [-i IO_size] [-s seed] dirname
+ *      lfs-largefile [-f file_size] [-i IO_size] [-s seed] dirname
  *
  * The test creates a test file in dirname.  file_size specifies the size
  * of the file in megabytes (defaults to 100).  IO_size specifies the size
@@ -42,11 +42,17 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "ASSERT.h"
+#include "user.h"
+
+typedef unsigned long u_long;
 
 void usage();
 int seq_read(), seq_write(), rand_read(), rand_write();
+int fileRead(int fd, void *buf, size_t n);
+int fileWrite(int fd, const void *buf, size_t n);
 
 int timer_overhead;		/* Overhead of invoking timer */
 
@@ -62,6 +68,7 @@ char *argv[];
     extern char *optarg;
     extern int optind;
     char *fileName;		/* Name of test file */
+    int fileNameSize;		/* Size of fileName */
     struct timeval before;	/* Time stamps for measuring the overhead of */
     struct timeval after;	/*     the gettimeofday() call */
     struct timeval dummy;	/* Dummy for use in calibration */
@@ -77,7 +84,7 @@ char *argv[];
     fileSize = FILE_SIZE;
     ioSize = IO_SIZE;
     seed = getpid();
-    while ( ( ch = getopt ( argc, argv, "f:i:s:" ) ) != EOF ) {
+    while ( ( ch = getopt ( argc, argv, "f:i:s:" ) ) != -1 ) {
 	switch ( ch ) {
 	    case 'f':
 		fileSize = atoi ( optarg ) * ONE_MB;
@@ -105,17 +112,16 @@ char *argv[];
 	exit ( 1 );
     }
 
-    srandom ( seed );
+    srand ( seed );
 
-    fileName = malloc ( strlen ( argv[0] ) + strlen ( FILE_NAME ) + 2 );
+    fileNameSize = strlen ( argv[0] ) + strlen ( FILE_NAME ) + 2;
+    fileName = malloc ( fileNameSize );
     if ( fileName == NULL ) {
 	fprintf ( stderr, "Couldn't allocate memory for file name\n" );
-	perror ( "malloc() failed" );
+	die ( "malloc() failed" );
 	exit ( 1 );
     }
-    strcpy ( fileName, argv[0] );
-    strcat ( fileName, "/" );
-    strcat ( fileName, FILE_NAME );
+    snprintf ( fileName, fileNameSize, "%s%s%s", argv[0], "/", FILE_NAME );
 
     /*
      * Create the file
@@ -123,7 +129,7 @@ char *argv[];
     fd = open ( fileName, O_CREAT | O_TRUNC | O_RDWR, 0666 );
     if ( fd == -1 ) {
 	fprintf ( stderr, "Couldn't create file %s\n", fileName );
-	perror ( "open() failed" );
+	die ( "open() failed" );
 	exit ( 1 );
     }
     unlink ( fileName );
@@ -147,9 +153,8 @@ char *argv[];
      */
     printf ( "\n\n\n" );
     fflush ( stdout );
-    system ( "date" );
     printf ( "Running largefile test on %s\n", argv[0] );
-    printf ( "File Size = %d bytes\n", fileSize );
+    printf ( "File Size = %ld bytes\n", fileSize );
     printf ( "IO Size = %d bytes\n\n", ioSize );
     printf ( "Test		Time(sec)	KB/sec\n" );
     printf ( "----		---------	------\n" );
@@ -213,7 +218,7 @@ int ioSize;				/* # of bytes per I/O operation */
     buffer = malloc ( ioSize );
     if ( buffer == NULL ) {
 	fprintf ( stderr, "seq_write() couldn't allocate I/O buffer\n" );
-	perror ( "malloc() failed" );
+	die ( "malloc() failed" );
 	exit ( 1 );
     }
 
@@ -232,7 +237,7 @@ int ioSize;				/* # of bytes per I/O operation */
     rval = lseek ( fd, 0, SEEK_SET );
     if ( rval == -1 ) {
 	fprintf ( stderr, "Couldn't seek to beginning of file\n" );
-	perror ( "lseek() failed" );
+	die ( "lseek() failed" );
 	exit ( 1 );
     }
 
@@ -251,11 +256,11 @@ int ioSize;				/* # of bytes per I/O operation */
 	    amt = fileSize - ioCount;
 	}
 
-	rval = write ( fd, buffer, amt );
+	rval = fileWrite ( fd, buffer, amt );
 
 	if ( rval == -1 ) {
 	    fprintf ( stderr, "Error in seq_write()\n" );
-	    perror ( "write() failed" );
+	    die ( "write() failed" );
 	    exit ( 1 );
 	} else if ( rval != amt ) {
 	    fprintf ( stderr, "Short write in seq_write().  %d bytes\n", rval );
@@ -294,7 +299,7 @@ int ioSize;				/* # of bytes per I/O operation */
     buffer = malloc ( ioSize );
     if ( buffer == NULL ) {
 	fprintf ( stderr, "seq_read() couldn't allocate I/O buffer\n" );
-	perror ( "malloc() failed" );
+	die ( "malloc() failed" );
 	exit ( 1 );
     }
 
@@ -304,7 +309,7 @@ int ioSize;				/* # of bytes per I/O operation */
     rval = lseek ( fd, 0, SEEK_SET );
     if ( rval == -1 ) {
 	fprintf ( stderr, "Couldn't seek to beginning of file\n" );
-	perror ( "lseek() failed" );
+	die ( "lseek() failed" );
 	exit ( 1 );
     }
 
@@ -323,11 +328,11 @@ int ioSize;				/* # of bytes per I/O operation */
 	    amt = fileSize - ioCount;
 	}
 
-	rval = read ( fd, buffer, amt );
+	rval = fileRead ( fd, buffer, amt );
 
 	if ( rval == -1 ) {
 	    fprintf ( stderr, "Error in seq_read()\n" );
-	    perror ( "read() failed" );
+	    die ( "read() failed" );
 	    exit ( 1 );
 	} else if ( rval != amt ) {
 	    fprintf ( stderr, "Short read in seq_read().  %d bytes\n", rval );
@@ -373,7 +378,7 @@ int ioSize;				/* # of bytes per I/O operation */
     buffer = malloc ( ioSize );
     if ( buffer == NULL ) {
 	fprintf ( stderr, "rand_write() couldn't allocate I/O buffer\n" );
-	perror ( "malloc() failed" );
+	die ( "malloc() failed" );
 	exit ( 1 );
     }
 
@@ -400,7 +405,7 @@ int ioSize;				/* # of bytes per I/O operation */
     seekArray = calloc ( nLocs, sizeof ( char ) );
     seekOrder = malloc ( nLocs * sizeof ( int ) );
     for ( i = nLocs;  i > 0;  i-- ) {
-	seekLocation = random() % i;
+	seekLocation = rand() % i;
 	for ( j = 0;  seekArray[j] == 1  ||  seekLocation > 0 ; j++ ) {
 	    if ( seekArray[j] == 0 ) {
 		seekLocation--;
@@ -428,7 +433,7 @@ int ioSize;				/* # of bytes per I/O operation */
 	seekLocation++;
 	if ( rval == -1 ) {
 	    fprintf ( stderr, "Error in rand_write()\n" );
-	    perror ( "lseek() failed" );
+	    die ( "lseek() failed" );
 	    exit ( 1 );
 	}
 
@@ -438,10 +443,10 @@ int ioSize;				/* # of bytes per I/O operation */
 	    amt = fileSize - ioCount;
 	}
 
-	rval = write ( fd, buffer, amt );
+	rval = fileWrite ( fd, buffer, amt );
 	if ( rval == -1 ) {
 	    fprintf ( stderr, "Error in rand_write()\n" );
-	    perror ( "write() failed" );
+	    die ( "write() failed" );
 	    exit ( 1 );
 	} else if ( rval != amt ) {
 	    fprintf ( stderr, "Short write in rand_write().  %d bytes\n", rval );
@@ -488,7 +493,7 @@ int ioSize;				/* # of bytes per I/O operation */
     buffer = malloc ( ioSize );
     if ( buffer == NULL ) {
 	fprintf ( stderr, "rand_read() couldn't allocate I/O buffer\n" );
-	perror ( "malloc() failed" );
+	die ( "malloc() failed" );
 	exit ( 1 );
     }
 
@@ -506,7 +511,7 @@ int ioSize;				/* # of bytes per I/O operation */
     seekArray = calloc ( nLocs, sizeof ( char ) );
     seekOrder = malloc ( nLocs * sizeof ( int ) );
     for ( i = nLocs;  i > 0;  i-- ) {
-	seekLocation = random() % i;
+	seekLocation = rand() % i;
 	for ( j = 0;  seekArray[j] == 1  ||  seekLocation > 0 ; j++ ) {
 	    if ( seekArray[j] == 0 ) {
 		seekLocation--;
@@ -539,18 +544,18 @@ int ioSize;				/* # of bytes per I/O operation */
 	seekLocation++;
 	if ( rval == -1 ) {
 	    fprintf ( stderr, "Error in rand_read()\n" );
-	    perror ( "lseek() failed" );
+	    die ( "lseek() failed" );
 	    exit ( 1 );
 	}
 
 	/*
 	 * Do the read operation
 	 */
-	rval = read ( fd, buffer, amt );
+	rval = fileRead ( fd, buffer, amt );
 
 	if ( rval == -1 ) {
 	    fprintf ( stderr, "Error in seq_read()\n" );
-	    perror ( "read() failed" );
+	    die ( "read() failed" );
 	    exit ( 1 );
 	} else if ( rval != amt ) {
 	    fprintf ( stderr, "Short read in seq_read().  %d bytes\n", rval );
@@ -564,8 +569,44 @@ int ioSize;				/* # of bytes per I/O operation */
     return ( time );
 }
 
+int
+fileRead(int fd, void *buf, size_t n)
+{
+    size_t pos = 0;
+    while (pos < n) {
+        int r = read(fd, (char*)buf + pos, n - pos);
+	if (r < 0)
+            fprintf(stderr, "fileRead: failed %d\n", r);
+	if (r == 0)
+            break;
+        pos += r;
+    }
+
+    return pos;
+}
+
+int
+fileWrite(int fd, const void *buf, size_t n)
+{
+    int r, total = 0;
+
+    while (n) {
+        r = write(fd, buf, n);
+	if  (r < 0 || r == 0) {
+            fprintf(stderr, "fileWrite: failed %d\n", r);
+	    return -1;
+	}
+
+	buf = (char *) buf + r;
+	n -= r;
+	total += r;
+    }
+
+    return total;
+}
+
 void 
 usage()
 {
-    fprintf ( stderr, "Usage:  largefile [-s file_size] [-i IO_size] test_directory\n" );
+    fprintf ( stderr, "Usage:  lfs-largefile [-s file_size] [-i IO_size] test_directory\n" );
 }

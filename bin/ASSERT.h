@@ -50,7 +50,7 @@
 	if (!(expression)) { \
 		(void)fprintf(stderr, \
 		    "assertion \"%s\" failed: file \"%s\", line %d\n", \
-		    \"expression\", __FILE__, __LINE__); \
+		     expression, __FILE__, __LINE__); \
 		abort(); \
 	} \
 }
