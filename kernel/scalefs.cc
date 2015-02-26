@@ -18,6 +18,26 @@ mfs_interface::mfs_interface() {
   // XXX(rasha) Set up the physical journal file
 }
 
+void mfs_interface::free_inode(u64 mnode_inum, transaction *tr)
+{
+	sref<inode> ip = get_inode(mnode_inum, "free_inode");
+	ilock(ip, 1);
+
+	// Release the inode on the disk.
+	ip->type = 0;
+	assert(ip->nlink() == 0);
+	iupdate(ip, tr);
+
+	// Perform the last decrement of the refcount. This pairs with the
+	// extra increment that was done inside inode::init().
+	{
+	  auto w = ip->seq.write_begin();
+	  ip->dec();
+	}
+
+	iunlock(ip);
+}
+
 // Returns an sref to an inode if mnode_inum is mapped to one.
 sref<inode> mfs_interface::get_inode(u64 mnode_inum, const char *str) {
   u64 inum = 0;
@@ -221,12 +241,21 @@ void mfs_interface::unlink_old_inode(u64 mdir_inum, char* name, transaction *tr)
     dirunlink(i, name, target->inum, true);
   else
     dirunlink(i, name, target->inum, false);
-  if (!target->nlink()) {
-    ilock(target, 1);
-    itrunc(target, 0, tr);
-    iunlock(target);
+
+  // FIXME: The mfs delete transaction depends on hitting mnode::onzero()
+  // when its last open file descriptor gets closed. But inum_to_mnode holds
+  // an sref to the mnode, so it is unfortunate that we have to prematurely
+  // remove the mapping from inum_to_mnode, just to ensure that there is only
+  // one outstanding refcount to be dropped, at the time of the last close().
+  if (!target->nlink())
     inum_to_mnode->remove(target->inum);
-  }
+
+  // Even if the inode's link count drops to zero, we can't actually delete the
+  // inode and its file-contents at this point, because userspace might still
+  // have open files referring to this inode. We can delete it only after the
+  // link count drops to zero *and* all the open files referring to this
+  // inode have been closed. Hence, we postpone the delete until the mnode's
+  // refcount drops to zero (which satisfies both the above requirements).
 }
 
 // Deletes the inode and its file-contents from the disk.
@@ -238,6 +267,8 @@ mfs_interface::delete_old_inode(u64 mfile_inum, transaction *tr)
   ilock(ip, 1);
   itrunc(ip, 0, tr);
   iunlock(ip);
+
+  free_inode(mfile_inum, tr);
   mnode_to_inode->remove(mfile_inum);
 }
 

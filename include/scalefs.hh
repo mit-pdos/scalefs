@@ -317,6 +317,7 @@ class mfs_interface {
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
+    void free_inode(u64 mnode_inum, transaction *tr);
     // File functions
     u64 get_file_size(u64 mfile_inum);
     void update_file_size(u64 mfile_inum, u32 size, transaction *tr);
@@ -380,7 +381,6 @@ class mfs_interface {
     sref<mnode> load_dir_entry(u64 inum, sref<mnode> parent);
     sref<mnode> mnode_alloc(u64 inum, u8 mtype);
     sref<inode> get_inode(u64 mnode_inum, const char *str);
-
     // Mapping from disk inode numbers to the corresponding mnodes
     linearhash<u64, sref<mnode>> *inum_to_mnode;
     // Mapping from in-memory mnode numbers to disk inode numbers

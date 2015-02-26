@@ -699,6 +699,13 @@ inode::init(void)
 
   if (nlink_ > 0)
     inc();
+
+  // Perform another increment. This is decremented when the corresponding
+  // mnode's onzero() method is invoked. This is to help keep the inode
+  // around until all the open file descriptors of this file have been
+  // closed, even if that happens after unlink().
+  inc();
+
   valid = true;
 }
 

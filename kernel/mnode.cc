@@ -102,6 +102,21 @@ mnode::is_dirty()
 void
 mnode::onzero()
 {
+  // The mnode's refcount dropping to zero is a reliable indication that it
+  // is now safe to delete the inode and its file-contents (i.e., the link
+  // count is zero and no process has this file open). So add the corresponding
+  // delete operation to the MFS log.
+
+  // TODO: If the kernel crashes at this point (i.e., after the last unlink
+  // operation has been logged/applied, but before the corresponding delete
+  // operation has been logged), then we won't be able to reclaim the blocks
+  // belonging to this file upon reboot.
+
+  rootfs_interface->metadata_op_start(myid(), get_tsc());
+  mfs_operation *op = new mfs_operation_delete(rootfs_interface, get_tsc(), inum_);
+  rootfs_interface->add_to_metadata_log(op);
+  rootfs_interface->metadata_op_end(myid(), get_tsc());
+
   mnode_cache.cleanup(weakref_);
   kstats::inc(&kstats::mnode_free);
   delete this;
