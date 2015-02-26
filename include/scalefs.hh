@@ -14,6 +14,7 @@ class mfs_operation;
 class mfs_operation_create;
 class mfs_operation_link;
 class mfs_operation_unlink;
+class mfs_operation_delete;
 class mfs_operation_rename;
 class mfs_logical_log;
 typedef std::vector<mfs_operation*> mfs_operation_vec;
@@ -335,6 +336,7 @@ class mfs_interface {
           u8 type, transaction *tr);
     void update_dir_inode(u64 mdir_inum, transaction *tr);
     void unlink_old_inode(u64 mdir_inum, char* name, transaction *tr);
+    void delete_old_inode(u64 mfile_inum, transaction *tr);
 
     void create_mapping(u64 mnode, u64 inode);
     bool inode_lookup(u64 mnode, u64 *inum);
@@ -364,6 +366,7 @@ class mfs_interface {
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
+    void mfs_delete(mfs_operation_delete *op, transaction *tr);
     void mfs_rename(mfs_operation_rename *op, transaction *tr);
 
     // Block free bit vector functions
@@ -596,6 +599,46 @@ class mfs_operation_unlink: public mfs_operation {
     u64 mnode;        // mnode number of the file/directory to be unlinked
     u64 parent;       // mnode number of the parent directory
     char *name;       // name of the file/directory
+};
+
+// This operation is used to delete an inode and its file-contents, when its
+// last link has been removed and its last open file descriptor has been closed.
+// Called when the corresponding mnode's reference count drops to zero (which
+// indicates that both the above conditions are true).
+class mfs_operation_delete: public mfs_operation
+{
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_delete);
+
+    mfs_operation_delete(mfs_interface *p, u64 t, u64 mn)
+      : mfs_operation(p, t), mnode(mn) { }
+
+    void apply(transaction *tr) override
+    {
+      parent_mfs->mfs_delete(this, tr);
+    }
+
+    bool check_dependency (std::vector<u64> &mnode_vec) override
+    {
+      return true;
+    }
+
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
+    {
+      return true;
+    }
+
+    void print()
+    {
+      cprintf("DELETE\n");
+      cprintf("Op Type : Delete\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Mnode: %ld\n", mnode);
+    }
+
+  private:
+    u64 mnode;        // mnode number of the file/directory to be deleted
 };
 
 class mfs_operation_rename: public mfs_operation {

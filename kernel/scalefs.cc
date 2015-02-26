@@ -229,6 +229,18 @@ void mfs_interface::unlink_old_inode(u64 mdir_inum, char* name, transaction *tr)
   }
 }
 
+// Deletes the inode and its file-contents from the disk.
+void
+mfs_interface::delete_old_inode(u64 mfile_inum, transaction *tr)
+{
+  sref<inode> ip = get_inode(mfile_inum, "delete_old_inode");
+
+  ilock(ip, 1);
+  itrunc(ip, 0, tr);
+  iunlock(ip);
+  mnode_to_inode->remove(mfile_inum);
+}
+
 // Calls a dir_flush on the directory.
 void mfs_interface::update_dir_inode(u64 mdir_inum, transaction *tr) {
   sref<inode> i = get_inode(mdir_inum, "update_dir_inode");
@@ -443,6 +455,15 @@ void mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr) {
   strcpy(str, op->name);
   unlink_old_inode(op->parent, str, tr);
   update_dir_inode(op->parent, tr);
+}
+
+// Delete operation
+void
+mfs_interface::mfs_delete(mfs_operation_delete *op, transaction *tr)
+{
+  scoped_gc_epoch e;
+
+  delete_old_inode(op->mnode, tr);
 }
 
 // Rename operation
