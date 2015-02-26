@@ -19,6 +19,7 @@ UPROGS_BIN= \
 	forkexecbench \
 	forktree \
 	lfs-largefile \
+	lfs-smallfile \
 	login \
 	ls \
 	mapbench \

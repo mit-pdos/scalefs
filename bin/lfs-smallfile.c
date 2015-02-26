@@ -5,6 +5,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include "user.h"
+
 #define NUMFILES	10000
 #define FILESIZE	1024
 
@@ -40,13 +42,13 @@ int main(int argc, char **argv)
 		snprintf(filename, FILESIZE, "%s/file-%d", dirname,  i);
 		fd = open(filename, O_WRONLY | O_CREAT | O_EXCL, S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 		if (fd == -1) {
-			perror("open");
+			die("open");
 			exit(1);
 		}
 
 		size = write(fd, buf, FILESIZE);
 		if (size == -1) {
-			perror("write");
+			die("write");
 			exit(1);
 		}
 
@@ -58,13 +60,13 @@ int main(int argc, char **argv)
 		snprintf(filename, FILESIZE, "%s/file-%d", dirname, i);
 		fd = open(filename, O_RDONLY);
 		if (fd == -1) {
-			perror("open");
+			die("open");
 			exit(1);
 		}
 
 		size = read(fd, buf, FILESIZE);
 		if (size == -1) {
-			perror("read");
+			die("read");
 			exit(1);
 		}
 
@@ -76,8 +78,10 @@ int main(int argc, char **argv)
 		snprintf(filename, FILESIZE, "%s/file-%d", dirname, i);
 		ret = unlink(filename);
 		if (ret == -1) {
-			perror("unlink");
+			die("unlink");
 			exit(1);
 		}
 	}
+
+	return 0;
 }
