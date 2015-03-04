@@ -84,6 +84,12 @@ char *argv[];
     fileSize = FILE_SIZE;
     ioSize = IO_SIZE;
     seed = getpid();
+
+    if (argc < 2) {
+        usage();
+	exit(1);
+    }
+
     while ( ( ch = getopt ( argc, argv, "f:i:s:" ) ) != -1 ) {
 	switch ( ch ) {
 	    case 'f':
