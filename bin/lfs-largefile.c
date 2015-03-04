@@ -31,7 +31,7 @@
 #define ONE_MB		(1024*ONE_KB)		/* One Megabyte */
 
 #define FILE_SIZE	(100*ONE_MB)		/* Default file size */
-#define IO_SIZE		(256*ONE_KB)		/* Default I/O transfer size */
+#define IO_SIZE		(4*ONE_KB)		/* Default I/O transfer size */
 #define FILE_NAME	"LargeTestFile"		/* Name of test file */
 #define NTEST		100000			/* Number of tests of */
 						/*    gettimeofday() */
