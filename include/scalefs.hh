@@ -21,7 +21,9 @@ typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
 typedef struct transaction_diskblock transaction_diskblock;
 
-static u64 get_timestamp() {
+static u64
+get_timestamp()
+{
   if (cpuid::features().rdtscp)
     return rdtscp();
   // cpuid + rdtsc combination (more expensive) is used as an alternative to
@@ -32,7 +34,8 @@ static u64 get_timestamp() {
 // A single disk block that was updated as the result of a transaction. All
 // diskblocks that were written to during the transaction are stored as a linked
 // list in the transaction object.
-struct transaction_diskblock {
+struct transaction_diskblock
+{
   u32 blocknum;           // The disk block number
   char *blockdata;        // Disk block contents
   u64 timestamp;          // Updates within a transaction should be written out
@@ -42,7 +45,8 @@ struct transaction_diskblock {
 
   NEW_DELETE_OPS(transaction_diskblock);
 
-  transaction_diskblock(u32 n, char buf[BSIZE]) {
+  transaction_diskblock(u32 n, char buf[BSIZE])
+  {
     blockdata = (char *) kmalloc(BSIZE, "transaction_diskblock");
     blocknum = n;
     memmove(blockdata, buf, BSIZE);
@@ -61,11 +65,13 @@ struct transaction_diskblock {
   transaction_diskblock& operator=(transaction_diskblock&& db) = default;
 
   // Write out the block contents to disk block # blocknum.
-  void writeback() {
+  void writeback()
+  {
     idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
   }
 
-  void writeback_through_bufcache() {
+  void writeback_through_bufcache()
+  {
     sref<buf> bp = buf::get(1, blocknum);
     {
       auto locked = bp->write();
@@ -78,7 +84,8 @@ struct transaction_diskblock {
 
 // A transaction represents all related updates that take place as the result of a
 // filesystem operation.
-class transaction {
+class transaction
+{
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
@@ -104,7 +111,8 @@ class transaction {
     // out the changes to disk.
     // Note: This API is for internal use only, so don't use it directly.
     // Use add_unique_block() instead.
-    void add_block(std::unique_ptr<transaction_diskblock> b) {
+    void add_block(std::unique_ptr<transaction_diskblock> b)
+    {
       auto l = write_lock.guard();
       blocks.push_back(std::move(b));
     }
@@ -152,17 +160,20 @@ class transaction {
     }
 
     // Add multiple disk blocks to a transaction.
-    void add_blocks(std::vector<std::unique_ptr<transaction_diskblock> > bvec) {
+    void add_blocks(std::vector<std::unique_ptr<transaction_diskblock> > bvec)
+    {
       auto l = write_lock.guard();
       for (auto &b : bvec)
         blocks.push_back(std::move(b));
     }
 
-    void add_allocated_block(u32 bno) {
+    void add_allocated_block(u32 bno)
+    {
       allocated_block_list.push_back(bno);
     }
 
-    void add_free_block(u32 bno) {
+    void add_free_block(u32 bno)
+    {
       free_block_list.push_back(bno);
     }
 
@@ -176,7 +187,8 @@ class transaction {
     }
 
     // Write the blocks in this transaction to disk. Used to write the journal.
-    void write_to_disk() {
+    void write_to_disk()
+    {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback();
     }
@@ -184,7 +196,8 @@ class transaction {
     // Writes the blocks in the transaction to disk, and updates the
     // corresponding bufcache entries too. Used on crash recovery to avoid
     // rebooting after the changes have been applied.
-    void write_to_disk_update_bufcache() {
+    void write_to_disk_update_bufcache()
+    {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback_through_bufcache();
     }
@@ -215,22 +228,26 @@ class transaction {
 
 // The "physical" journal is made up of transactions, which in turn are made up of
 // updated diskblocks.
-class journal {
+class journal
+{
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal() {
+    journal()
+    {
       current_off = 0;
       transaction_log = std::vector<transaction*>();
     }
 
-    ~journal() {
+    ~journal()
+    {
       for (auto it = transaction_log.begin(); it != transaction_log.end(); it++)
         delete (*it);
     }
 
     // Add a new transaction to the journal.
-    void add_transaction(transaction *tr) {
+    void add_transaction(transaction *tr)
+    {
       // File system operations are serialized at this lock. Is this really a
       // scalability hit, given that transactions are only added on a call to
       // fsync(). Is it reasonable to slow down during an fsync()?
@@ -238,19 +255,21 @@ class journal {
       transaction_log.push_back(tr);
     }
 
-    lock_guard<sleeplock> prepare_for_commit() {
+    lock_guard<sleeplock> prepare_for_commit()
+    {
       auto l = write_lock.guard();
-      
+
       // The transactions are present in the transaction log in the order in
       // which the metadata operations were applied. This corresponds to the
-      // correct linearization of the memfs operations. So the transactions are 
+      // correct linearization of the memfs operations. So the transactions are
       // logged in the correct order.
 
       return l;
     }
 
     // comparison function to order journal transactions in timestamp order
-    static bool compare_timestamp_tr(transaction *t1, transaction *t2) {
+    static bool compare_timestamp_tr(transaction *t1, transaction *t2)
+    {
       return (t1->timestamp_ < t2->timestamp_);
     }
 
@@ -270,7 +289,8 @@ class journal {
 // of the filesystem and the on-disk representation. It provides functions to
 // convert mnode operations to inode operations and vice versa. This also
 // functions as a container for the physical and logical logs.
-class mfs_interface {
+class mfs_interface
+{
   public:
 
     // Header used by each journal block
@@ -321,20 +341,20 @@ class mfs_interface {
     // File functions
     u64 get_file_size(u64 mfile_inum);
     void update_file_size(u64 mfile_inum, u32 size, transaction *tr);
-    void initialize_file(sref<mnode> m); 
+    void initialize_file(sref<mnode> m);
     int load_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes);
     int sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes,
-                              transaction *tr);
+                       transaction *tr);
     u64 create_file_if_new(u64 mfile_inum, u64 parent, u8 type, char *name,
-          transaction *tr, bool link_in_parent = true);
+                           transaction *tr, bool link_in_parent = true);
     void truncate_file(u64 mfile_inum, u32 offset, transaction *tr);
 
     // Directory functions
     void initialize_dir(sref<mnode> m);
-    u64 create_dir_if_new(u64 mdir_inum, u64 parent, u8 type, char *name, 
-          transaction *tr, bool link_in_parent = true);
+    u64 create_dir_if_new(u64 mdir_inum, u64 parent, u8 type, char *name,
+                          transaction *tr, bool link_in_parent = true);
     void create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum,
-          u8 type, transaction *tr);
+                                u8 type, transaction *tr);
     void update_dir_inode(u64 mdir_inum, transaction *tr);
     void unlink_old_inode(u64 mdir_inum, char* name, transaction *tr);
     void delete_old_inode(u64 mfile_inum, transaction *tr);
@@ -377,7 +397,7 @@ class mfs_interface {
     void print_free_blocks(print_stream *s);
 
   private:
-    void load_dir(sref<inode> i, sref<mnode> m); 
+    void load_dir(sref<inode> i, sref<mnode> m);
     sref<mnode> load_dir_entry(u64 inum, sref<mnode> parent);
     sref<mnode> mnode_alloc(u64 inum, u8 mtype);
     sref<inode> get_inode(u64 mnode_inum, const char *str);
@@ -385,7 +405,7 @@ class mfs_interface {
     linearhash<u64, sref<mnode>> *inum_to_mnode;
     // Mapping from in-memory mnode numbers to disk inode numbers
     linearhash<u64, u64> *mnode_to_inode;
-    
+
     journal *fs_journal;            // The phsyical journal
     mfs_logical_log *metadata_log;  // The logical log
     sref<inode> sv6_journal;
@@ -396,11 +416,13 @@ class mfs_interface {
     std::vector<free_bit> free_bit_vector;
 };
 
-class mfs_operation {
+class mfs_operation
+{
   public:
     NEW_DELETE_OPS(mfs_operation);
-  
-    mfs_operation(mfs_interface *p, u64 t): parent_mfs(p), timestamp(t) {
+
+    mfs_operation(mfs_interface *p, u64 t): parent_mfs(p), timestamp(t)
+    {
       assert(parent_mfs);
     }
 
@@ -421,27 +443,32 @@ class mfs_operation {
     const u64 timestamp;
 };
 
-class mfs_operation_create: public mfs_operation {
+class mfs_operation_create: public mfs_operation
+{
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(mfs_operation_create);
 
     mfs_operation_create(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[],
-      short m_type)
-    : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type) {
+                         short m_type)
+      : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type)
+    {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
     }
 
-    ~mfs_operation_create() {
+    ~mfs_operation_create()
+    {
       delete[] name;
     }
-    
-    void apply(transaction *tr) override {
+
+    void apply(transaction *tr) override
+    {
       parent_mfs->mfs_create(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override {
+    bool check_dependency (std::vector<u64> &mnode_vec) override
+    {
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
         if (*it == mnode) {
           for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
@@ -454,7 +481,8 @@ class mfs_operation_create: public mfs_operation {
       return false;
     }
 
-    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
+    {
       if (parent == pt) {
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
           if (*it == mnode)
@@ -465,7 +493,8 @@ class mfs_operation_create: public mfs_operation {
       return false;
     }
 
-    void print() {
+    void print()
+    {
       cprintf("CREATE\n");
       cprintf("Op Type : Create\n");
       cprintf("Timestamp: %ld\n", timestamp);
@@ -482,27 +511,32 @@ class mfs_operation_create: public mfs_operation {
     short mnode_type; // creation type for the new inode
 };
 
-class mfs_operation_link: public mfs_operation {
+class mfs_operation_link: public mfs_operation
+{
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(mfs_operation_link);
 
     mfs_operation_link(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[],
-      short m_type)
-    : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type) {
+                       short m_type)
+      : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type)
+    {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
     }
 
-    ~mfs_operation_link() {
+    ~mfs_operation_link()
+    {
       delete[] name;
     }
-    
-    void apply(transaction *tr) override {
+
+    void apply(transaction *tr) override
+    {
       parent_mfs->mfs_link(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override {
+    bool check_dependency (std::vector<u64> &mnode_vec) override
+    {
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
         if (*it == mnode) {
           for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
@@ -515,7 +549,8 @@ class mfs_operation_link: public mfs_operation {
       return false;
     }
 
-    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
+    {
       if (parent == pt) {
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
           if (*it == mnode)
@@ -526,7 +561,8 @@ class mfs_operation_link: public mfs_operation {
       return false;
     }
 
-    void print() {
+    void print()
+    {
       cprintf("LINK\n");
       cprintf("Op Type : Link\n");
       cprintf("Timestamp: %ld\n", timestamp);
@@ -543,26 +579,31 @@ class mfs_operation_link: public mfs_operation {
     short mnode_type; // type of the inode (file/dir)
 };
 
-class mfs_operation_unlink: public mfs_operation {
+class mfs_operation_unlink: public mfs_operation
+{
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(mfs_operation_unlink);
 
-    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mn, u32 pt, char nm[]) 
-    : mfs_operation(p, t), mnode(mn), parent(pt) {
+    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mn, u32 pt, char nm[])
+      : mfs_operation(p, t), mnode(mn), parent(pt)
+    {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
     }
 
-    ~mfs_operation_unlink() {
+    ~mfs_operation_unlink()
+    {
       delete[] name;
     }
-    
-    void apply(transaction *tr) override {
+
+    void apply(transaction *tr) override
+    {
       parent_mfs->mfs_unlink(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override {
+    bool check_dependency (std::vector<u64> &mnode_vec) override
+    {
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
         if (*it == mnode) {
           for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
@@ -575,7 +616,8 @@ class mfs_operation_unlink: public mfs_operation {
       return false;
     }
 
-    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
+    {
       if (parent == pt) {
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
           if (*it == mnode)
@@ -586,7 +628,8 @@ class mfs_operation_unlink: public mfs_operation {
       return false;
     }
 
-    void print() {
+    void print()
+    {
       cprintf("UNLINK\n");
       cprintf("Op Type : Unlink\n");
       cprintf("Timestamp: %ld\n", timestamp);
@@ -641,31 +684,36 @@ class mfs_operation_delete: public mfs_operation
     u64 mnode;        // mnode number of the file/directory to be deleted
 };
 
-class mfs_operation_rename: public mfs_operation {
+class mfs_operation_rename: public mfs_operation
+{
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(mfs_operation_rename);
 
     mfs_operation_rename(mfs_interface *p, u64 t, char oldnm[], u64 mn, u64 pt,
-      char newnm[], u64 newpt, u8 m_type)
-    : mfs_operation(p, t), mnode(mn), parent(pt), new_parent(newpt),
-      mnode_type(m_type) {
+                         char newnm[], u64 newpt, u8 m_type)
+      : mfs_operation(p, t), mnode(mn), parent(pt), new_parent(newpt),
+        mnode_type(m_type)
+    {
       name = new char[DIRSIZ];
       newname = new char[DIRSIZ];
       strncpy(name, oldnm, DIRSIZ);
       strncpy(newname, newnm, DIRSIZ);
     }
 
-    ~mfs_operation_rename() {
+    ~mfs_operation_rename()
+    {
       delete[] name;
       delete[] newname;
     }
 
-    void apply(transaction *tr) override {
+    void apply(transaction *tr) override
+    {
       parent_mfs->mfs_rename(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override {
+    bool check_dependency (std::vector<u64> &mnode_vec) override
+    {
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
         if (*it == mnode) {
           bool flag1 = false, flag2 = false;
@@ -685,7 +733,8 @@ class mfs_operation_rename: public mfs_operation {
       return false;
     }
 
-    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) {
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
+    {
       if (parent == pt || new_parent == pt) {
         bool is_parent = false;
         if (parent == pt)
@@ -723,7 +772,8 @@ class mfs_operation_rename: public mfs_operation {
       return false;
     }
 
-    void print() {
+    void print()
+    {
       cprintf("RENAME\n");
       cprintf("Op Type : Rename\n");
       cprintf("Timestamp: %ld\n", timestamp);
@@ -747,28 +797,37 @@ class mfs_operation_rename: public mfs_operation {
 // The "logical" log of metadata operations. These operations are applied on an fsync 
 // call so that any previous dependencies can be resolved before the mnode is fsynced.
 // The list of operations is oplog-maintained.
-class mfs_logical_log: public mfs_logged_object {
+class mfs_logical_log: public mfs_logged_object
+{
   friend mfs_interface;
 
   public:
     NEW_DELETE_OPS(mfs_logical_log);
-    ~mfs_logical_log() {
+    ~mfs_logical_log()
+    {
       for (auto it = operation_vec.begin(); it != operation_vec.end(); it++)
         delete (*it);
     }
-  
+
     // Oplog operation that implements adding a metadata operation to the log
     struct add_op {
-      add_op(mfs_logical_log *l, mfs_operation *op): parent(l), operation(op) {
+      add_op(mfs_logical_log *l, mfs_operation *op): parent(l), operation(op)
+      {
         assert(l);
       }
-      void operator()() {
+
+      void operator()()
+      {
         parent->operation_vec.push_back(std::move(operation));
       }
-      void print() {
+
+      void print()
+      {
         operation->print();
       }
-      u64 get_tsc() {
+
+      u64 get_tsc()
+      {
         return operation->timestamp;
       }
 
@@ -777,7 +836,8 @@ class mfs_logical_log: public mfs_logged_object {
       mfs_operation *operation;
     };
 
-    void add_operation(mfs_operation *op) {
+    void add_operation(mfs_operation *op)
+    {
       get_logger()->push_with_tsc<add_op>(add_op(this, op));
     }
 

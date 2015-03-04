@@ -10,7 +10,8 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-mfs_interface::mfs_interface() {
+mfs_interface::mfs_interface()
+{
   inum_to_mnode = new linearhash<u64, sref<mnode>>(NINODES);
   mnode_to_inode = new linearhash<u64, u64>(NINODES);
   fs_journal = new journal();
@@ -18,7 +19,8 @@ mfs_interface::mfs_interface() {
   // XXX(rasha) Set up the physical journal file
 }
 
-void mfs_interface::free_inode(u64 mnode_inum, transaction *tr)
+void
+mfs_interface::free_inode(u64 mnode_inum, transaction *tr)
 {
 	sref<inode> ip = get_inode(mnode_inum, "free_inode");
 	ilock(ip, 1);
@@ -39,16 +41,22 @@ void mfs_interface::free_inode(u64 mnode_inum, transaction *tr)
 }
 
 // Returns an sref to an inode if mnode_inum is mapped to one.
-sref<inode> mfs_interface::get_inode(u64 mnode_inum, const char *str) {
+sref<inode>
+mfs_interface::get_inode(u64 mnode_inum, const char *str)
+{
   u64 inum = 0;
   sref<inode> i;
+
   if (!mnode_to_inode)
     panic("%s: mnode_to_inode mapping does not exist yet", str);
+
   if (!mnode_to_inode->lookup(mnode_inum, &inum))
     panic("%s: Mapping for mnode# %ld does not exist", str, mnode_inum);
+
   i = iget(1, inum);
   if(!i)
     panic("%s: inode %ld does not exist", str, inum);
+
   return i;
 }
 
@@ -56,37 +64,49 @@ sref<inode> mfs_interface::get_inode(u64 mnode_inum, const char *str) {
 // mfile distinguish between when a file page has to be demand-laoded from the
 // disk and when a new page has to be allocated. Called the first time the mfile
 // is referred to.
-void mfs_interface::initialize_file(sref<mnode> m) {
+void
+mfs_interface::initialize_file(sref<mnode> m)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(m->inum_, "initialize_file");
+
   auto resizer = m->as_file()->write_size();
   resizer.initialize_from_disk(i->size);
 }
 
 // Reads in a file page from the disk.
-int mfs_interface::load_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes) {
+int
+mfs_interface::load_file_page(u64 mfile_inum, char *p, size_t pos,
+		              size_t nbytes)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "load_file_page");
   return readi(i, p, pos, nbytes);
 }
 
 // Reads the on-disk file size.
-u64 mfs_interface::get_file_size(u64 mfile_inum) {
+u64
+mfs_interface::get_file_size(u64 mfile_inum)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "get_file_size");
   return i->size;
 }
 
 // Updates the file size on the disk.
-void mfs_interface::update_file_size(u64 mfile_inum, u32 size, transaction *tr) {
+void
+mfs_interface::update_file_size(u64 mfile_inum, u32 size, transaction *tr)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "update_file_size");
-  update_size(i, size, tr); 
+  update_size(i, size, tr);
 }
 
 // Flushes out the contents of an in-memory file page to the disk.
-int mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes,
-    transaction *tr) {
+int
+mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos,
+                              size_t nbytes, transaction *tr)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "sync_file_page");
   return writei(i, p, pos, nbytes, tr, true);
@@ -94,8 +114,10 @@ int mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nb
 
 // Creates a new file on the disk if an mnode (mfile) does not have a corresponding
 // inode mapping.
-u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
-  char *name, transaction *tr, bool link_in_parent) {
+u64
+mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
+		                  char *name, transaction *tr, bool link_in_parent)
+{
   u64 inum = 0, parent_inum = 0, returnval = 0;
   if (inode_lookup(mfile_inum, &inum))
     return 0;
@@ -109,7 +131,7 @@ u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
   // and explicitly sync all new ancestors.
   if (!inode_lookup(parent, &parent_inum))
     panic("create_file_if_new: parent %ld does not exist\n", parent);
-    
+
   sref<inode> i;
   i = ialloc(1, type);
   mnode_to_inode->insert(mfile_inum, i->inum);
@@ -137,7 +159,9 @@ u64 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
 }
 
 // Truncates a file on disk to the specified size (offset).
-void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
+void
+mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(mfile_inum, "truncate_file");
   itrunc(i, offset, tr);
@@ -146,10 +170,12 @@ void mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr) {
     m->as_file()->remove_pgtable_mappings(offset);
 }
 
-// Creates a new direcotry on the disk if an mnode (mdir) does not have a 
+// Creates a new direcotry on the disk if an mnode (mdir) does not have a
 // corresponding inode mapping.
-u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
-  char *name, transaction *tr, bool link_in_parent) {
+u64
+mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
+                                 char *name, transaction *tr, bool link_in_parent)
+{
   u64 inum = 0, parent_inum = 0, returnval = 0;
   if (inode_lookup(mdir_inum, &inum))
     return 0;
@@ -190,8 +216,10 @@ u64 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
 
 // Creates a directory entry for a name that exists in the in-memory 
 // representation but not on the disk.
-void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
-    dirent_inum, u8 type, transaction *tr) {
+void
+mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum,
+		                      u8 type, transaction *tr)
+{
   sref<inode> i = get_inode(mdir_inum, "create_directory_entry");
 
   sref<inode> di = dirlookup(i, name);
@@ -226,13 +254,15 @@ void mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64
       inum = create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, false);
       dirlink(i, name, inum, true);
     }
-  } 
+  }
   iunlock(i);
 }
 
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
 // The file/directory names that are present in the mdir are specified in names_vec.
-void mfs_interface::unlink_old_inode(u64 mdir_inum, char* name, transaction *tr) {
+void
+mfs_interface::unlink_old_inode(u64 mdir_inum, char* name, transaction *tr)
+{
   sref<inode> i = get_inode(mdir_inum, "unlink_old_inode");
   sref<inode> target = dirlookup(i, name);
   if (!target)
@@ -273,34 +303,46 @@ mfs_interface::delete_old_inode(u64 mfile_inum, transaction *tr)
 }
 
 // Calls a dir_flush on the directory.
-void mfs_interface::update_dir_inode(u64 mdir_inum, transaction *tr) {
+void
+mfs_interface::update_dir_inode(u64 mdir_inum, transaction *tr)
+{
   sref<inode> i = get_inode(mdir_inum, "update_dir_inode");
   update_dir(i, tr);
 }
 
 // Initializes the mdir the first time it is referred to. Populates directory
 // entries from the disk.
-void mfs_interface::initialize_dir(sref<mnode> m) {
+void
+mfs_interface::initialize_dir(sref<mnode> m)
+{
   scoped_gc_epoch e;
   sref<inode> i = get_inode(m->inum_, "initialize_dir");
   load_dir(i, m);
 }
 
-void mfs_interface::metadata_op_start(size_t cpu, u64 tsc_val) {
+void
+mfs_interface::metadata_op_start(size_t cpu, u64 tsc_val)
+{
   metadata_log->update_start_tsc(cpu, tsc_val);
 }
 
-void mfs_interface::metadata_op_end(size_t cpu, u64 tsc_val) {
+void
+mfs_interface::metadata_op_end(size_t cpu, u64 tsc_val)
+{
   metadata_log->update_end_tsc(cpu, tsc_val);
 }
 
 // Adds a metadata operation to the logical log.
-void mfs_interface::add_to_metadata_log(mfs_operation *op) {
+void
+mfs_interface::add_to_metadata_log(mfs_operation *op)
+{
   metadata_log->add_operation(op);
 }
 
 // Applies all metadata operations logged in the logical log. Called on sync.
-void mfs_interface::process_metadata_log() {
+void
+mfs_interface::process_metadata_log()
+{
   mfs_operation_vec ops;
   u64 sync_tsc = 0;
   if (cpuid::features().rdtscp)
@@ -412,7 +454,9 @@ evict_caches(mdev*, const char *buf, u32 n)
 
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
-void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
+void
+mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir)
+{
   mfs_operation_vec dependent_ops;
   {
     // Synchronize the oplog loggers.
@@ -438,9 +482,11 @@ void mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir) {
 
 // Goes through the metadata log and filters out the operations that the fsync()
 // call depends on. inum refers to the mnode that is executing the fsync().
-void mfs_interface::find_dependent_ops(u64 inum,
-  mfs_operation_vec &dependent_ops, bool isdir) {
- 
+void
+mfs_interface::find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops,
+                                  bool isdir)
+{
+
   if (metadata_log->operation_vec.size() == 0)
     return;
 
@@ -464,7 +510,9 @@ void mfs_interface::find_dependent_ops(u64 inum,
 }
 
 // Create operation
-void mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr) {
+void
+mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)
+{
   scoped_gc_epoch e;
   if (op->mnode_type == mnode::types::file)      // sync the parent directory too
     create_file_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr, true);     
@@ -473,14 +521,18 @@ void mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr) {
 }
 
 // Link operation
-void mfs_interface::mfs_link(mfs_operation_link *op, transaction *tr) {
+void
+mfs_interface::mfs_link(mfs_operation_link *op, transaction *tr)
+{
   scoped_gc_epoch e;
   create_directory_entry(op->parent, op->name, op->mnode, op->mnode_type, tr);
   update_dir_inode(op->parent, tr);
 }
 
 // Unlink operation
-void mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr) {
+void
+mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr)
+{
   scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
@@ -498,7 +550,9 @@ mfs_interface::mfs_delete(mfs_operation_delete *op, transaction *tr)
 }
 
 // Rename operation
-void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
+void
+mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr)
+{
   scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
@@ -511,7 +565,9 @@ void mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr) {
 }
 
 // Logs a transaction to the physical journal. Does not apply it to the disk yet
-void mfs_interface::add_to_journal(transaction *tr) {
+void
+mfs_interface::add_to_journal(transaction *tr)
+{
   fs_journal->add_transaction(tr);
 }
 
@@ -577,8 +633,11 @@ mfs_interface::flush_journal()
 }
 
 // Writes out a single journal transaction to disk
-void mfs_interface::write_transaction_to_journal(
-    const std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp) {
+void
+mfs_interface::write_transaction_to_journal(
+    const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
+    const u64 timestamp)
+{
   transaction *trans = new transaction(0);
   assert(sv6_journal);
   u32 offset = fs_journal->current_offset();
@@ -630,7 +689,9 @@ void mfs_interface::write_transaction_to_journal(
 }
 
 // Called on reboot after a crash. Applies committed transactions.
-void mfs_interface::process_journal() {
+void
+mfs_interface::process_journal()
+{
   u32 offset = 0;
   u64 current_transaction = 0;
   bool jrnl_error = false;
@@ -694,7 +755,9 @@ void mfs_interface::process_journal() {
 }
 
 // Clear (zero-fill) the journal file on the disk
-void mfs_interface::clear_journal() {
+void
+mfs_interface::clear_journal()
+{
   assert(sv6_journal);
   ilock(sv6_journal, 1);
   zero_fill(sv6_journal, fs_journal->current_offset());
@@ -702,7 +765,9 @@ void mfs_interface::clear_journal() {
   fs_journal->update_offset(0);
 }
 
-bool mfs_interface::inode_lookup(u64 mnode, u64 *inum) {
+bool
+mfs_interface::inode_lookup(u64 mnode, u64 *inum)
+{
   if (!mnode_to_inode)
     panic("mnode_to_inode mapping does not exist yet");
   if (mnode_to_inode->lookup(mnode, inum))
@@ -710,20 +775,26 @@ bool mfs_interface::inode_lookup(u64 mnode, u64 *inum) {
   return false;
 }
 
-void mfs_interface::create_mapping(u64 mnode, u64 inode) {
+void
+mfs_interface::create_mapping(u64 mnode, u64 inode)
+{
   if (!mnode_to_inode)
     panic("mnode_to_inode mapping does not exist yet");
   mnode_to_inode->insert(mnode, inode);
 }
 
-sref<mnode> mfs_interface::mnode_alloc(u64 inum, u8 mtype) {
+sref<mnode>
+mfs_interface::mnode_alloc(u64 inum, u8 mtype)
+{
   auto m = root_fs->alloc(mtype);
   inum_to_mnode->insert(inum, m.mn());
   create_mapping(m.mn()->inum_, inum);
   return m.mn();
 }
 
-sref<mnode> mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent) {
+sref<mnode>
+mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent)
+{
   sref<mnode> m;
   if (inum_to_mnode->lookup(inum, &m))
     return m;
@@ -741,7 +812,7 @@ sref<mnode> mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent) {
   default:
     return sref<mnode>();
   }
-  
+
   // Link to parent directory created so that the parent's link count is
   // correctly updated.
   if (m->type() == mnode::types::dir) {
@@ -754,7 +825,9 @@ sref<mnode> mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent) {
   return m;
 }
 
-void mfs_interface::load_dir(sref<inode> i, sref<mnode> m) {
+void
+mfs_interface::load_dir(sref<inode> i, sref<mnode> m)
+{
   dirent de;
   for (size_t pos = 0; pos < i->size; pos += sizeof(de)) {
     assert(sizeof(de) == readi(i, (char*) &de, pos, sizeof(de)));
@@ -778,7 +851,9 @@ void mfs_interface::load_dir(sref<inode> i, sref<mnode> m) {
   }
 }
 
-sref<mnode> mfs_interface::load_root() {
+sref<mnode>
+mfs_interface::load_root()
+{
   scoped_gc_epoch e;
   sref<mnode> m;
   if (inum_to_mnode->lookup(1, &m))
@@ -791,7 +866,9 @@ sref<mnode> mfs_interface::load_root() {
 }
 
 // Initialize the free bit vector from the disk when the system boots.
-void mfs_interface::initialize_free_bit_vector() {
+void
+mfs_interface::initialize_free_bit_vector()
+{
   sref<buf> bp;
   int b, bi, free_bit_count;
   u32 blocknum;
@@ -817,7 +894,9 @@ void mfs_interface::initialize_free_bit_vector() {
 }
 
 // Return the block number of a free block in the free_bit_vector.
-u32 mfs_interface::alloc_block() {
+u32
+mfs_interface::alloc_block()
+{
   u32 index = 0;
   for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
     if (it->is_free) {
@@ -834,14 +913,17 @@ u32 mfs_interface::alloc_block() {
 }
 
 // Mark a block as free in the free_bit_vector.
-void mfs_interface::free_block(u32 bno) {
+void
+mfs_interface::free_block(u32 bno)
+{
   if (free_bit_vector.at(bno).is_free)
     panic("freeing free block");
   auto lock = free_bit_vector.at(bno).write_lock.guard();
   free_bit_vector.at(bno).is_free = true;
 }
 
-void mfs_interface::print_free_blocks(print_stream *s)
+void
+mfs_interface::print_free_blocks(print_stream *s)
 {
   u32 count = 0;
 
@@ -859,7 +941,8 @@ void mfs_interface::print_free_blocks(print_stream *s)
   s->println();
 }
 
-void kfreeblockprint(print_stream *s)
+void
+kfreeblockprint(print_stream *s)
 {
   rootfs_interface->print_free_blocks(s);
 }
@@ -872,7 +955,9 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
   return s.get_used();
 }
 
-void initfs() {
+void
+initfs()
+{
   root_fs = new mfs();
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
