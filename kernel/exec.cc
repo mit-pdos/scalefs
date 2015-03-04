@@ -172,7 +172,7 @@ exec(const char *path, const char * const *argv)
   sref<vmap> oldvmap;
   int r = load_image(myproc(), path, argv, &oldvmap);
   if (r < 0) {
-    cprintf("exec failed\n");
+    cprintf("exec failed, path: %s\n", path);
     return r;
   }
 
