@@ -86,6 +86,11 @@ struct dinode {
 // Block containing bit for block b
 #define BBLOCK(b, ninodes) (b/BPB + (ninodes)/IPB + 3)
 
+// Number of inodes to create in the filesystem. Consumed by tools/mkfs.c
+// as well as kernel/scalefs.cc (to decide the size of the inum<->mnode
+// lookup tables).
+#define NINODES		24000
+
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 

@@ -8,7 +8,7 @@
 #include "include/types.h"
 #include "include/fs.h"
 
-int ninodes = 2400;
+int ninodes = NINODES;
 int size = BLKCNT;
 
 int fsfd;
