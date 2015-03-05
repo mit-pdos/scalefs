@@ -195,7 +195,7 @@ mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
   mnode_to_inode->insert(mdir_inum, i->inum);
   inum_to_mnode->insert(i->inum, root_fs->get(mdir_inum));
   returnval = i->inum;
-  dirlink(i, "..", parent_inum, true);
+  dirlink(i, "..", parent_inum, false);
   dir_flush(i, tr);
   iunlock(i);
 
