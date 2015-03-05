@@ -22,22 +22,21 @@ mfs_interface::mfs_interface()
 void
 mfs_interface::free_inode(u64 mnode_inum, transaction *tr)
 {
-	sref<inode> ip = get_inode(mnode_inum, "free_inode");
-	ilock(ip, 1);
+  sref<inode> ip = get_inode(mnode_inum, "free_inode");
 
-	// Release the inode on the disk.
-	ip->type = 0;
-	assert(ip->nlink() == 0);
-	iupdate(ip, tr);
+  ilock(ip, 1);
+  // Release the inode on the disk.
+  ip->type = 0;
+  assert(ip->nlink() == 0);
+  iupdate(ip, tr);
 
-	// Perform the last decrement of the refcount. This pairs with the
-	// extra increment that was done inside inode::init().
-	{
-	  auto w = ip->seq.write_begin();
-	  ip->dec();
-	}
-
-	iunlock(ip);
+  // Perform the last decrement of the refcount. This pairs with the
+  // extra increment that was done inside inode::init().
+  {
+    auto w = ip->seq.write_begin();
+    ip->dec();
+  }
+  iunlock(ip);
 }
 
 // Returns an sref to an inode if mnode_inum is mapped to one.
