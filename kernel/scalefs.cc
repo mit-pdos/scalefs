@@ -887,7 +887,8 @@ mfs_interface::initialize_free_bit_vector()
     for(bi = 0; bi < free_bit_count; bi++) {
       int m = 1 << (bi % 8);
       bool f = ((copy->data[bi/8] & m) == 0) ? true : false;
-      free_bit_vector.emplace_back(f);
+      free_bit *bit = new free_bit(f);
+      free_bit_vector.emplace_back(bit);
     }
   }
 }
@@ -897,12 +898,15 @@ u32
 mfs_interface::alloc_block()
 {
   u32 index = 0;
+  free_bit *bit;
+
   for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
-    if (it->is_free) {
-      auto lock = it->write_lock.guard();
+    bit = *it;
+    if (bit->is_free) {
+      auto lock = bit->write_lock.guard();
       //Re-confirm that the block is indeed free, with the lock held.
-      if (it->is_free) {
-        it->is_free = false;
+      if (bit->is_free) {
+        bit->is_free = false;
         break;
       }
     }
@@ -915,10 +919,13 @@ mfs_interface::alloc_block()
 void
 mfs_interface::free_block(u32 bno)
 {
-  if (free_bit_vector.at(bno).is_free)
-    panic("freeing free block");
-  auto lock = free_bit_vector.at(bno).write_lock.guard();
-  free_bit_vector.at(bno).is_free = true;
+  free_bit *bit = free_bit_vector.at(bno);
+
+  if (bit->is_free)
+    panic("freeing free block %u\n", bno);
+
+  auto lock = bit->write_lock.guard();
+  bit->is_free = true;
 }
 
 void
@@ -927,7 +934,7 @@ mfs_interface::print_free_blocks(print_stream *s)
   u32 count = 0;
 
   for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
-    if (it->is_free) {
+    if ((*it)->is_free) {
       // No need to re-confirm that it is free with the lock held, since this
       // count is approximate (like a snapshot) anyway.
       count++;

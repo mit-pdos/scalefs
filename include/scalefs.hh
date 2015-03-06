@@ -413,7 +413,7 @@ class mfs_interface
     // The free block bitmap in memory. Transactions marking a block free or not
     // free on the bitmap on disk make the corresponding changes in this vector
     // first. (Essential for reverting changes in case an fsync(file) fails.)
-    std::vector<free_bit> free_bit_vector;
+    std::vector<free_bit*> free_bit_vector;
 };
 
 class mfs_operation
