@@ -321,10 +321,12 @@ class mfs_interface
     // modify the block free bitmap on the disk go through a list of free_bit
     // structs in memory first.
     typedef struct free_bit {
+      u32 bno_;
       bool is_free;
       sleeplock write_lock;
+      ilink<free_bit> link;
 
-      free_bit(bool b): is_free(b) {}
+      free_bit(u32 bno, bool f): bno_(bno), is_free(f) {}
       NEW_DELETE_OPS(free_bit);
 
       free_bit& operator=(const free_bit&) = delete;
@@ -414,6 +416,11 @@ class mfs_interface
     // free on the bitmap on disk make the corresponding changes in this vector
     // first. (Essential for reverting changes in case an fsync(file) fails.)
     std::vector<free_bit*> free_bit_vector;
+
+    // A linked-list of bits (in the free_bit_vector) that are actually free.
+    // Used to speed up block allocation and make it O(1).
+    ilist<free_bit, &free_bit::link> free_bit_freelist;
+    sleeplock freelist_lock; // Synchronizes access to free_bit_freelist.
 };
 
 class mfs_operation

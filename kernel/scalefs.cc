@@ -887,8 +887,18 @@ mfs_interface::initialize_free_bit_vector()
     for(bi = 0; bi < free_bit_count; bi++) {
       int m = 1 << (bi % 8);
       bool f = ((copy->data[bi/8] & m) == 0) ? true : false;
-      free_bit *bit = new free_bit(f);
+
+      // Maintain a vector as well as a linked-list representation of the
+      // free-bits, to speed up freeing and allocation of blocks, respectively.
+      free_bit *bit = new free_bit(bi, f);
       free_bit_vector.emplace_back(bit);
+
+      if (!f)
+        continue;
+
+      // Add the block to the freelist if it is actually free.
+      auto list_lock = freelist_lock.guard();
+      free_bit_freelist.push_back(bit);
     }
   }
 }
@@ -897,35 +907,54 @@ mfs_interface::initialize_free_bit_vector()
 u32
 mfs_interface::alloc_block()
 {
-  u32 index = 0;
-  free_bit *bit;
+  u32 bno;
+  superblock sb;
 
-  for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
-    bit = *it;
-    if (bit->is_free) {
-      auto lock = bit->write_lock.guard();
-      //Re-confirm that the block is indeed free, with the lock held.
-      if (bit->is_free) {
-        bit->is_free = false;
-        break;
-      }
-    }
-    index++;
+  // Use the linked-list representation of the free-bits to perform block
+  // allocation in O(1) time. This list only contains the blocks that are
+  // actually free, so we can allocate any one of them.
+
+  auto list_lock = freelist_lock.guard();
+
+  if (!free_bit_freelist.empty()) {
+
+    auto it = free_bit_freelist.begin();
+    auto lock = it->write_lock.guard();
+
+    assert(it->is_free == true);
+    it->is_free = false;
+    bno = it->bno_;
+    free_bit_freelist.erase(it);
+
+    return bno;
   }
-  return index;
+
+  get_superblock(&sb);
+  return sb.size; // out of blocks
 }
 
 // Mark a block as free in the free_bit_vector.
 void
 mfs_interface::free_block(u32 bno)
 {
+  // Use the vector representation of the free-bits to free the block in
+  // O(1) time (by optimizing the blocknumber-to-free_bit lookup).
   free_bit *bit = free_bit_vector.at(bno);
 
   if (bit->is_free)
     panic("freeing free block %u\n", bno);
 
-  auto lock = bit->write_lock.guard();
-  bit->is_free = true;
+  {
+    auto lock = bit->write_lock.guard();
+    bit->is_free = true;
+  }
+
+  // Drop the write_lock before taking the freelist_lock, to avoid a
+  // potential ABBA deadlock with alloc_block().
+
+  // Add it to the free_bit_freelist.
+  auto list_lock = freelist_lock.guard();
+  free_bit_freelist.push_front(bit);
 }
 
 void
@@ -933,7 +962,13 @@ mfs_interface::print_free_blocks(print_stream *s)
 {
   u32 count = 0;
 
-  for (auto it = free_bit_vector.begin(); it != free_bit_vector.end(); it++) {
+  // Traversing the free_bit_freelist would be faster because they contain
+  // only blocks that are actually free. However, to do that we would have
+  // to acquire the freelist_lock, which would prevent concurrent allocations.
+  // Hence go through the free_bit_vector instead.
+  for (auto it = free_bit_vector.begin(); it != free_bit_vector.end();
+       it++) {
+
     if ((*it)->is_free) {
       // No need to re-confirm that it is free with the lock held, since this
       // count is approximate (like a snapshot) anyway.
