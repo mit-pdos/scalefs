@@ -869,28 +869,30 @@ void
 mfs_interface::initialize_free_bit_vector()
 {
   sref<buf> bp;
-  int b, bi, free_bit_count;
+  int b, bi, nbits;
   u32 blocknum;
   superblock sb;
+
   get_superblock(&sb);
 
-  for(b = 0; b < sb.size; b += BPB) {
+  // Allocate the memory for free_bit_vector in one shot, instead of doing it
+  // piecemeal using .emplace_back() in a loop.
+  free_bit_vector.reserve(sb.size);
+
+  for (b = 0; b < sb.size; b += BPB) {
     blocknum = BBLOCK(b, sb.ninodes);
     bp = buf::get(1, blocknum);
     auto copy = bp->read();
 
-    // Allocate the memory for free_bit_vector in one shot, instead
-    // of doing it piecemeal using .emplace_back() in a loop.
-    free_bit_count = min(BPB, sb.size - b);
-    free_bit_vector.reserve(free_bit_count);
+    nbits = min(BPB, sb.size - b);
 
-    for(bi = 0; bi < free_bit_count; bi++) {
+    for (bi = 0; bi < nbits; bi++) {
       int m = 1 << (bi % 8);
       bool f = ((copy->data[bi/8] & m) == 0) ? true : false;
 
       // Maintain a vector as well as a linked-list representation of the
       // free-bits, to speed up freeing and allocation of blocks, respectively.
-      free_bit *bit = new free_bit(bi, f);
+      free_bit *bit = new free_bit(b + bi, f);
       free_bit_vector.emplace_back(bit);
 
       if (!f)
