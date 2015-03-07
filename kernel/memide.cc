@@ -43,7 +43,8 @@ public:
     u64 count = iov[0].iov_len;
 
     if(off > nbytes_ || off + count > nbytes_)
-      panic("memdisk::readv: sector out of range");
+      panic("memdisk::readv: sector out of range: offset %ld, count %ld\n",
+            off, count);
 
     p = data_ + off;
     memmove(iov[0].iov_base, p, count);
@@ -57,7 +58,8 @@ public:
     u64 count = iov[0].iov_len;
 
     if(off > nbytes_ || off + count > nbytes_)
-      panic("memdisk::writev: sector out of range");
+      panic("memdisk::writev: sector out of range: offset %ld, count %ld\n",
+             off, count);
 
     p = data_ + off;
     memmove(p, iov[0].iov_base, count);
