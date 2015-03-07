@@ -256,6 +256,10 @@ cmain(u64 mbmagic, u64 mbaddr)
   initcpprt();
   initwd();                // Requires initnmi
 
+#if DEBUG
+  cprintf("Running in DEBUG mode\n");
+#endif
+
   idleloop();
 
   panic("Unreachable");
