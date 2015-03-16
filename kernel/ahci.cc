@@ -528,6 +528,8 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
       portpage->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
       portpage->cmdh[cmdslot].prdbc = len;
     }
+  } else {
+    portpage->cmdh[cmdslot].prdbc = 0;
   }
 
   fill_fis(cmdslot, &fis);
