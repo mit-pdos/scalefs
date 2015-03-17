@@ -67,6 +67,7 @@ private:
   void issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd);
 
   // For the disk read/write interface..
+  u32 cmds_issued;
   int last_cmdslot;
   spinlock cmdslot_alloc_lock;
   condvar cmdslot_alloc_cv;
@@ -186,7 +187,7 @@ ata_byteswap(char* buf, u64 len)
 
 
 ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
-  : hba(h), pid(p), preg(reg), last_cmdslot(-1)
+  : hba(h), pid(p), preg(reg), cmds_issued(0), last_cmdslot(-1)
 {
   // Round up the size to make it an integral multiple of PGSIZE.
   // Crashes on boot otherwise.
@@ -438,9 +439,14 @@ ahci_port::handle_port_irq()
   preg->is = ~0;
 
   for (int cmdslot = 0; cmdslot < 32; cmdslot++) {
-    if (cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot))) {
+
+    if (cmdslot_dc[cmdslot] && (cmds_issued & (1 << cmdslot)) &&
+        !(preg->ci & (1 << cmdslot))) {
+
       cmdslot_dc[cmdslot]->notify();
       cmdslot_dc[cmdslot].reset();
+      cmds_issued &= ~(1 << cmdslot);
+
       cmdslot_alloc_cv.wake_all();
 
       u32 tfd = preg->tfd;
@@ -541,5 +547,11 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
   }
 
   fill_fis(cmdslot, &fis);
+
+  // Mark the command as issued, for the interrupt handler's benefit.
+  // The cmdslot_alloc_lock protects 'cmds_issued' as well.
+  scoped_acquire a(&cmdslot_alloc_lock);
+  cmds_issued |= (1 << cmdslot);
+
   preg->ci |= (1 << cmdslot);
 }
