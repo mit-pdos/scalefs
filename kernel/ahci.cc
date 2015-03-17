@@ -67,6 +67,7 @@ private:
   void issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd);
 
   // For the disk read/write interface..
+  int last_cmdslot;
   spinlock cmdslot_alloc_lock;
   condvar cmdslot_alloc_cv;
   sref<disk_completion> cmdslot_dc[32];
@@ -185,7 +186,7 @@ ata_byteswap(char* buf, u64 len)
 
 
 ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
-  : hba(h), pid(p), preg(reg)
+  : hba(h), pid(p), preg(reg), last_cmdslot(-1)
 {
   // Round up the size to make it an integral multiple of PGSIZE.
   // Crashes on boot otherwise.
@@ -324,15 +325,16 @@ ahci_port::alloc_cmdslot(sref<disk_completion> dc)
   scoped_acquire a(&cmdslot_alloc_lock);
 
   for (;;) {
-    for (int cmdslot = 0; cmdslot < hba->ncs; cmdslot++) {
+    for (int cmdslot = (last_cmdslot + 1) % hba->ncs; cmdslot < hba->ncs;
+         cmdslot++) {
       if (!cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot)) &&
           !(preg->sact & (1 << cmdslot))) {
 
         cmdslot_dc[cmdslot] = dc;
+        last_cmdslot = cmdslot;
         return cmdslot;
       }
     }
-
     cmdslot_alloc_cv.sleep(&cmdslot_alloc_lock);
   }
 }
