@@ -537,5 +537,5 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
   }
 
   fill_fis(cmdslot, &fis);
-  preg->ci = (1 << cmdslot);
+  preg->ci |= (1 << cmdslot);
 }
