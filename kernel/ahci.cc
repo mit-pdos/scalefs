@@ -187,8 +187,11 @@ ata_byteswap(char* buf, u64 len)
 ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   : hba(h), pid(p), preg(reg)
 {
-  portpage = (ahci_port_page*) kalloc("ahci_port_page");
-  assert(portpage);
+  // Round up the size to make it an integral multiple of PGSIZE.
+  // Crashes on boot otherwise.
+  size_t portpage_size = (sizeof(ahci_port_page) + PGSIZE-1) & ~(PGSIZE-1);
+  portpage = (ahci_port_page*) kalloc("ahci_port_page", portpage_size);
+  assert(portpage && portpage_size >= sizeof(ahci_port_page));
 
   /* Wait for port to quiesce */
   if (preg->cmd & (AHCI_PORT_CMD_ST | AHCI_PORT_CMD_CR |
