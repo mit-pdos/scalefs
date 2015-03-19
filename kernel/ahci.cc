@@ -23,7 +23,7 @@ static struct {
 
 class ahci_hba;
 
-struct ahci_port_page
+struct ahci_port_mem
 {
   volatile struct ahci_recv_fis rfis __attribute__((aligned (256)));
   u8 pad[0x300];
@@ -55,7 +55,7 @@ private:
   ahci_hba *const hba;
   const int pid;
   volatile ahci_reg_port *const preg;
-  ahci_port_page *portpage;
+  ahci_port_mem *portmem;
 
   u64 fill_prd(int cmdslot, void* addr, u64 nbytes);
   u64 fill_prd_v(int, kiovec* iov, int iov_cnt);
@@ -189,9 +189,9 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 {
   // Round up the size to make it an integral multiple of PGSIZE.
   // Crashes on boot otherwise.
-  size_t portpage_size = (sizeof(ahci_port_page) + PGSIZE-1) & ~(PGSIZE-1);
-  portpage = (ahci_port_page*) kalloc("ahci_port_page", portpage_size);
-  assert(portpage && portpage_size >= sizeof(ahci_port_page));
+  size_t portmem_size = (sizeof(ahci_port_mem) + PGSIZE-1) & ~(PGSIZE-1);
+  portmem = (ahci_port_mem*) kalloc("ahci_port_mem", portmem_size);
+  assert(portmem && portmem_size >= sizeof(ahci_port_mem));
 
   /* Wait for port to quiesce */
   if (preg->cmd & (AHCI_PORT_CMD_ST | AHCI_PORT_CMD_CR |
@@ -208,9 +208,10 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 
   /* Initialize memory buffers */
   for (int cmdslot = 0; cmdslot < 32; cmdslot++)
-    portpage->cmdh[cmdslot].ctba = v2p((void*) &portpage->cmdt[cmdslot]);
-  preg->clb = v2p((void*) &portpage->cmdh);
-  preg->fb = v2p((void*) &portpage->rfis);
+    portmem->cmdh[cmdslot].ctba = v2p((void*) &portmem->cmdt[cmdslot]);
+
+  preg->clb = v2p((void*) &portmem->cmdh);
+  preg->fb = v2p((void*) &portmem->rfis);
   preg->ci = 0;
 
   /* Clear any errors first, otherwise the chip wedges */
@@ -339,7 +340,7 @@ ahci_port::fill_prd_v(int cmdslot, kiovec* iov, int iov_cnt)
 {
   u64 nbytes = 0;
 
-  volatile ahci_cmd_table *cmd = (ahci_cmd_table *) &portpage->cmdt[cmdslot];
+  volatile ahci_cmd_table *cmd = (ahci_cmd_table *) &portmem->cmdt[cmdslot];
   assert(iov_cnt < sizeof(cmd->prdt) / sizeof(cmd->prdt[0]));
 
   for (int slot = 0; slot < iov_cnt; slot++) {
@@ -348,7 +349,7 @@ ahci_port::fill_prd_v(int cmdslot, kiovec* iov, int iov_cnt)
     nbytes += iov[slot].iov_len;
   }
 
-  portpage->cmdh[cmdslot].prdtl = iov_cnt;
+  portmem->cmdh[cmdslot].prdtl = iov_cnt;
   return nbytes;
 }
 
@@ -383,8 +384,8 @@ print_fis(sata_fis_reg *r)
 void
 ahci_port::fill_fis(int cmdslot, sata_fis_reg* fis)
 {
-  memcpy((void*) &portpage->cmdt[cmdslot].cfis[0], fis, sizeof(*fis));
-  portpage->cmdh[cmdslot].flags = sizeof(*fis) / sizeof(u32);
+  memcpy((void*) &portmem->cmdt[cmdslot].cfis[0], fis, sizeof(*fis));
+  portmem->cmdh[cmdslot].flags = sizeof(*fis) / sizeof(u32);
   if (fis_debug)
     print_fis(fis);
 }
@@ -524,15 +525,15 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
     fis.lba_5 = (sector_off >> 40) & 0xff;
 
     if (cmd == IDE_CMD_READ_DMA_EXT) {
-      portpage->cmdh[cmdslot].prdbc = 0;
+      portmem->cmdh[cmdslot].prdbc = 0;
     }
 
     if (cmd == IDE_CMD_WRITE_DMA_EXT) {
-      portpage->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
-      portpage->cmdh[cmdslot].prdbc = len;
+      portmem->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
+      portmem->cmdh[cmdslot].prdbc = len;
     }
   } else {
-    portpage->cmdh[cmdslot].prdbc = 0;
+    portmem->cmdh[cmdslot].prdbc = 0;
   }
 
   fill_fis(cmdslot, &fis);
