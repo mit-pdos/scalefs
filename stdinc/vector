@@ -139,6 +139,8 @@ namespace std {
       auto ndata = reinterpret_cast<T*>(new char[sizeof(T) * ncap]);
       for (size_type i = 0; i < size_; ++i)
         new (&ndata[i]) T(std::move(data()[i]));
+      if (data_)
+        delete[] reinterpret_cast<char*>(data_);
       data_ = ndata;
       cap_ = ncap;
     }
