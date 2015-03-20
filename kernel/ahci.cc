@@ -326,14 +326,23 @@ ahci_port::alloc_cmdslot(sref<disk_completion> dc)
   scoped_acquire a(&cmdslot_alloc_lock);
 
   for (;;) {
+
+    bool all_scanned = false;
     for (int cmdslot = (last_cmdslot + 1) % hba->ncs; cmdslot < hba->ncs;
          cmdslot++) {
+
       if (!cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot)) &&
           !(preg->sact & (1 << cmdslot))) {
 
         cmdslot_dc[cmdslot] = dc;
         last_cmdslot = cmdslot;
         return cmdslot;
+      }
+
+      if (cmdslot == hba->ncs - 1 && !all_scanned) {
+        cmdslot = -1;
+        all_scanned = true;
+        continue;
       }
     }
     cmdslot_alloc_cv.sleep(&cmdslot_alloc_lock);
