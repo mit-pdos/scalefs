@@ -246,12 +246,8 @@ class journal
     }
 
     // Add a new transaction to the journal.
-    void add_transaction(transaction *tr)
+    void add_transaction_locked(transaction *tr)
     {
-      // File system operations are serialized at this lock. Is this really a
-      // scalability hit, given that transactions are only added on a call to
-      // fsync(). Is it reasonable to slow down during an fsync()?
-      auto l = write_lock.guard();
       transaction_log.push_back(tr);
     }
 
@@ -367,10 +363,10 @@ class mfs_interface
     sref<mnode> load_root();
 
     // Journal functions
-    void add_to_journal(transaction *tr);
+    void add_to_journal_locked(transaction *tr);
     void __flush_transaction(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
-    void flush_journal();
+    void flush_journal_locked();
     void write_transaction_to_journal(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp);
     void process_journal();
@@ -384,7 +380,9 @@ class mfs_interface
     void evict_bufcache();
     void evict_pagecache();
     void process_metadata_log();
+    void process_metadata_log_and_flush();
     void process_metadata_log(u64 max_tsc, u64 inum, bool isdir);
+    void process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir);
     void find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops, bool isdir);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);

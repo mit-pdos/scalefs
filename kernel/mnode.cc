@@ -323,8 +323,7 @@ mfile::sync_file()
 
   // Apply pending metadata operations to the disk filesystem first.
   // This takes care of any dependencies.
-  rootfs_interface->process_metadata_log(fsync_tsc, inum_, false);
-  rootfs_interface->flush_journal();
+  rootfs_interface->process_metadata_log_and_flush(fsync_tsc, inum_, false);
 
   transaction *trans = new transaction();
   u64 mlen = *read_size();
@@ -392,8 +391,7 @@ mdir::sync_dir()
   // to be flushed explicitly. If there were any operations on the directory
   // they will have been applied when the logical log was processed. This means
   // that the fsync will not block any operations on the mdir.
-  rootfs_interface->process_metadata_log(fsync_tsc, inum_, true);
-  rootfs_interface->flush_journal();
+  rootfs_interface->process_metadata_log_and_flush(fsync_tsc, inum_, true);
 
   dirty(false);
 }

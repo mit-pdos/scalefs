@@ -359,10 +359,17 @@ mfs_interface::process_metadata_log()
   for (auto it = ops.begin(); it != ops.end(); it++) {
     transaction *tr = new transaction((*it)->timestamp);
     (*it)->apply(tr);
-    add_to_journal(tr);
+    add_to_journal_locked(tr);
     delete (*it);
   }
+}
 
+void
+mfs_interface::process_metadata_log_and_flush()
+{
+  auto journal_lock = fs_journal->prepare_for_commit();
+  process_metadata_log();
+  flush_journal_locked();
 }
 
 void
@@ -473,10 +480,17 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir)
     it--;
     transaction *tr = new transaction((*it)->timestamp);
     (*it)->apply(tr);
-    add_to_journal(tr);
+    add_to_journal_locked(tr);
     delete (*it);
   } while (it != dependent_ops.begin());
+}
 
+void
+mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir)
+{
+  auto journal_lock = fs_journal->prepare_for_commit();
+  process_metadata_log(max_tsc, inum, isdir);
+  flush_journal_locked();
 }
 
 // Goes through the metadata log and filters out the operations that the fsync()
@@ -565,9 +579,9 @@ mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr)
 
 // Logs a transaction to the physical journal. Does not apply it to the disk yet
 void
-mfs_interface::add_to_journal(transaction *tr)
+mfs_interface::add_to_journal_locked(transaction *tr)
 {
-  fs_journal->add_transaction(tr);
+  fs_journal->add_transaction_locked(tr);
 }
 
 // Commit a transaction to the journal and apply the committed changes to
@@ -616,10 +630,8 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
 // Writes out the physical journal to the disk, and applies the committed
 // transactions to the disk filesystem.
 void
-mfs_interface::flush_journal()
+mfs_interface::flush_journal_locked()
 {
-  auto journal_lock = fs_journal->prepare_for_commit();
-
   for (auto it = fs_journal->transaction_log.begin();
        it != fs_journal->transaction_log.end(); it++) {
 
