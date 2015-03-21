@@ -25,8 +25,14 @@ struct header {
   struct header *next;
 };
 
+struct bucket {
+  spinlock lock;
+  header* hdr;
+  u64 count;
+};
+
 struct freelist {
-  versioned<vptr48<header*>> buckets[KMMAX+1];
+  struct bucket buckets[KMMAX+1];
   char name[MAXNAME];
 };
 
@@ -38,6 +44,11 @@ kminit(void)
   for (int c = 0; c < ncpu; c++) {
     freelists[c].name[0] = (char) c + '0';
     safestrcpy(freelists[c].name+1, "freelist", MAXNAME-1);
+    for (int b = 0; b < KMMAX+1; b++) {
+      scoped_acquire guard(&freelists[c].buckets[b].lock);
+      freelists[c].buckets[b].hdr = nullptr;
+      freelists[c].buckets[b].count = 0;
+    }
   }
 }
 
@@ -64,14 +75,11 @@ morecore(int c, int b)
 
   int sz = 1 << b;
   assert(sz >= sizeof(header));
+  scoped_acquire guard(&freelists[c].buckets[b].lock);
   for(char *q = p + CACHELINE * r; q + sz <= p + PGSIZE; q += sz){
     struct header *h = (struct header *) q;
-    for (;;) {
-      auto headptr = freelists[c].buckets[b].load();
-      h->next = headptr.ptr();
-      if (freelists[c].buckets[b].compare_exchange(headptr, h))
-        break;
-    }
+    h->next = freelists[c].buckets[b].hdr;
+    freelists[c].buckets[b].hdr = h;
   }
 
   return 0;
@@ -95,20 +103,17 @@ kmalloc_small(size_t b, const char *name)
   int c = mycpu()->id;
 
   for (;;) {
-    auto headptr = freelists[c].buckets[b].load();
-    h = headptr.ptr();
-    if (!h) {
-      if (morecore(c, b) < 0) {
-        cprintf("kmalloc(%d) failed\n", 1 << b);
-        return 0;
-      }
-    } else {
-      header *nxt = h->next;
-      if (freelists[c].buckets[b].compare_exchange(headptr, nxt)) {
-        if (h->next != nxt)
-          panic("kmalloc: aba race");
-        break;
-      }
+    scoped_acquire guard(&freelists[c].buckets[b].lock);
+    h = freelists[c].buckets[b].hdr;
+    if (h) {
+      freelists[c].buckets[b].hdr = h->next;
+      break;
+    }
+
+    guard.release();
+    if (morecore(c, b) < 0) {
+      cprintf("kmalloc(%d) failed\n", 1 << b);
+      return 0;
     }
   }
 
@@ -182,12 +187,9 @@ kmfree(void *ap, u64 nbytes)
       memset(ap, 3, (1<<b));
 
     int c = mycpu()->id;
-    for (;;) {
-      auto headptr = freelists[c].buckets[b].load();
-      h->next = headptr.ptr();
-      if (freelists[c].buckets[b].compare_exchange(headptr, h))
-        break;
-    }
+    scoped_acquire guard(&freelists[c].buckets[b].lock);
+    h->next = freelists[c].buckets[b].hdr;
+    freelists[c].buckets[b].hdr = h;
   }
 }
 
