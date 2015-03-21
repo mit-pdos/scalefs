@@ -15,6 +15,7 @@
 #include "amd64.h"
 #include "page_info.hh"
 #include "heapprof.hh"
+#include "numa.hh"
 
 #include <type_traits>
 
@@ -80,6 +81,7 @@ morecore(int c, int b)
     struct header *h = (struct header *) q;
     h->next = freelists[c].buckets[b].hdr;
     freelists[c].buckets[b].hdr = h;
+    freelists[c].buckets[b].count++;
   }
 
   return 0;
@@ -107,6 +109,7 @@ kmalloc_small(size_t b, const char *name)
     h = freelists[c].buckets[b].hdr;
     if (h) {
       freelists[c].buckets[b].hdr = h->next;
+      freelists[c].buckets[b].count--;
       break;
     }
 
@@ -190,6 +193,7 @@ kmfree(void *ap, u64 nbytes)
     scoped_acquire guard(&freelists[c].buckets[b].lock);
     h->next = freelists[c].buckets[b].hdr;
     freelists[c].buckets[b].hdr = h;
+    freelists[c].buckets[b].count++;
   }
 }
 
@@ -253,4 +257,55 @@ alloc_debug_info::of(void *p, size_t size)
   if (want > PGSIZE / 2)
     return page_info::of(p);
   return (alloc_debug_info*)((char*)p + aligned);
+}
+
+void
+kmbalance(void)
+{
+  for (int b = 0; b < KMMAX+1; b++) {
+    for (auto &node : numa_nodes)
+      for (auto cpuid : node.cpuids)
+        freelists[cpuid].buckets[b].lock.acquire();
+
+    u64 total = 0;
+    u64 ncpu = 0;
+    for (auto &node : numa_nodes) {
+      for (auto cpuid : node.cpuids) {
+        total += freelists[cpuid].buckets[b].count;
+        ncpu++;
+      }
+    }
+
+    header* extras = nullptr;
+    for (auto &node : numa_nodes) {
+      for (auto cpuid : node.cpuids) {
+        while (freelists[cpuid].buckets[b].count > total/ncpu) {
+          header* h = freelists[cpuid].buckets[b].hdr;
+          assert(h);
+          freelists[cpuid].buckets[b].hdr = h->next;
+          freelists[cpuid].buckets[b].count--;
+          h->next = extras;
+          extras = h;
+        }
+      }
+    }
+
+    for (auto &node : numa_nodes) {
+      for (auto cpuid : node.cpuids) {
+        while (extras && freelists[cpuid].buckets[b].count <= total/ncpu + 1) {
+          header* h = extras;
+          extras = h->next;
+          h->next = freelists[cpuid].buckets[b].hdr;
+          freelists[cpuid].buckets[b].hdr = h;
+          freelists[cpuid].buckets[b].count++;
+        }
+      }
+    }
+
+    for (auto &node : numa_nodes)
+      for (auto cpuid : node.cpuids)
+        freelists[cpuid].buckets[b].lock.release();
+
+    assert(!extras);
+  }
 }

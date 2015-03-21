@@ -337,3 +337,10 @@ sys_sigaction(int signo, userptr<struct sigaction> act, userptr<struct sigaction
     return -1;
   return 0;
 }
+
+//SYSCALL
+void
+sys_kmbalance(void)
+{
+  kmbalance();
+}
