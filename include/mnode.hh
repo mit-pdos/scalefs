@@ -407,17 +407,29 @@ public:
         pi->dec();
     }
 
-    page_state(const page_state &other) {
-      *this = other;
+    page_state(const page_state &other) : value_(other.value_) {
+      page_info* pi = get_page_info_raw();
+      if (pi)
+        pi->inc();
     }
 
     page_state &operator=(const page_state &other) {
+      page_info* pi_old = get_page_info_raw();
+
       value_ = other.value_;
       page_info* pi = get_page_info_raw();
       if (pi)
         pi->inc();
+      if (pi_old)
+        pi_old->dec();
       return *this;
     }
+
+    page_state(page_state &&other) : value_(other.value_) {
+      other.value_ = 0;
+    }
+
+    page_state &operator=(page_state &&o) = delete;
 
     page_state copy_consistent() {
       /*
