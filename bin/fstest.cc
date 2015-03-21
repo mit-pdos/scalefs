@@ -376,6 +376,9 @@ main(int ac, char** av)
     }
 
     sync();
+#ifdef XV6_USER
+    kmbalance();
+#endif
   }
 
   printf("fstest: done\n");
