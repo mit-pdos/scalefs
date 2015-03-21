@@ -70,7 +70,7 @@ struct heap_profile
 struct heap_profile_array
 {
 #if KERNEL_HEAP_PROFILE
-  heap_profile arena[2];
+  heap_profile arena[3];
 #else
   heap_profile arena[0];
 #endif
@@ -166,6 +166,8 @@ heap_profile_print(print_stream *s)
     heap_profile_print1(s, 10, HEAP_PROFILE_KALLOC);
     s->println("Top 10 kmalloc allocations:");
     heap_profile_print1(s, 10, HEAP_PROFILE_KMALLOC);
+    s->println("Top 10 new[] allocations:");
+    heap_profile_print1(s, 10, HEAP_PROFILE_NEWARRAY);
   } else {
     s->println("KERNEL_HEAP_PROFILE is not set");
   }

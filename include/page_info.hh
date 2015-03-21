@@ -17,16 +17,20 @@ struct alloc_debug_info
 {
 #if KERNEL_HEAP_PROFILE
   // Instruction pointer of allocation
-  const void *kalloc_rip_, *kmalloc_rip_;
+  const void *kalloc_rip_, *kmalloc_rip_, *newarr_rip_;
   void set_kalloc_rip(const void *kalloc_rip) { kalloc_rip_ = kalloc_rip; }
   const void *kalloc_rip() const { return kalloc_rip_; }
   void set_kmalloc_rip(const void *kmalloc_rip) { kmalloc_rip_ = kmalloc_rip; }
   const void *kmalloc_rip() const { return kmalloc_rip_; }
+  void set_newarr_rip(const void *newarr_rip) { newarr_rip_ = newarr_rip; }
+  const void *newarr_rip() const { return newarr_rip_; }
 #else
   void set_kalloc_rip(const void *kalloc_rip) { }
   const void *kalloc_rip() const { return nullptr; }
   void set_kmalloc_rip(const void *kmalloc_rip) { }
   const void *kmalloc_rip() const { return nullptr; }
+  void set_newarr_rip(const void *newarr_rip) { }
+  const void *newarr_rip() const { return nullptr; }
 #endif
 
   static size_t expand_size(size_t size);

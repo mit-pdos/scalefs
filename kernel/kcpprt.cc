@@ -10,6 +10,8 @@
 #include "cpu.hh"
 #include "elf.hh"
 #include "atomic_util.hh"
+#include "heapprof.hh"
+#include "page_info.hh"
 
 const std::nothrow_t std::nothrow;
 
@@ -37,6 +39,17 @@ operator new[](std::size_t nbytes)
 {
   u64* x = (u64*) kmalloc(nbytes + sizeof(u64), "array");
   *x = nbytes;
+
+  // Update debug_info
+  alloc_debug_info *adi = alloc_debug_info::of(x+1, nbytes);
+  if (KERNEL_HEAP_PROFILE) {
+    auto alloc_rip = __builtin_return_address(0);
+    if (heap_profile_update(HEAP_PROFILE_NEWARRAY, alloc_rip, nbytes))
+      adi->set_newarr_rip(alloc_rip);
+    else
+      adi->set_newarr_rip(nullptr);
+  }
+
   return x+1;
 }
 
@@ -44,7 +57,17 @@ void
 operator delete[](void* p)
 {
   u64* x = (u64*) p;
-  kmfree(x-1, x[-1] + sizeof(u64));
+  std::size_t nbytes = x[-1];
+
+  // Update debug_info
+  alloc_debug_info *adi = alloc_debug_info::of(x, nbytes);
+  if (KERNEL_HEAP_PROFILE) {
+    auto alloc_rip = adi->newarr_rip();
+    if (alloc_rip)
+      heap_profile_update(HEAP_PROFILE_NEWARRAY, alloc_rip, -nbytes);
+  }
+
+  kmfree(x-1, nbytes + sizeof(u64));
 }
 
 void *
