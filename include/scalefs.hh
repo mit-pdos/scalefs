@@ -669,12 +669,12 @@ class mfs_operation_delete: public mfs_operation
 
     bool check_dependency (std::vector<u64> &mnode_vec) override
     {
-      return true;
+      return false;
     }
 
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
-      return true;
+      return false;
     }
 
     void print()
