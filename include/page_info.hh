@@ -61,8 +61,8 @@ class page_info : public PAGE_REFCOUNT referenced, public alloc_debug_info
 protected:
   void onzero()
   {
-    kfree(va());
     this->~page_info();
+    kfree(va());
   }
 
 public:
