@@ -197,10 +197,12 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
       int bi = *bno % BPB;
       int m = 1 << (bi % 8);
       if (alloc) {
-        assert((locked->data[bi/8] & m) == 0);
+        if ((locked->data[bi/8] & m) != 0)
+          panic("balloc_free_on_disk: block %d already in use", *bno);
         locked->data[bi/8] |= m;
       } else {
-        assert((locked->data[bi/8] & m) != 0);
+        if ((locked->data[bi/8] & m) == 0)
+          panic("balloc_free_on_disk: block %d already free", *bno);
         locked->data[bi/8] &= ~m;
       }
     } while (++bno && bno != blocks.end() && *bno <= max_bno);
@@ -844,6 +846,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
     if((addr = ip->addrs[bn]) == 0) {
       addr = balloc(ip->dev, trans);
       if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
+        cprintf("bmap: race1\n");
         bfree_nozero(ip->dev, addr, trans);
         goto retry0;
       }
@@ -858,6 +861,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       if((addr = ip->addrs[NDIRECT]) == 0) {
         addr = balloc(ip->dev, trans);
         if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
+          cprintf("bmap: race2\n");
           bfree_nozero(ip->dev, addr, trans);
           goto retry1;
         }
@@ -869,9 +873,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
       memmove((void*)iaddrs, copy->data, IADDRSSZ);
 
       if (!cmpxch(&ip->iaddrs, (volatile u32*)nullptr, iaddrs)) {
-        bfree_nozero(ip->dev, addr, trans);
         kmfree((void*)iaddrs, IADDRSSZ);
-        ip->addrs[NDIRECT] = 0;
         goto retry1;
       }
     }
@@ -880,6 +882,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
     if ((addr = ip->iaddrs[bn]) == 0) {
       addr = balloc(ip->dev, trans);
       if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
+        cprintf("bmap: race4\n");
         bfree_nozero(ip->dev, addr, trans);
         goto retry2;
       }
@@ -904,6 +907,7 @@ retry3:
   if (ip->addrs[NDIRECT+1] == 0) {
     addr = balloc(ip->dev, trans);
     if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
+      cprintf("bmap: race5\n");
       bfree_nozero(ip->dev, addr, trans);
       goto retry3;
     }
