@@ -141,7 +141,7 @@ heap_profile_print1(print_stream *s, int limit, heap_profile_arena arena)
   for (auto &loc : sorted) {
     if (limit-- == 0)
       break;
-    s->println(loc.rip, " ", loc.prbytes, " bytes in ", loc.count,
+    s->println(loc.rip, " ", loc.prbytes, " bytes in ", loc.prcount,
                " allocations");
   }
 
@@ -149,7 +149,7 @@ heap_profile_print1(print_stream *s, int limit, heap_profile_arena arena)
   uintptr_t total_bytes = 0, total_count = 0;
   for (auto &loc : sorted) {
     total_bytes += loc.prbytes;
-    total_count += loc.count;
+    total_count += loc.prcount;
   }
   s->println("Total: ", total_bytes, " bytes in ", total_count, " allocations");
 }
