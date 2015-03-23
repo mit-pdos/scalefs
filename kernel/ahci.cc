@@ -19,6 +19,7 @@ static struct {
   char serial[20];
 } allowed_disks[] = {
   { "QEMU HARDDISK                          ", "QM00005            " },
+  { "ST9500620NS                            ", "            9XF00VT" },
 };
 
 class ahci_hba;
