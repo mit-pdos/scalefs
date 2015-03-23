@@ -346,6 +346,14 @@ ahci_port::alloc_cmdslot(sref<disk_completion> dc)
     for (int cmdslot = (last_cmdslot + 1) % hba->ncs; cmdslot < hba->ncs;
          cmdslot++) {
 
+      if (cmdslot % 8 != 0) {
+        if (cmdslot == hba->ncs - 1 && !all_scanned) {
+          cmdslot = -1;
+          all_scanned = true;
+        }
+        continue;
+      }
+
       if (!cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot)) &&
           !(preg->sact & (1 << cmdslot))) {
 
