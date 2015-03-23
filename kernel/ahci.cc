@@ -570,15 +570,20 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
       portmem->cmdh[cmdslot].prdbc = 0;
     }
 
-    if (cmd == IDE_CMD_WRITE_DMA_EXT) {
-      portmem->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
+    if (cmd == IDE_CMD_WRITE_DMA_EXT)
       portmem->cmdh[cmdslot].prdbc = len;
-    }
+
   } else {
     portmem->cmdh[cmdslot].prdbc = 0;
   }
 
   fill_fis(cmdslot, &fis);
+
+  // Update the Write bit in the flags *after* invoking fill_fis(), to ensure
+  // that it remains set (and hence allow the disk write to go through).
+  // Otherwise, disk writes never complete on ben.
+  if (cmd == IDE_CMD_WRITE_DMA_EXT)
+    portmem->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
 
   // Mark the command as issued, for the interrupt handler's benefit.
   // The cmdslot_alloc_lock protects 'cmds_issued' as well.
