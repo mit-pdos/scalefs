@@ -7,6 +7,7 @@
 #include "atomic_util.hh"
 #include "lockwrap.hh"
 #include "weakcache.hh"
+#include "disk.hh"
 
 class buf : public refcache::weak_referenced {
 public:

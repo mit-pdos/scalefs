@@ -47,6 +47,7 @@ class print_stream;
 class mnode;
 class buf;
 class transaction;
+class disk_completion;
 
 // acpi.c
 typedef void *ACPI_HANDLE;
@@ -140,7 +141,12 @@ void            inithz(void);
 void            ideinit(void);
 void            ideintr(void);
 void            ideread(u32 dev, char* data, u64 count, u64 offset);
+void            ideread_async(u32 dev, char* data, u64 count, u64 offset,
+                              sref<disk_completion> dc);
 void            idewrite(u32 dev, const char* data, u64 count, u64 offset);
+void            idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
+                               sref<disk_completion> dc);
+void            ideflush(void);
 
 // idle.cc
 struct proc *   idleproc(void);

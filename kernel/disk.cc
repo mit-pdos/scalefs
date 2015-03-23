@@ -63,10 +63,33 @@ ideread(u32 dev, char* data, u64 count, u64 offset)
 }
 
 void
+ideread_async(u32 dev, char* data, u64 count, u64 offset,
+              sref<disk_completion> dc)
+{
+  assert(disks.size() > 0);
+  disks[0]->aread(data, count, offset, dc);
+}
+
+void
 idewrite(u32 dev, const char* data, u64 count, u64 offset)
 {
   assert(disks.size() > 0);
   disks[0]->write(data, count, offset);
+}
+
+void
+idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
+               sref<disk_completion> dc)
+{
+  assert(disks.size() > 0);
+  disks[0]->awrite(data, count, offset, dc);
+}
+
+void
+ideflush()
+{
+  assert(disks.size() > 0);
+  disks[0]->flush();
 }
 
 #if AHCIIDE

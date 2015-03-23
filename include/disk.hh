@@ -78,9 +78,23 @@ public:
     readv(&iov, 1, off);
   }
 
+  void aread(char* buf, u64 nbytes, u64 off,
+             sref<disk_completion> dc)
+  {
+    kiovec iov = { (void*) buf, nbytes };
+    areadv(&iov, 1, off, dc);
+  }
+
   void write(const char* buf, u64 nbytes, u64 off) {
     kiovec iov = { (void*) buf, nbytes };
     writev(&iov, 1, off);
+  }
+
+  void awrite(const char* buf, u64 nbytes, u64 off,
+              sref<disk_completion> dc)
+  {
+    kiovec iov = { (void*) buf, nbytes };
+    awritev(&iov, 1, off, dc);
   }
 };
 
