@@ -208,6 +208,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   size_t portmem_size = (sizeof(ahci_port_mem) + PGSIZE-1) & ~(PGSIZE-1);
   portmem = (ahci_port_mem*) kalloc("ahci_port_mem", portmem_size);
   assert(portmem && portmem_size >= sizeof(ahci_port_mem));
+  memset(portmem, 0, portmem_size);
 
   /* Wait for port to quiesce */
   if (preg->cmd & (AHCI_PORT_CMD_ST | AHCI_PORT_CMD_CR |
