@@ -91,7 +91,7 @@ bzero_writeback(int dev, int bno)
     auto locked = bp->write();
     memset(locked->data, 0, BSIZE);
   }
-  bp->writeback();
+  bp->writeback_async();
 }
 
 //
@@ -1227,7 +1227,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
         bp->add_to_transaction(trans);
     }
     if (writeback)
-      bp->writeback();
+      bp->writeback_async();
   }
   // Don't update inode yet. Wait till all the pages have been written to and then
   // call update_size to update the inode just once.

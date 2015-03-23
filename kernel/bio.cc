@@ -49,7 +49,7 @@ buf::put(u32 dev, u64 block)
 }
 
 void
-buf::writeback()
+buf::writeback(bool sync)
 {
   lock_guard<sleeplock> l(&writeback_lock_);
 
@@ -71,7 +71,18 @@ buf::writeback()
   // while the copy operation is still in progress. Supporting asynchronous
   // disk-writes would need a more careful design, to manage the buf's
   // lifetime properly!
-  idewrite(dev_, copy->data, BSIZE, block_*BSIZE);
+
+  async_iowait_init();
+  idewrite_async(dev_, copy->data, BSIZE, block_*BSIZE, dc_);
+
+  if (sync) // Synchronous disk I/O
+    async_iowait();
+}
+
+void
+buf::writeback_async()
+{
+  writeback(false);
 }
 
 // Must be invoked with the buf's write_lock_ held.

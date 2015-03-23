@@ -19,8 +19,20 @@ public:
 
   static sref<buf> get(u32 dev, u64 block);
   static void put(u32 dev, u64 block);
-  void writeback();
+  void writeback(bool sync = true);
+  void writeback_async();
   void add_to_transaction(transaction *trans);
+
+  void async_iowait_init() {
+    //inc();
+    dc_ = make_sref<disk_completion>();
+  }
+
+  void async_iowait() {
+    dc_->wait();
+    dc_.reset();
+    //dec();
+  }
 
   u32 dev() { return dev_; }
   u64 block() { return block_; }
@@ -77,6 +89,7 @@ private:
   sleeplock write_lock_;
   sleeplock writeback_lock_;
   std::atomic<bool> dirty_;
+  sref<disk_completion> dc_;
 
   bufdata *data_;
 

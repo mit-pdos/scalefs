@@ -94,7 +94,7 @@ struct transaction_diskblock
       auto locked = bp->write();
       memmove(locked->data, blockdata, BSIZE);
     }
-    bp->writeback();
+    bp->writeback_async();
   }
 
 };
