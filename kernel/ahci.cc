@@ -147,8 +147,21 @@ ahci_hba::ahci_hba(struct pci_func *pcif)
     }
   }
 
-  irq ahci_irq = extpic->map_pci_irq(pcif);
-  ahci_irq.enable();
+  irq ahci_irq;
+
+#ifdef HW_ben
+  ahci_irq = pci_map_msi_irq(pcif);
+#endif
+
+  if (!ahci_irq.valid()) {
+    // XXX Annoying that the device needs to know about the extpic.
+    // Better if it just knew about PCI and PCI knew to do this.
+    ahci_irq = extpic->map_pci_irq(pcif);
+    // XXX Annoying that the device needs to know to only enable if it
+    // came from the extpic.
+    ahci_irq.enable();
+  }
+
   ahci_irq.register_handler(this);
   reg->g.ghc |= AHCI_GHC_IE;
 }
