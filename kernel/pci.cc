@@ -189,6 +189,7 @@ irq
 pci_map_msi_irq(struct pci_func *f)
 {
   // PCI System Architecture, Fourth Edition
+  bool is_64bit = false;
 
   if (!f->msi_capreg)
     return irq();
@@ -202,8 +203,9 @@ pci_map_msi_irq(struct pci_func *f)
 
   u32 cap_entry = pci_conf_read(f, f->msi_capreg);  
 
-  if (!(cap_entry & PCI_MSI_MCR_64BIT))
-    panic("pci_map_msi_irq only handles 64-bit address capable devices");
+  if (cap_entry & PCI_MSI_MCR_64BIT)
+    is_64bit = true;
+
   if (PCI_MSI_MCR_MMC(cap_entry) != 0)
     panic("pci_map_msi_irq only handles 1 requested message");
 
@@ -226,7 +228,6 @@ pci_map_msi_irq(struct pci_func *f)
                    (dest << 12) |     // destination ID
                    (1 << 3) |         // redirection hint
                    (0 << 2));         // destination mode
-    pci_conf_write(f, f->msi_capreg + 4*2, 0);
   } else {
     // IOMMU remapped interrupts
     pci_conf_write(f, f->msi_capreg + 4*1,
@@ -235,6 +236,11 @@ pci_map_msi_irq(struct pci_func *f)
                    ((iommu_index >> 15) << 2) |
                    (1 << 4) |          // VT-d interrupt
                    (1 << 3));          // Subhandle valid
+  }
+
+  if (is_64bit) {
+    // Zero out the most-significant 32-bits of the Message Address Register,
+    // which is at Dword 2 for 64-bit devices.
     pci_conf_write(f, f->msi_capreg + 4*2, 0);
   }
 
@@ -247,14 +253,18 @@ pci_map_msi_irq(struct pci_func *f)
   // (The Message Data Register format is mandated by the x86
   // architecture.  See 9.11.2 in the Vol. 3 of the Intel architecture
   // manual.
+
+  // Message Data Register is at Dword 2 for 32-bit devices, and at Dword 3
+  // for 64-bit devices.
+  int offset = is_64bit ? 3 : 2;
   if (!iommu) {
-    pci_conf_write(f, f->msi_capreg + 4*3,
+    pci_conf_write(f, f->msi_capreg + 4*offset,
                    (0 << 15) |        // trigger mode (edge)
                    //(0 << 14) |      // level for trigger mode (don't care)
                    (0 << 8) |         // delivery mode (fixed)
                    res.vector);       // vector
   } else {
-    pci_conf_write(f, f->msi_capreg + 4*3, 0);
+    pci_conf_write(f, f->msi_capreg + 4*offset, 0);
   }
 
   // Step 8. Set the MSI enable bit in the device's Message
