@@ -613,6 +613,8 @@ mfs_interface::__flush_transaction(transaction *tr)
   for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
     (*b)->async_iowait();
 
+  ideflush();
+
   // The blocks have been written to disk successfully. Safe to delete
   // this transaction from the journal. (This means that all the
   // transactions till this point have made it to the disk. So the journal
@@ -684,7 +686,14 @@ mfs_interface::write_transaction_to_journal(
     offset += BSIZE;
   }
 
+  // Write out the disk blocks in the transaction to stable storage before
+  // committing the transaction.
+  fs_journal->update_offset(offset);
+  trans->write_to_disk();
+  delete trans;
+
   // Each transaction ends with a commit block
+  trans = new transaction(0);
   journal_block_header hdcommit(timestamp, 0, jrnl_commit);
   memset(buf, 0, sizeof(buf)); 
   memmove(buf, (void*)&hdcommit, sizeof(hdcommit));
