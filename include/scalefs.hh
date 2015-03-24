@@ -43,6 +43,8 @@ struct transaction_diskblock
                           // been updated several times, but the changes not
                           // necessarily logged in timestamp order.
 
+  sref<disk_completion> dc;
+
   NEW_DELETE_OPS(transaction_diskblock);
 
   transaction_diskblock(u32 n, char buf[BSIZE])
@@ -67,7 +69,22 @@ struct transaction_diskblock
   // Write out the block contents to disk block # blocknum.
   void writeback()
   {
-    idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
+      idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
+  }
+
+  // Write out the block contents to disk block # blocknum,
+  // using asynchronous disk I/O.
+  void writeback_async()
+  {
+      dc = make_sref<disk_completion>();
+      idewrite_async(1, blockdata, BSIZE, blocknum*BSIZE, dc);
+  }
+
+  // Wait for the async I/O to complete.
+  void async_iowait()
+  {
+    dc->wait();
+    dc.reset();
   }
 
   void writeback_through_bufcache()
@@ -190,7 +207,10 @@ class transaction
     void write_to_disk()
     {
       for (auto b = blocks.begin(); b != blocks.end(); b++)
-        (*b)->writeback();
+        (*b)->writeback_async();
+
+      for (auto b = blocks.begin(); b != blocks.end(); b++)
+        (*b)->async_iowait();
     }
 
     // Writes the blocks in the transaction to disk, and updates the

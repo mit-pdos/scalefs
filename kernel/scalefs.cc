@@ -608,7 +608,10 @@ mfs_interface::__flush_transaction(transaction *tr)
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
   for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
-    (*b)->writeback();
+    (*b)->writeback_async();
+
+  for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
+    (*b)->async_iowait();
 
   // The blocks have been written to disk successfully. Safe to delete
   // this transaction from the journal. (This means that all the
