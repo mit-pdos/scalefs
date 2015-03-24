@@ -23,6 +23,7 @@ void delete_dirs(const char *topdir, int num_dirs);
 int create_files(const char *topdir, char *buf);
 int read_files(const char *topdir, char *buf);
 int unlink_files(const char *topdir, char *buf);
+int sync_files(void);
 
 void usage(char *prog)
 {
@@ -77,6 +78,8 @@ int main(int argc, char **argv)
 	/* Create the directories for the files to be spread amongst */
 	create_dirs(topdir, num_dirs);
 
+	sync();
+
 	/* Compute the overhead of the gettimeofday() call */
 
 	gettimeofday(&before, NULL);
@@ -122,7 +125,15 @@ int main(int argc, char **argv)
 	printf ( "unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
 
+	usec = sync_files();
+	sec = (float) usec / 1000000.0;
+	throughput = ((float) num_files / sec);
+	printf ( "sync_files\t%7.3f\t\t%7.3f\n", sec, throughput );
+	fflush ( stdout );
+
 	delete_dirs(topdir, num_dirs);
+
+	sync();
 
 	return 0;
 }
@@ -241,6 +252,22 @@ int unlink_files(const char *topdir, char *buf)
 		if ((i+1) % nfiles_per_dir == 0)
 			j++;
 	}
+	gettimeofday ( &after, NULL );
+	time = time + (after.tv_sec - before.tv_sec) * 1000000 +
+		(after.tv_usec - before.tv_usec);
+	time -= timer_overhead;
+	return time;
+}
+
+int sync_files(void)
+{
+	unsigned long time;
+	struct timeval before, after;
+
+	time = 0;
+	gettimeofday ( &before, NULL );
+	/* Sync everything */
+	sync();
 	gettimeofday ( &after, NULL );
 	time = time + (after.tv_sec - before.tv_sec) * 1000000 +
 		(after.tv_usec - before.tv_usec);
