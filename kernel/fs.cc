@@ -1191,7 +1191,6 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
   int tot, m;
   sref<buf> bp;
   u32 blocknum;
-  char charbuf[BSIZE];
 
   if(ip->type == T_DEV)
     return -1;
@@ -1229,7 +1228,6 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
     {
       auto locked = bp->write();
       memmove(locked->data + off%BSIZE, src, m);
-      memmove(charbuf, locked->data, BSIZE);
 
       // If adding the block to the transaction, we need to copy the contents
       // of the block with the write-lock held, so that we add *this* particular
