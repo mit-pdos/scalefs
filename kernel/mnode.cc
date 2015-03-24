@@ -181,6 +181,14 @@ mfile::resizer::resize_append(u64 size, sref<page_info> pi)
 }
 
 void
+mfile::set_page_dirty(u64 pageidx)
+{
+  auto it = pages_.find(pageidx);
+  auto lock = pages_.acquire(it);
+  it->set_dirty_bit(true);
+}
+
+void
 mfile::resizer::initialize_from_disk(u64 size)
 {
   auto begin = mf_->pages_.begin();
