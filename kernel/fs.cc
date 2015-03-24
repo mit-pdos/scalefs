@@ -73,7 +73,7 @@ void get_superblock(struct superblock *sb) {
 static void
 bzero(int dev, int bno, transaction *trans = NULL)
 {
-  sref<buf> bp = buf::get(dev, bno);
+  sref<buf> bp = buf::get(dev, bno, true);
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
   if (trans)
@@ -86,7 +86,7 @@ bzero(int dev, int bno, transaction *trans = NULL)
 static void
 bzero_writeback(int dev, int bno)
 {
-  sref<buf> bp = buf::get(dev, bno);
+  sref<buf> bp = buf::get(dev, bno, true);
   {
     auto locked = bp->write();
     memset(locked->data, 0, BSIZE);
@@ -1190,6 +1190,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
 
   int tot, m;
   sref<buf> bp;
+  u32 blocknum;
   char charbuf[BSIZE];
 
   if(ip->type == T_DEV)
@@ -1198,14 +1199,25 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
   //if(off > ip->size || off + n < off)
   if(off + n < off)
     return -1;
+
   if(off + n > MAXFILE*BSIZE)
     n = MAXFILE*BSIZE - off;
 
-  u32 blocknum;
-  for(tot=0; tot<n; tot+=m, off+=m, src+=m){
+  for (tot=0; tot<n; tot+=m, off+=m, src+=m) {
+
+    bool skip_disk_read = false;
+    m = min(n - tot, BSIZE - off%BSIZE);
+
     try {
       blocknum = bmap(ip, off/BSIZE, trans);
-      bp = buf::get(ip->dev, blocknum);
+
+      // Skip reading the block from disk if we are going to overwrite the
+      // entire block anyway.
+      if (off % BSIZE == 0 && m == BSIZE)
+        skip_disk_read = true;
+
+      bp = buf::get(ip->dev, blocknum, skip_disk_read);
+
     } catch (out_of_blocks& e) {
       console.println("writei: out of blocks");
       // If we haven't written anything, return an error
@@ -1213,7 +1225,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
         tot = -1;
       break;
     }
-    m = min(n - tot, BSIZE - off%BSIZE);
+
     {
       auto locked = bp->write();
       memmove(locked->data + off%BSIZE, src, m);
@@ -1226,6 +1238,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       if (!writeback && trans)
         bp->add_to_transaction(trans);
     }
+
     if (writeback)
       bp->writeback_async();
   }

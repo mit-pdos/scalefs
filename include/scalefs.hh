@@ -89,7 +89,7 @@ struct transaction_diskblock
 
   void writeback_through_bufcache()
   {
-    sref<buf> bp = buf::get(1, blocknum);
+    sref<buf> bp = buf::get(1, blocknum, true);
     {
       auto locked = bp->write();
       memmove(locked->data, blockdata, BSIZE);

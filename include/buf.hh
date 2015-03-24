@@ -17,7 +17,7 @@ public:
 
   typedef pair<u32, u64> key_t;
 
-  static sref<buf> get(u32 dev, u64 block);
+  static sref<buf> get(u32 dev, u64 block, bool skip_disk_read = false);
   static void put(u32 dev, u64 block);
   void writeback(bool sync = true);
   void writeback_async();

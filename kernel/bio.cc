@@ -9,8 +9,10 @@
 static weakcache<buf::key_t, buf> bufcache(BSIZE << 10);
             //I don't think this was changed when BSIZE was changed from 512 to 4096
 
+// The caller sets @skip_disk_read to true if it is going to overwrite the
+// entire block shortly.
 sref<buf>
-buf::get(u32 dev, u64 block)
+buf::get(u32 dev, u64 block, bool skip_disk_read)
 {
   buf::key_t k = { dev, block };
   for (;;) {
@@ -26,7 +28,8 @@ buf::get(u32 dev, u64 block)
     auto locked = nb->write(); // marks the block as dirty automatically
     if (bufcache.insert(k, nb.get())) {
       nb->cache_pin(true); // keep it in the cache
-      ideread(dev, locked->data, BSIZE, block*BSIZE);
+      if (!skip_disk_read)
+        ideread(dev, locked->data, BSIZE, block*BSIZE);
       nb->mark_clean(); // we just loaded the contents from the disk!
       return nb;
     }
