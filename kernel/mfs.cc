@@ -186,6 +186,7 @@ writei(sref<mnode> m, const char* buf, u64 start, u64 nbytes,
        */
 
       memmove((char*) pi->va() + pgoff, buf + off, pgend - pgoff);
+      m->as_file()->dirty(true);
       m->as_file()->set_page_dirty(pgbase / PGSIZE);
 
       if (resize && *resize)
