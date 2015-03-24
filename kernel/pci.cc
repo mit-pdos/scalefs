@@ -206,8 +206,14 @@ pci_map_msi_irq(struct pci_func *f)
   if (cap_entry & PCI_MSI_MCR_64BIT)
     is_64bit = true;
 
-  if (PCI_MSI_MCR_MMC(cap_entry) != 0)
-    panic("pci_map_msi_irq only handles 1 requested message");
+  u32 log2_messages;
+  if ((log2_messages = PCI_MSI_MCR_MMC(cap_entry)) != 0) {
+    cprintf("pci_map_msi_irq: requested messages %u, granted 1 message\n",
+            1 << log2_messages);
+
+    // Multiple Message Enable is bits 20-22.
+    pci_conf_write(f, f->msi_capreg, cap_entry & ~(0x7 << 20));
+  }
 
   // If we're using an IOMMU, allocate an interrupt redirection entry
   uint64_t iommu_index = 0;
