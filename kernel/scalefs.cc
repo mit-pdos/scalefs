@@ -1000,6 +1000,12 @@ mfs_interface::print_free_blocks(print_stream *s)
 }
 
 void
+mfs_interface::preload_oplog()
+{
+  metadata_log->preload_oplog();
+}
+
+void
 kfreeblockprint(print_stream *s)
 {
   rootfs_interface->print_free_blocks(s);

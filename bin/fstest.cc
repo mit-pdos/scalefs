@@ -69,6 +69,9 @@ static void*
 testfunc_thread(void* arg)
 {
   madvise(0, (size_t) _end, MADV_WILLNEED);
+#if XV6_USER
+  preload_oplog();
+#endif
   testfunc* f = (testfunc*) arg;
   f->run();
   return nullptr;

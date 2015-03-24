@@ -416,6 +416,8 @@ class mfs_interface
     void free_block(u32 bno);
     void print_free_blocks(print_stream *s);
 
+    void preload_oplog();
+
   private:
     void load_dir(sref<inode> i, sref<mnode> m);
     sref<mnode> load_dir_entry(u64 inum, sref<mnode> parent);
@@ -864,6 +866,14 @@ class mfs_logical_log: public mfs_logged_object
     void add_operation(mfs_operation *op)
     {
       get_logger()->push_with_tsc<add_op>(add_op(this, op));
+    }
+
+    // This function pre-allocates a per-core logger for this core,
+    // and sets the bit corresponding to this CPU in oplog's bitmap.
+    // This helps avoid extraneous sharing reports when using commuter.
+    void preload_oplog()
+    {
+      get_logger();
     }
 
   protected:

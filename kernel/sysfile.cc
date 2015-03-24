@@ -882,3 +882,10 @@ sys_sys_spawn(userptr_str upath, userptr<userptr_str> uargv,
 
   return p->pid;
 }
+
+//SYSCALL
+void
+sys_preload_oplog(void)
+{
+  rootfs_interface->preload_oplog();
+}
