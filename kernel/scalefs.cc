@@ -608,8 +608,6 @@ mfs_interface::post_process_transaction(transaction *tr)
 
   for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
     (*b)->async_iowait();
-
-  ideflush();
 }
 
 // Logs a transaction in the disk journal and then applies it to the disk
@@ -646,6 +644,7 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
   delete trans;
 
   post_process_transaction(tr);
+  ideflush();
 
   // The blocks have been written to disk successfully. Safe to delete
   // this transaction from the journal. (This means that all the
@@ -660,8 +659,14 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
 void
 mfs_interface::flush_journal_locked()
 {
-  u64 timestamp;
+  u64 timestamp = 0;
   transaction *trans;
+
+  // A vector of processed transactions, which need to be applied later
+  // (post-processed).
+  std::vector<transaction*> processed_trans_vec;
+
+  trans = new transaction(0);
 
   for (auto it = fs_journal->transaction_log.begin();
        it != fs_journal->transaction_log.end(); it++) {
@@ -669,37 +674,91 @@ mfs_interface::flush_journal_locked()
     timestamp = (*it)->timestamp_;
     pre_process_transaction(*it);
 
+    retry:
     (*it)->prepare_for_commit();
 
-    trans = new transaction(0);
-
-    // Each transaction begins with a start block.
+    // A transaction begins with a start block.
     write_journal_header(jrnl_start, timestamp, trans);
 
     // Write out the transaction blocks to the disk journal in timestamp order.
-    write_journal_transaction_blocks((*it)->blocks, timestamp, trans);
+    if (write_journal_transaction_blocks((*it)->blocks, timestamp, trans) < 0) {
 
-    // Write out the disk blocks in the transaction to stable storage before
-    // committing the transaction.
-    trans->write_to_disk();
-    delete trans;
+      // No space left in the journal to accommodate this sub-transaction.
+      // So commit and apply all the earlier sub-transactions, to make space
+      // for the remaining sub-transactions.
 
-    // Each transaction ends with a commit block.
-    trans = new transaction(0);
+      // Explicitly release this sub-transaction's write_lock. We'll retry this
+      // sub-transaction later.
+      (*it)->finish_after_commit();
 
-    write_journal_header(jrnl_commit, timestamp, trans);
+      // Write out the disk blocks in the transaction to stable storage before
+      // committing the transaction.
+      trans->write_to_disk();
+      delete trans;
 
-    trans->write_to_disk();
-    delete trans;
+      // The transaction ends with a commit block.
+      trans = new transaction(0);
 
-    post_process_transaction(*it);
+      write_journal_header(jrnl_commit, timestamp, trans);
 
-    // The blocks have been written to disk successfully. Safe to delete
-    // this transaction from the journal. (This means that all the
-    // transactions till this point have made it to the disk. So the journal
-    // can simply be truncated.) Since the journal is static, the journal file
-    // simply needs to be zero-filled.)
-    clear_journal();
+      trans->write_to_disk();
+      delete trans;
+
+      // Apply all the committed sub-transactions to their final destinations
+      // on the disk.
+      for (auto t = processed_trans_vec.begin();
+           t != processed_trans_vec.end(); t++) {
+
+        post_process_transaction(*t);
+      }
+
+      ideflush();
+
+      processed_trans_vec.clear();
+      clear_journal();
+
+      // Retry this sub-transaction, since we couldn't write it to the journal.
+      trans = new transaction(0);
+      goto retry;
+    }
+
+    processed_trans_vec.push_back(*it);
+  }
+
+  // Finalize and flush out any remaining transactions from the journal.
+
+  // Write out the disk blocks in the transaction to stable storage before
+  // committing the transaction.
+  trans->write_to_disk();
+  delete trans;
+
+  // The transaction ends with a commit block.
+  trans = new transaction(0);
+
+  write_journal_header(jrnl_commit, timestamp, trans);
+
+  trans->write_to_disk();
+  delete trans;
+
+  for (auto t = processed_trans_vec.begin();
+       t != processed_trans_vec.end(); t++) {
+
+    post_process_transaction(*t);
+  }
+
+  ideflush();
+
+  processed_trans_vec.clear();
+
+  // The blocks have been written to disk successfully. Safe to delete
+  // this transaction from the journal. (This means that all the
+  // transactions till this point have made it to the disk. So the journal
+  // can simply be truncated.) Since the journal is static, the journal file
+  // simply needs to be zero-filled.)
+  clear_journal();
+
+  for (auto it = fs_journal->transaction_log.begin();
+       it != fs_journal->transaction_log.end(); it++) {
 
     delete (*it);
   }
@@ -761,14 +820,29 @@ mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
 
 // Write a transaction's disk blocks to the journal in memory. Don't write
 // or flush it to the disk yet.
-void
+int
 mfs_interface::write_journal_transaction_blocks(
     const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
     const u64 timestamp, transaction *trans)
 {
   assert(sv6_journal);
 
-  char buf[sizeof(journal_block_header)];
+  size_t hdr_size = sizeof(journal_block_header);
+  char buf[hdr_size];
+
+  // Estimate the space requirements of this transaction in the journal.
+  u64 trans_size = 0;
+  u32 offset = fs_journal->current_offset();
+
+  // The start block for this transaction has already been written to the
+  // journal. So we now need space to write vec.size() disk blocks of the
+  // transaction and the final commit block.
+  trans_size += (hdr_size + BSIZE) * (1 + vec.size());
+
+  if (offset + trans_size > PHYS_JOURNAL_SIZE) {
+    // No space left in the journal.
+    return -1;
+  }
 
   // Write out the transaction diskblocks.
   for (auto it = vec.begin(); it != vec.end(); it++) {
@@ -778,6 +852,8 @@ mfs_interface::write_journal_transaction_blocks(
     memmove(buf, (void *) &hddata, sizeof(hddata));
     write_journal_hdrblock(buf, (*it)->blockdata, trans);
   }
+
+  return 0;
 }
 
 // Called on reboot after a crash. Applies committed transactions.

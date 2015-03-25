@@ -203,6 +203,11 @@ class transaction
       assert(static_cast<bool>(l));
     }
 
+    void finish_after_commit()
+    {
+      write_lock.release();
+    }
+
     // Write the blocks in this transaction to disk. Used to write the journal.
     void write_to_disk()
     {
@@ -393,7 +398,7 @@ class mfs_interface
     void write_journal_hdrblock(const char *header, const char *datablock,
                                 transaction *tr);
     void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr);
-    void write_journal_transaction_blocks(const
+    int  write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr);
     void process_journal();
