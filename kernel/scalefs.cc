@@ -729,52 +729,61 @@ mfs_interface::process_journal()
 {
   u32 offset = 0;
   u64 current_transaction = 0;
-  bool jrnl_error = false;
   transaction *trans = new transaction(0);
   std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
+
+  size_t hdr_size = sizeof(journal_block_header);
+  char hdbuf[hdr_size];
+  char hdcmp[hdr_size];
+  char databuf[BSIZE];
+  bool jrnl_error = false;
+
+  memset(&hdcmp, 0, sizeof(hdcmp));
+
   sv6_journal = namei(sref<inode>(), "/sv6journal");
   assert(sv6_journal);
+
   ilock(sv6_journal, 1);
 
   while (!jrnl_error) {
-    char hdbuf[sizeof(journal_block_header)];
-    char databuf[BSIZE];
-    if (readi(sv6_journal, hdbuf, offset, sizeof(journal_block_header)) !=
-      sizeof(journal_block_header))
+
+    if (readi(sv6_journal, hdbuf, offset, hdr_size) != hdr_size)
       break;
 
-    char hdcmp[sizeof(journal_block_header)];
-    memset(&hdcmp, 0, sizeof(journal_block_header));
-    if (!memcmp(hdcmp, hdbuf, sizeof(journal_block_header)))
+    if (!memcmp(hdcmp, hdbuf, hdr_size))
       break;  // Zero-filled block indicates end of journal
 
-    offset += sizeof(journal_block_header);
+    offset += hdr_size;
+
     if (readi(sv6_journal, databuf, offset, BSIZE) != BSIZE)
       break;
+
     offset += BSIZE;
 
     journal_block_header hd;
-    memset(&hd, 0, sizeof(hd));
-    memmove(&hd, hdbuf, sizeof(hdbuf));
+    memmove(&hd, hdbuf, sizeof(hd));
 
     switch (hd.block_type) {
+
       case jrnl_start:
         current_transaction = hd.timestamp;
         block_vec.clear();
         break;
+
       case jrnl_data:
-        if (hd.timestamp == current_transaction) {
-          block_vec.push_back(std::make_unique<transaction_diskblock>(hd.blocknum,databuf));
-        }
+        if (hd.timestamp == current_transaction)
+          block_vec.push_back(std::make_unique<transaction_diskblock>(hd.blocknum, databuf));
         else
           jrnl_error = true;
         break;
+
       case jrnl_commit:
         if (hd.timestamp == current_transaction)
           trans->add_blocks(std::move(block_vec));
         else
           jrnl_error = true;
         break;
+
       default:
         jrnl_error = true;
         break;
