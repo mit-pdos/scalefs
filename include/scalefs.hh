@@ -491,6 +491,23 @@ class mfs_interface
     // Mapping from in-memory mnode numbers to disk inode numbers
     linearhash<u64, u64> *mnode_to_inode;
 
+    typedef struct mfs_op_idx {
+      int create_index;
+      int link_index;
+      int unlink_index;
+      int rename_index;
+      int delete_index;
+
+      mfs_op_idx() : create_index(-1), link_index(-1), unlink_index(-1),
+                     rename_index(-1), delete_index(-1) {}
+    } mfs_op_idx;
+
+    // Hash-table to absorb deletes with create/link/unlink/rename
+    // of the same mnode in the transaction log.
+    // Mapping from mnode number to indices of the transactions corresponding
+    // to that mnode in the transaction log.
+    linearhash<u64, mfs_op_idx> *prune_trans_log;
+
     journal *fs_journal;            // The phsyical journal
     mfs_logical_log *metadata_log;  // The logical log
     sref<inode> sv6_journal;
