@@ -125,6 +125,8 @@ int main(int argc, char **argv)
 	printf ( "unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
 
+	sleep(5);
+
 	usec = sync_files();
 	sec = (float) usec / 1000000.0;
 	throughput = ((float) num_files / sec);
