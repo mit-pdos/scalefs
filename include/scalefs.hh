@@ -55,6 +55,14 @@ struct transaction_diskblock
     timestamp = get_timestamp();
   }
 
+  transaction_diskblock(u32 n, char buf[BSIZE], u64 blk_timestamp)
+  {
+    blockdata = (char *) kmalloc(BSIZE, "transaction_diskblock");
+    blocknum = n;
+    memmove(blockdata, buf, BSIZE);
+    timestamp = blk_timestamp;
+  }
+
   ~transaction_diskblock()
   {
     kmfree(blockdata, BSIZE);
@@ -170,6 +178,46 @@ class transaction
         tdp = b.get();
 
         add_block(std::move(b));
+
+        // Now insert a (non-owning) pointer to that block in the hash-table.
+        trans_blocks->insert(blocknum, tdp);
+      }
+    }
+
+    void add_unique_block(transaction_diskblock *b)
+    {
+      transaction_diskblock *tdp;
+      u64 blocknum = b->blocknum;
+      u64 new_timestamp = b->timestamp;
+
+      // Lookup the hash-table to see if we have already logged that block in
+      // this transaction.
+      if (trans_blocks->lookup(blocknum, &tdp)) {
+
+        // Nothing to do if that logged block already has the latest contents.
+        if (tdp->timestamp > new_timestamp)
+          return;
+
+        // Update the transaction-diskblock with new contents and re-insert it
+        // into the hash table.
+        trans_blocks->remove(blocknum);
+        {
+          auto l = write_lock.guard();
+          memmove(tdp->blockdata, b->blockdata, BSIZE);
+          tdp->timestamp = new_timestamp;
+        }
+        trans_blocks->insert(blocknum, tdp);
+
+      } else {
+        // This is the first time this diskblock is being logged in the
+        // transaction. So create a new one.
+        auto blk = std::make_unique<transaction_diskblock>(blocknum,
+                                           b->blockdata, new_timestamp);
+
+        // Get a raw pointer to that block (don't grab its ownership).
+        tdp = blk.get();
+
+        add_block(std::move(blk));
 
         // Now insert a (non-owning) pointer to that block in the hash-table.
         trans_blocks->insert(blocknum, tdp);
