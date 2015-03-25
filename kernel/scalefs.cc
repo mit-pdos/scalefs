@@ -666,22 +666,56 @@ mfs_interface::flush_journal_locked()
 }
 
 void
-mfs_interface::write_journal_block(const char *header, const char *datablock,
-                                   u32 *offset, transaction *tr)
+mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
+                                      transaction *tr)
 {
   size_t data_size = BSIZE;
   size_t hdr_size = sizeof(journal_block_header);
+  u32 offset = fs_journal->current_offset();
 
-  if (writei(sv6_journal, header, *offset, hdr_size, tr) != hdr_size)
+  if (writei(sv6_journal, header, offset, hdr_size, tr) != hdr_size)
     panic("Journal write (header block) failed\n");
 
-  *offset += hdr_size;
+  offset += hdr_size;
 
-  if (writei(sv6_journal, datablock, *offset, data_size, tr) != data_size)
+  if (writei(sv6_journal, datablock, offset, data_size, tr) != data_size)
     panic("Journal write (data block) failed\n");
 
-  *offset += data_size;
+  offset += data_size;
+
+  fs_journal->update_offset(offset);
 }
+
+void
+mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
+                                    transaction *trans)
+{
+  char databuf[BSIZE];
+  char buf[sizeof(journal_block_header)];
+
+  journal_block_header hdstart(timestamp, 0, jrnl_start);
+  journal_block_header hdcommit(timestamp, 0, jrnl_commit);
+
+  memset(buf, 0, sizeof(buf));
+  memset(databuf, 0, sizeof(databuf));
+
+  switch (hdr_type) {
+    case jrnl_start:
+      memmove(buf, (void *) &hdstart, sizeof(hdstart));
+      write_journal_hdrblock(buf, databuf, trans);
+      break;
+
+    case jrnl_commit:
+      memmove(buf, (void *) &hdcommit, sizeof(hdcommit));
+      write_journal_hdrblock(buf, databuf, trans);
+      break;
+
+    default:
+      cprintf("write_journal_header: requested invalid header %u\n", hdr_type);
+      break;
+  }
+}
+
 
 // Writes out a single journal transaction to disk
 void
@@ -691,25 +725,13 @@ mfs_interface::write_transaction_to_journal(
 {
   assert(sv6_journal);
 
-  u32 offset;
   transaction *trans;
-  char databuf[BSIZE];
   char buf[sizeof(journal_block_header)];
-
-  journal_block_header hdstart(timestamp, 0, jrnl_start);
-  journal_block_header hdcommit(timestamp, 0, jrnl_commit);
-
-  memset(buf, 0, sizeof(buf));
-  memset(databuf, 0, sizeof(databuf)); // Zeroing out once is sufficient.
-
-  offset = fs_journal->current_offset();
 
   trans = new transaction(0);
 
   // Each transaction begins with a start block.
-  memmove(buf, (void *) &hdstart, sizeof(hdstart));
-
-  write_journal_block(buf, databuf, &offset, trans);
+  write_journal_header(jrnl_start, timestamp, trans);
 
   // Write out the transaction diskblocks.
   for (auto it = vec.begin(); it != vec.end(); it++) {
@@ -718,24 +740,19 @@ mfs_interface::write_transaction_to_journal(
 
     memmove(buf, (void *) &hddata, sizeof(hddata));
 
-    write_journal_block(buf, (*it)->blockdata, &offset, trans);
+    write_journal_hdrblock(buf, (*it)->blockdata, trans);
   }
 
   // Write out the disk blocks in the transaction to stable storage before
   // committing the transaction.
-  fs_journal->update_offset(offset);
   trans->write_to_disk();
   delete trans;
 
   // Each transaction ends with a commit block.
   trans = new transaction(0);
 
-  memmove(buf, (void *) &hdcommit, sizeof(hdcommit));
+  write_journal_header(jrnl_commit, timestamp, trans);
 
-  write_journal_block(buf, databuf, &offset, trans);
-
-  // Update the journal file inode too.
-  fs_journal->update_offset(offset);
   trans->write_to_disk();
   delete trans;
 }

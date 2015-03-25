@@ -390,8 +390,9 @@ class mfs_interface
     void post_process_transaction(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
     void flush_journal_locked();
-    void write_journal_block(const char *header, const char *datablock,
-                             u32 *offset, transaction *tr);
+    void write_journal_hdrblock(const char *header, const char *datablock,
+                                transaction *tr);
+    void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr);
     void write_transaction_to_journal(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp);
     void process_journal();
