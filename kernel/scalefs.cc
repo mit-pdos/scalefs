@@ -647,14 +647,23 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
 void
 mfs_interface::flush_journal_locked()
 {
-  u64 timestamp = 0;
+  u64 timestamp = 0, prolog_timestamp = 0;
   transaction *trans;
 
   // A vector of processed transactions, which need to be applied later
   // (post-processed).
   std::vector<transaction*> processed_trans_vec;
 
+  if (fs_journal->transaction_log.size() == 0)
+    return; // Nothing to do.
+
   trans = new transaction(0);
+
+  {
+    auto it = fs_journal->transaction_log.begin();
+    prolog_timestamp = (*it)->timestamp_;
+    write_journal_trans_prolog(prolog_timestamp, trans);
+  }
 
   for (auto it = fs_journal->transaction_log.begin();
        it != fs_journal->transaction_log.end(); it++) {
@@ -664,8 +673,6 @@ mfs_interface::flush_journal_locked()
 
     retry:
     (*it)->prepare_for_commit();
-
-    write_journal_trans_prolog(timestamp, trans);
 
     // Write out the transaction blocks to the disk journal in timestamp order.
     if (write_journal_transaction_blocks((*it)->blocks, timestamp, trans) < 0) {
@@ -678,7 +685,7 @@ mfs_interface::flush_journal_locked()
       // sub-transaction later.
       (*it)->finish_after_commit();
 
-      write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
+      write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
 
       // Apply all the committed sub-transactions to their final destinations
       // on the disk.
@@ -695,6 +702,8 @@ mfs_interface::flush_journal_locked()
 
       // Retry this sub-transaction, since we couldn't write it to the journal.
       trans = new transaction(0);
+      prolog_timestamp = timestamp;
+      write_journal_trans_prolog(prolog_timestamp, trans);
       goto retry;
     }
 
@@ -703,7 +712,7 @@ mfs_interface::flush_journal_locked()
 
   // Finalize and flush out any remaining transactions from the journal.
 
-  write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
+  write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
 
   for (auto t = processed_trans_vec.begin();
        t != processed_trans_vec.end(); t++) {
