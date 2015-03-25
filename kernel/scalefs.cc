@@ -791,6 +791,29 @@ mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
   }
 }
 
+bool
+mfs_interface::fits_in_journal(size_t num_trans_blocks)
+{
+  // Estimate the space requirements of this transaction in the journal.
+
+  u64 trans_size;
+  size_t hdr_size = sizeof(journal_block_header);
+  u32 offset = fs_journal->current_offset();
+
+  // The start block for this transaction has already been written to the
+  // journal. So we now need space to write num_trans_blocks disk blocks
+  // of the transaction and the final commit block.
+  trans_size = (hdr_size + BSIZE) * (1 + num_trans_blocks);
+
+  if (offset + trans_size > PHYS_JOURNAL_SIZE) {
+    // No space left in the journal.
+    return false;
+  }
+
+  return true;
+}
+
+
 void
 mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
 {
@@ -810,19 +833,8 @@ mfs_interface::write_journal_transaction_blocks(
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
 
-  // Estimate the space requirements of this transaction in the journal.
-  u64 trans_size = 0;
-  u32 offset = fs_journal->current_offset();
-
-  // The start block for this transaction has already been written to the
-  // journal. So we now need space to write vec.size() disk blocks of the
-  // transaction and the final commit block.
-  trans_size += (hdr_size + BSIZE) * (1 + vec.size());
-
-  if (offset + trans_size > PHYS_JOURNAL_SIZE) {
-    // No space left in the journal.
+  if (!fits_in_journal(vec.size()))
     return -1;
-  }
 
   // Write out the transaction diskblocks.
   for (auto it = vec.begin(); it != vec.end(); it++) {
