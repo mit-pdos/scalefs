@@ -617,13 +617,33 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
+  u64 timestamp = tr->timestamp_;
+  transaction *trans;
 
   pre_process_transaction(tr);
 
   tr->prepare_for_commit();
 
+  trans = new transaction(0);
+
+  // Each transaction begins with a start block.
+  write_journal_header(jrnl_start, timestamp, trans);
+
   // Write out the transaction blocks to the disk journal in timestamp order.
-  write_transaction_to_journal(tr->blocks, tr->timestamp_);
+  write_journal_transaction_blocks(tr->blocks, timestamp, trans);
+
+  // Write out the disk blocks in the transaction to stable storage before
+  // committing the transaction.
+  trans->write_to_disk();
+  delete trans;
+
+  // Each transaction ends with a commit block.
+  trans = new transaction(0);
+
+  write_journal_header(jrnl_commit, timestamp, trans);
+
+  trans->write_to_disk();
+  delete trans;
 
   post_process_transaction(tr);
 
@@ -640,15 +660,37 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
 void
 mfs_interface::flush_journal_locked()
 {
+  u64 timestamp;
+  transaction *trans;
+
   for (auto it = fs_journal->transaction_log.begin();
        it != fs_journal->transaction_log.end(); it++) {
 
+    timestamp = (*it)->timestamp_;
     pre_process_transaction(*it);
 
     (*it)->prepare_for_commit();
 
+    trans = new transaction(0);
+
+    // Each transaction begins with a start block.
+    write_journal_header(jrnl_start, timestamp, trans);
+
     // Write out the transaction blocks to the disk journal in timestamp order.
-    write_transaction_to_journal((*it)->blocks, (*it)->timestamp_);
+    write_journal_transaction_blocks((*it)->blocks, timestamp, trans);
+
+    // Write out the disk blocks in the transaction to stable storage before
+    // committing the transaction.
+    trans->write_to_disk();
+    delete trans;
+
+    // Each transaction ends with a commit block.
+    trans = new transaction(0);
+
+    write_journal_header(jrnl_commit, timestamp, trans);
+
+    trans->write_to_disk();
+    delete trans;
 
     post_process_transaction(*it);
 
@@ -717,21 +759,16 @@ mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
 }
 
 
-// Writes out a single journal transaction to disk
+// Write a transaction's disk blocks to the journal in memory. Don't write
+// or flush it to the disk yet.
 void
-mfs_interface::write_transaction_to_journal(
+mfs_interface::write_journal_transaction_blocks(
     const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
-    const u64 timestamp)
+    const u64 timestamp, transaction *trans)
 {
   assert(sv6_journal);
 
-  transaction *trans;
   char buf[sizeof(journal_block_header)];
-
-  trans = new transaction(0);
-
-  // Each transaction begins with a start block.
-  write_journal_header(jrnl_start, timestamp, trans);
 
   // Write out the transaction diskblocks.
   for (auto it = vec.begin(); it != vec.end(); it++) {
@@ -739,22 +776,8 @@ mfs_interface::write_transaction_to_journal(
     journal_block_header hddata(timestamp, (*it)->blocknum, jrnl_data);
 
     memmove(buf, (void *) &hddata, sizeof(hddata));
-
     write_journal_hdrblock(buf, (*it)->blockdata, trans);
   }
-
-  // Write out the disk blocks in the transaction to stable storage before
-  // committing the transaction.
-  trans->write_to_disk();
-  delete trans;
-
-  // Each transaction ends with a commit block.
-  trans = new transaction(0);
-
-  write_journal_header(jrnl_commit, timestamp, trans);
-
-  trans->write_to_disk();
-  delete trans;
 }
 
 // Called on reboot after a crash. Applies committed transactions.
