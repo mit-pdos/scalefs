@@ -624,24 +624,12 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
 
   trans = new transaction(0);
 
-  // Each transaction begins with a start block.
-  write_journal_header(jrnl_start, timestamp, trans);
+  write_journal_trans_prolog(timestamp, trans);
 
   // Write out the transaction blocks to the disk journal in timestamp order.
   write_journal_transaction_blocks(tr->blocks, timestamp, trans);
 
-  // Write out the disk blocks in the transaction to stable storage before
-  // committing the transaction.
-  trans->write_to_disk();
-  delete trans;
-
-  // Each transaction ends with a commit block.
-  trans = new transaction(0);
-
-  write_journal_header(jrnl_commit, timestamp, trans);
-
-  trans->write_to_disk();
-  delete trans;
+  write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
 
   post_process_transaction(tr);
   ideflush();
@@ -677,8 +665,7 @@ mfs_interface::flush_journal_locked()
     retry:
     (*it)->prepare_for_commit();
 
-    // A transaction begins with a start block.
-    write_journal_header(jrnl_start, timestamp, trans);
+    write_journal_trans_prolog(timestamp, trans);
 
     // Write out the transaction blocks to the disk journal in timestamp order.
     if (write_journal_transaction_blocks((*it)->blocks, timestamp, trans) < 0) {
@@ -691,18 +678,7 @@ mfs_interface::flush_journal_locked()
       // sub-transaction later.
       (*it)->finish_after_commit();
 
-      // Write out the disk blocks in the transaction to stable storage before
-      // committing the transaction.
-      trans->write_to_disk();
-      delete trans;
-
-      // The transaction ends with a commit block.
-      trans = new transaction(0);
-
-      write_journal_header(jrnl_commit, timestamp, trans);
-
-      trans->write_to_disk();
-      delete trans;
+      write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
 
       // Apply all the committed sub-transactions to their final destinations
       // on the disk.
@@ -727,18 +703,7 @@ mfs_interface::flush_journal_locked()
 
   // Finalize and flush out any remaining transactions from the journal.
 
-  // Write out the disk blocks in the transaction to stable storage before
-  // committing the transaction.
-  trans->write_to_disk();
-  delete trans;
-
-  // The transaction ends with a commit block.
-  trans = new transaction(0);
-
-  write_journal_header(jrnl_commit, timestamp, trans);
-
-  trans->write_to_disk();
-  delete trans;
+  write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
 
   for (auto t = processed_trans_vec.begin();
        t != processed_trans_vec.end(); t++) {
@@ -817,6 +782,12 @@ mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
   }
 }
 
+void
+mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
+{
+  // A transaction begins with a start block.
+  write_journal_header(jrnl_start, timestamp, trans);
+}
 
 // Write a transaction's disk blocks to the journal in memory. Don't write
 // or flush it to the disk yet.
@@ -854,6 +825,23 @@ mfs_interface::write_journal_transaction_blocks(
   }
 
   return 0;
+}
+
+void
+mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
+{
+  // Write out the disk blocks in the transaction to stable storage before
+  // committing the transaction.
+  trans->write_to_disk();
+  delete trans;
+
+  // The transaction ends with a commit block.
+  trans = new transaction(0);
+
+  write_journal_header(jrnl_commit, timestamp, trans);
+
+  trans->write_to_disk();
+  delete trans;
 }
 
 // Called on reboot after a crash. Applies committed transactions.

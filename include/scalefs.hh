@@ -398,9 +398,11 @@ class mfs_interface
     void write_journal_hdrblock(const char *header, const char *datablock,
                                 transaction *tr);
     void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr);
+    void write_journal_trans_prolog(u64 timestamp, transaction *tr);
     int  write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr);
+    void write_journal_trans_epilog(u64 timestamp, transaction *tr);
     void process_journal();
     void clear_journal();
 
