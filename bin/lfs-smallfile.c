@@ -18,6 +18,7 @@ int num_files;
 int nfiles_per_dir;
 int timer_overhead;
 
+void run_benchmark(const char *topdir, int num_dirs, char *buf);
 void create_dirs(const char *topdir, int num_dirs);
 void delete_dirs(const char *topdir, int num_dirs);
 int create_files(const char *topdir, char *buf);
@@ -38,9 +39,8 @@ int main(int argc, char **argv)
 	extern char *optarg;
 	extern int optind;
 
-	int usec;
 	float sec;
-	float throughput;
+	unsigned long usec;
 	struct timeval before, after, dummy;
 
 	/* Parse and test the arguments. */
@@ -91,6 +91,32 @@ int main(int argc, char **argv)
 			 (after.tv_usec - before.tv_usec);
 	timer_overhead /= NTEST;
 
+	/* Time the overall benchmark */
+	usec = 0;
+	gettimeofday(&before, NULL);
+
+	run_benchmark(topdir, num_dirs, buf);
+
+	gettimeofday(&after, NULL);
+	usec = (after.tv_sec - before.tv_sec) * 1000000 +
+               (after.tv_usec - before.tv_usec);
+	usec -= timer_overhead;
+
+	sec = (float) usec / 1000000.0;
+	printf("\nOverall benchmark (including sleep) : %7.3f sec\n", sec);
+
+	delete_dirs(topdir, num_dirs);
+
+	sync();
+
+	return 0;
+}
+
+void run_benchmark(const char *topdir, int num_dirs, char *buf)
+{
+	int usec;
+	float sec, throughput;
+
 	/*
 	 * Now we just do the tests in sequence, printing the timing
 	 * statistics as we go.
@@ -125,7 +151,7 @@ int main(int argc, char **argv)
 	printf ( "unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
 
-	sleep(5);
+	sleep(2);
 
 	usec = sync_files();
 	sec = (float) usec / 1000000.0;
@@ -133,13 +159,7 @@ int main(int argc, char **argv)
 	printf ( "sync_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
 
-	delete_dirs(topdir, num_dirs);
-
-	sync();
-
-	return 0;
 }
-
 
 void create_dirs(const char *topdir, int num_dirs)
 {
