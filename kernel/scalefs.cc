@@ -584,21 +584,17 @@ mfs_interface::add_to_journal_locked(transaction *tr)
   fs_journal->add_transaction_locked(tr);
 }
 
-// Commit a transaction to the journal and apply the committed changes to
-// the original locations on the disk filesystem.
-// Locking rule: The caller needs to hold the journal's write_lock.
 void
-mfs_interface::__flush_transaction(transaction *tr)
+mfs_interface::pre_process_transaction(transaction *tr)
 {
   // Update the free bitmap on the disk.
   balloc_on_disk(tr->allocated_block_list, tr);
   bfree_on_disk(tr->free_block_list, tr);
+}
 
-  tr->prepare_for_commit();
-
-  // Write out the transaction blocks to the disk journal in timestamp order.
-  write_transaction_to_journal(tr->blocks, tr->timestamp_);
-
+void
+mfs_interface::post_process_transaction(transaction *tr)
+{
   // Now that the transaction has been committed, mark the freed blocks as
   // free in the in-memory free-bit-vector.
   for (auto f = tr->free_block_list.begin();
@@ -614,6 +610,22 @@ mfs_interface::__flush_transaction(transaction *tr)
     (*b)->async_iowait();
 
   ideflush();
+}
+
+// Commit a transaction to the journal and apply the committed changes to
+// the original locations on the disk filesystem.
+// Locking rule: The caller needs to hold the journal's write_lock.
+void
+mfs_interface::__flush_transaction(transaction *tr)
+{
+  pre_process_transaction(tr);
+
+  tr->prepare_for_commit();
+
+  // Write out the transaction blocks to the disk journal in timestamp order.
+  write_transaction_to_journal(tr->blocks, tr->timestamp_);
+
+  post_process_transaction(tr);
 
   // The blocks have been written to disk successfully. Safe to delete
   // this transaction from the journal. (This means that all the

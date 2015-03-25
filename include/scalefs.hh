@@ -386,6 +386,8 @@ class mfs_interface
 
     // Journal functions
     void add_to_journal_locked(transaction *tr);
+    void pre_process_transaction(transaction *tr);
+    void post_process_transaction(transaction *tr);
     void __flush_transaction(transaction *tr);
     void add_fsync_to_journal(transaction *tr);
     void flush_journal_locked();
