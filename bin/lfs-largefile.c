@@ -614,5 +614,6 @@ fileWrite(int fd, const void *buf, size_t n)
 void 
 usage()
 {
-    fprintf ( stderr, "Usage:  lfs-largefile [-s file_size] [-i IO_size] test_directory\n" );
+    fprintf ( stderr,
+    "Usage:  lfs-largefile [-f file_size] [-i IO_size] [-s seed] dirname\n" );
 }
