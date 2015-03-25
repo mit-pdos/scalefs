@@ -448,7 +448,7 @@ class mfs_interface
     void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr);
     bool fits_in_journal(size_t num_trans_blocks);
     void write_journal_trans_prolog(u64 timestamp, transaction *tr);
-    int  write_journal_transaction_blocks(const
+    void write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr);
     void write_journal_trans_epilog(u64 timestamp, transaction *tr);

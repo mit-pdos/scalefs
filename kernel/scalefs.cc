@@ -648,7 +648,7 @@ void
 mfs_interface::flush_journal_locked()
 {
   u64 timestamp = 0, prolog_timestamp = 0;
-  transaction *trans;
+  transaction *trans, *prune_trans;
 
   // A vector of processed transactions, which need to be applied later
   // (post-processed).
@@ -658,6 +658,11 @@ mfs_interface::flush_journal_locked()
     return; // Nothing to do.
 
   trans = new transaction(0);
+
+  // A transaction to prune out multiple updates to the same disk block
+  // from multiple sub-transactions. It merges all of them into 1 disk
+  // block update.
+  prune_trans = new transaction(0);
 
   {
     auto it = fs_journal->transaction_log.begin();
@@ -674,8 +679,14 @@ mfs_interface::flush_journal_locked()
     retry:
     (*it)->prepare_for_commit();
 
-    // Write out the transaction blocks to the disk journal in timestamp order.
-    if (write_journal_transaction_blocks((*it)->blocks, timestamp, trans) < 0) {
+    if (fits_in_journal((*it)->blocks.size())) {
+
+      for (auto &b : (*it)->blocks)
+        prune_trans->add_unique_block(b.get());
+
+      processed_trans_vec.push_back(*it);
+
+    } else {
 
       // No space left in the journal to accommodate this sub-transaction.
       // So commit and apply all the earlier sub-transactions, to make space
@@ -684,6 +695,9 @@ mfs_interface::flush_journal_locked()
       // Explicitly release this sub-transaction's write_lock. We'll retry this
       // sub-transaction later.
       (*it)->finish_after_commit();
+
+      // Write out the transaction blocks to the disk journal in timestamp order.
+      write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
 
       write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
 
@@ -701,13 +715,14 @@ mfs_interface::flush_journal_locked()
       clear_journal();
 
       // Retry this sub-transaction, since we couldn't write it to the journal.
+      delete prune_trans;
+      prune_trans = new transaction(0);
       trans = new transaction(0);
       prolog_timestamp = timestamp;
       write_journal_trans_prolog(prolog_timestamp, trans);
       goto retry;
     }
 
-    processed_trans_vec.push_back(*it);
   }
 
   // Finalize and flush out any remaining transactions from the journal.
@@ -730,6 +745,8 @@ mfs_interface::flush_journal_locked()
   // can simply be truncated.) Since the journal is static, the journal file
   // simply needs to be zero-filled.)
   clear_journal();
+
+  delete prune_trans;
 
   for (auto it = fs_journal->transaction_log.begin();
        it != fs_journal->transaction_log.end(); it++) {
@@ -823,7 +840,7 @@ mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
 
 // Write a transaction's disk blocks to the journal in memory. Don't write
 // or flush it to the disk yet.
-int
+void
 mfs_interface::write_journal_transaction_blocks(
     const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
     const u64 timestamp, transaction *trans)
@@ -833,9 +850,6 @@ mfs_interface::write_journal_transaction_blocks(
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
 
-  if (!fits_in_journal(vec.size()))
-    return -1;
-
   // Write out the transaction diskblocks.
   for (auto it = vec.begin(); it != vec.end(); it++) {
 
@@ -844,8 +858,6 @@ mfs_interface::write_journal_transaction_blocks(
     memmove(buf, (void *) &hddata, sizeof(hddata));
     write_journal_hdrblock(buf, (*it)->blockdata, trans);
   }
-
-  return 0;
 }
 
 void
