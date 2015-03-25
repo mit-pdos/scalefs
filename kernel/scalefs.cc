@@ -612,12 +612,12 @@ mfs_interface::post_process_transaction(transaction *tr)
   ideflush();
 }
 
-// Commit a transaction to the journal and apply the committed changes to
-// the original locations on the disk filesystem.
-// Locking rule: The caller needs to hold the journal's write_lock.
+// Logs a transaction in the disk journal and then applies it to the disk
 void
-mfs_interface::__flush_transaction(transaction *tr)
+mfs_interface::add_fsync_to_journal(transaction *tr)
 {
+  auto journal_lock = fs_journal->prepare_for_commit();
+
   pre_process_transaction(tr);
 
   tr->prepare_for_commit();
@@ -635,15 +635,6 @@ mfs_interface::__flush_transaction(transaction *tr)
   clear_journal();
 }
 
-// Logs a transaction in the disk journal and then applies it to the disk
-void
-mfs_interface::add_fsync_to_journal(transaction *tr)
-{
-  auto journal_lock = fs_journal->prepare_for_commit();
-
-  __flush_transaction(tr);
-}
-
 // Writes out the physical journal to the disk, and applies the committed
 // transactions to the disk filesystem.
 void
@@ -652,7 +643,21 @@ mfs_interface::flush_journal_locked()
   for (auto it = fs_journal->transaction_log.begin();
        it != fs_journal->transaction_log.end(); it++) {
 
-    __flush_transaction(*it);
+    pre_process_transaction(*it);
+
+    (*it)->prepare_for_commit();
+
+    // Write out the transaction blocks to the disk journal in timestamp order.
+    write_transaction_to_journal((*it)->blocks, (*it)->timestamp_);
+
+    post_process_transaction(*it);
+
+    // The blocks have been written to disk successfully. Safe to delete
+    // this transaction from the journal. (This means that all the
+    // transactions till this point have made it to the disk. So the journal
+    // can simply be truncated.) Since the journal is static, the journal file
+    // simply needs to be zero-filled.)
+    clear_journal();
 
     delete (*it);
   }
