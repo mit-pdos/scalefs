@@ -119,7 +119,7 @@ throw_out_of_blocks()
 // For the root device this makes changes only to the bitmap in memory
 // (maintained by rootfs_interface), not the one on the disk.
 static u32
-balloc(u32 dev, transaction *trans = NULL)
+balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
 {
   bool found = false;
   sref<buf> bp;
@@ -136,6 +136,9 @@ balloc(u32 dev, transaction *trans = NULL)
     if (b < sb_root.size) {
       if (trans)
         trans->add_allocated_block(b);
+
+      if (zero_on_alloc)
+        bzero(dev, b, trans);
       return b;
     }
     throw_out_of_blocks();
@@ -289,12 +292,15 @@ static void
 bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false,
       bool zero_writeback = false)
 {
-  u32 b = x;
 
+
+#if 0
+  u32 b = x;
   if (zero_writeback)
     bzero_writeback(dev, b);
   else
     bzero(dev, b, trans);
+#endif
 
   bfree_nozero(dev, x, trans, delayed_free);
 }
@@ -834,7 +840,7 @@ iunlock(sref<inode> ip)
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
 static u32
-bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
+bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false)
 {
   scoped_gc_epoch e;
 
@@ -844,7 +850,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
   if(bn < NDIRECT){
   retry0:
     if((addr = ip->addrs[bn]) == 0) {
-      addr = balloc(ip->dev, trans);
+      addr = balloc(ip->dev, trans, zero_on_alloc);
       if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
         cprintf("bmap: race1\n");
         bfree_nozero(ip->dev, addr, trans);
@@ -859,7 +865,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
   retry1:
     if (ip->iaddrs == nullptr) {
       if((addr = ip->addrs[NDIRECT]) == 0) {
-        addr = balloc(ip->dev, trans);
+        addr = balloc(ip->dev, trans, true);
         if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
           cprintf("bmap: race2\n");
           bfree_nozero(ip->dev, addr, trans);
@@ -880,7 +886,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
 
   retry2:
     if ((addr = ip->iaddrs[bn]) == 0) {
-      addr = balloc(ip->dev, trans);
+      addr = balloc(ip->dev, trans, zero_on_alloc);
       if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
         cprintf("bmap: race4\n");
         bfree_nozero(ip->dev, addr, trans);
@@ -905,7 +911,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL)
 
 retry3:
   if (ip->addrs[NDIRECT+1] == 0) {
-    addr = balloc(ip->dev, trans);
+    addr = balloc(ip->dev, trans, true);
     if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
       cprintf("bmap: race5\n");
       bfree_nozero(ip->dev, addr, trans);
@@ -922,7 +928,7 @@ retry3:
       auto locked = wb->write();
       ap = (u32*)locked->data;
       if (ap[bn / NINDIRECT] == 0) {
-        ap[bn / NINDIRECT] = balloc(ip->dev, trans);
+        ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
         if (trans)
           wb->add_to_transaction(trans);
       }
@@ -941,7 +947,7 @@ retry3:
       auto locked = wb->write();
       ap = (u32*)locked->data;
       if (ap[bn % NINDIRECT] == 0) {
-        ap[bn % NINDIRECT] = balloc(ip->dev, trans);
+        ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
         if (trans)
           wb->add_to_transaction(trans);
       }
@@ -1165,7 +1171,7 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
 
   for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
     try {
-      bp = buf::get(ip->dev, bmap(ip, off/BSIZE));
+      bp = buf::get(ip->dev, bmap(ip, off/BSIZE, NULL, true));
     } catch (out_of_blocks& e) {
       // Read operations should never cause out-of-blocks conditions
       panic("readi: out of blocks");
@@ -1208,13 +1214,13 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
     m = min(n - tot, BSIZE - off%BSIZE);
 
     try {
-      blocknum = bmap(ip, off/BSIZE, trans);
 
       // Skip reading the block from disk if we are going to overwrite the
       // entire block anyway.
       if (off % BSIZE == 0 && m == BSIZE)
         skip_disk_read = true;
 
+      blocknum = bmap(ip, off/BSIZE, trans, !skip_disk_read);
       bp = buf::get(ip->dev, blocknum, skip_disk_read);
 
     } catch (out_of_blocks& e) {
@@ -1298,7 +1304,7 @@ dir_init(sref<inode> dp)
   for (u32 off = 0; off < dp->size; off += BSIZE) {
     sref<buf> bp;
     try {
-      bp = buf::get(dp->dev, bmap(dp, off / BSIZE));
+      bp = buf::get(dp->dev, bmap(dp, off / BSIZE, NULL, true));
     } catch (out_of_blocks& e) {
       // Read operations should never cause out-of-blocks conditions
       panic("dir_init: out of blocks");
