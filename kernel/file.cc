@@ -11,14 +11,37 @@ struct devsw __mpalign__ devsw[NDEV];
 
 int
 file_inode::fsync() {
+
   if (!readable)
     return -1;
+
   if (!ip)
     return -1;
-  if (ip->type() == mnode::types::file)
+
+  u64 fsync_tsc;
+  if (cpuid::features().rdtscp)
+    fsync_tsc = rdtscp();
+  else
+    fsync_tsc = rdtsc_serialized();
+
+  if (ip->type() == mnode::types::file) {
+
+    // Apply pending metadata operations to the disk filesystem first.
+    // This takes care of any dependencies.
+    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->inum_, false);
     ip->as_file()->sync_file(true);
-  else if (ip->type() == mnode::types::dir)
+
+  } else if (ip->type() == mnode::types::dir) {
+
+    // Apply pending metadata operations to the disk filesystem first.
+    // This takes care of any dependencies.
+    // Flush out the physical journal to disk. The directory entries do not need
+    // to be flushed explicitly. If there were any operations on the directory
+    // they will have been applied when the logical log was processed. This means
+    // that the fsync will not block any operations on the mdir.
+    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->inum_, true);
     ip->as_dir()->sync_dir();
+  }
   return 0;
 }
 
