@@ -772,7 +772,7 @@ void
 mfs_interface::flush_journal_locked()
 {
   u64 timestamp = 0, prolog_timestamp = 0;
-  transaction *trans, *prune_trans;
+  transaction *trans, *prune_trans, *prune_trans2;
 
   // A vector of processed transactions, which need to be applied later
   // (post-processed).
@@ -827,11 +827,16 @@ mfs_interface::flush_journal_locked()
 
       // Apply all the committed sub-transactions to their final destinations
       // on the disk.
+      prune_trans2 = new transaction(0);
       for (auto t = processed_trans_vec.begin();
            t != processed_trans_vec.end(); t++) {
 
-        post_process_transaction(*t);
+	for (auto &blk : (*t)->blocks)
+          prune_trans2->add_unique_block(blk.get());
+
       }
+      post_process_transaction(prune_trans2);
+      delete prune_trans2;
 
       ideflush();
 
@@ -853,11 +858,16 @@ mfs_interface::flush_journal_locked()
 
   write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
 
+  prune_trans2 = new transaction(0);
   for (auto t = processed_trans_vec.begin();
        t != processed_trans_vec.end(); t++) {
 
-    post_process_transaction(*t);
+    for (auto &blk : (*t)->blocks)
+       prune_trans2->add_unique_block(blk.get());
+
   }
+  post_process_transaction(prune_trans2);
+  delete prune_trans2;
 
   ideflush();
 
