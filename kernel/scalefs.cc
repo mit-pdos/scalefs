@@ -12,8 +12,8 @@
 
 mfs_interface::mfs_interface()
 {
-  inum_to_mnode = new linearhash<u64, sref<mnode>>(NINODES);
-  mnode_to_inode = new linearhash<u64, u64>(NINODES);
+  inum_to_mnode = new linearhash<u64, sref<mnode>>(100003);
+  mnode_to_inode = new linearhash<u64, u64>(100003);
   fs_journal = new journal();
   metadata_log = new mfs_logical_log();
   // XXX(rasha) Set up the physical journal file
