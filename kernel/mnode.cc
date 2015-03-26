@@ -376,7 +376,7 @@ mfile::sync_file()
   // Add the fsync transaction to the journal and flush the journal to disk.
   rootfs_interface->add_fsync_to_journal(trans);
 
-  delete trans;
+  //delete trans;
 
   dirty(false);
 }

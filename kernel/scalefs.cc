@@ -736,6 +736,8 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
+  add_to_journal_locked(tr);
+#if 0
   u64 timestamp = tr->timestamp_;
   transaction *trans;
 
@@ -761,6 +763,7 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
   // can simply be truncated.) Since the journal is static, the journal file
   // simply needs to be zero-filled.)
   clear_journal();
+#endif
 }
 
 // Writes out the physical journal to the disk, and applies the committed

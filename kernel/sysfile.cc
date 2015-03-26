@@ -148,6 +148,7 @@ sys_sync(void)
   // synced too.
   rootfs_interface->process_metadata_log_and_flush();
   rootfs_interface->sync_dirty_files();
+  rootfs_interface->process_metadata_log_and_flush();
 }
 
 //SYSCALL
