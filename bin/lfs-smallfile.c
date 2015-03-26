@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -14,28 +15,38 @@
 
 #define NTEST		100000 /* No. of tests of gettimeofday() */
 
+#define MAXCPUS		128
+
+int num_cpus;
 int num_files;
+int num_dirs;
 int nfiles_per_dir;
 int timer_overhead;
 
-void run_benchmark(const char *topdir, int num_dirs, char *buf);
+char *topdir, *buf;
+
+pthread_t tid[MAXCPUS];
+pthread_barrier_t bar;
+
+void *run_benchmark(void *arg);
 void create_dirs(const char *topdir, int num_dirs);
 void delete_dirs(const char *topdir, int num_dirs);
-int create_files(const char *topdir, char *buf);
-int read_files(const char *topdir, char *buf);
-int unlink_files(const char *topdir, char *buf);
-int sync_files(void);
+int  create_files(const char *topdir, char *buf, int cpu);
+int  read_files(const char *topdir, char *buf, int cpu);
+int  unlink_files(const char *topdir, char *buf, int cpu);
+int  sync_files(void);
 
 void usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] <working directory>\n", prog);
+	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] "
+                "<working directory>\n", prog);
 	exit(1);
 }
 
 int main(int argc, char **argv)
 {
-	int i, num_dirs;
-	char ch, *buf, *topdir;
+	uint64_t i;
+	char ch;
 	extern char *optarg;
 	extern int optind;
 
@@ -50,13 +61,19 @@ int main(int argc, char **argv)
 
 	num_files = NUMFILES;
 	num_dirs = NUMDIRS;
-	while ((ch = getopt(argc, argv, "n:s:")) != -1) {
+	num_cpus = 1;
+	while ((ch = getopt(argc, argv, "n:s:c:")) != -1) {
 		switch (ch) {
 			case 'n':
 				num_files = atoi(optarg);
 				break;
 			case 's':
 				num_dirs = atoi(optarg);
+				break;
+			case 'c': // Run on these many CPUs. (0 to num_cpus-1)
+				num_cpus = atoi(optarg);
+				if (num_cpus > MAXCPUS)
+					num_cpus = MAXCPUS;
 				break;
 			default:
 				usage(argv[0]);
@@ -91,11 +108,19 @@ int main(int argc, char **argv)
 			 (after.tv_usec - before.tv_usec);
 	timer_overhead /= NTEST;
 
+	pthread_barrier_init(&bar, 0, num_cpus);
+
 	/* Time the overall benchmark */
 	usec = 0;
 	gettimeofday(&before, NULL);
 
-	run_benchmark(topdir, num_dirs, buf);
+	for (i = 0; i < num_cpus; i++) {
+	  pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
+	}
+
+	for (i = 0; i < num_cpus; i++) {
+	  pthread_join(tid[i], NULL);
+	}
 
 	gettimeofday(&after, NULL);
 	usec = (after.tv_sec - before.tv_sec) * 1000000 +
@@ -112,19 +137,30 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-void run_benchmark(const char *topdir, int num_dirs, char *buf)
+void *run_benchmark(void *arg)
 {
 	int usec;
-	float sec, throughput;
+	float sec, total_sec;
+	float throughput, avg_throughput;
+
+	int cpu = (uintptr_t)arg;
+
+	if (setaffinity(cpu) < 0) {
+		printf("setaffinity failed for cpu %d\n", cpu);
+		return 0;
+	}
+
+	pthread_barrier_wait(&bar);
 
 	/*
 	 * Now we just do the tests in sequence, printing the timing
 	 * statistics as we go.
 	 */
+	total_sec = 0;
 
 	printf ( "\n\n\n" );
 	fflush ( stdout );
-	printf ( "Running smallfile test on %s\n", topdir );
+	printf ( "Running smallfile test on %s, on CPU %d\n", topdir, cpu );
 	printf ( "File Size = %d bytes\n", FILESIZE );
 	printf ( "No. of files = %d\n", num_files );
 	printf ( "No. of dirs (spread) = %d\n", num_dirs );
@@ -132,24 +168,27 @@ void run_benchmark(const char *topdir, int num_dirs, char *buf)
 	printf ( "Test            Time(sec)       Files/sec\n" );
 	printf ( "----            ---------       ---------\n" );
 
-	usec = create_files(topdir, buf);
+	usec = create_files(topdir, buf, cpu);
 	sec = (float) usec / 1000000.0;
 	throughput = ((float) num_files / sec);
 	printf ( "create_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
+	total_sec += sec;
 
 
-	usec = read_files(topdir, buf);
+	usec = read_files(topdir, buf, cpu);
 	sec = (float) usec / 1000000.0;
 	throughput = ((float) num_files / sec);
 	printf ( "read_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
+	total_sec += sec;
 
-	usec = unlink_files(topdir, buf);
+	usec = unlink_files(topdir, buf, cpu);
 	sec = (float) usec / 1000000.0;
 	throughput = ((float) num_files / sec);
 	printf ( "unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
+	total_sec += sec;
 
 	sleep(2);
 
@@ -158,7 +197,13 @@ void run_benchmark(const char *topdir, int num_dirs, char *buf)
 	throughput = ((float) num_files / sec);
 	printf ( "sync_files\t%7.3f\t\t%7.3f\n", sec, throughput );
 	fflush ( stdout );
+	total_sec += sec;
 
+	avg_throughput = ((float) num_files / total_sec);
+	printf ( "thread %d total \t%7.3f\t\t%7.3f\n", cpu, total_sec, avg_throughput );
+	fflush ( stdout );
+
+	return 0;
 }
 
 void create_dirs(const char *topdir, int num_dirs)
@@ -187,7 +232,7 @@ void delete_dirs(const char *topdir, int num_dirs)
 }
 
 
-int create_files(const char *topdir, char *buf)
+int create_files(const char *topdir, char *buf, int cpu)
 {
 	int i, j, fd;
 	ssize_t size;
@@ -199,7 +244,7 @@ int create_files(const char *topdir, char *buf)
 	gettimeofday ( &before, NULL );
 	/* Create phase */
 	for (i = 0, j = 0; i < num_files; i++) {
-		snprintf(filename, 128, "%s/dir-%d/file-%d", topdir, j, i);
+		snprintf(filename, 128, "%s/dir-%d/file-%d-%d", topdir, j, cpu, i);
 		fd = open(filename, O_WRONLY | O_CREAT | O_EXCL, S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
 		if (fd == -1)
 			die("open");
@@ -221,7 +266,7 @@ int create_files(const char *topdir, char *buf)
 	return time;
 }
 
-int read_files(const char *topdir, char *buf)
+int read_files(const char *topdir, char *buf, int cpu)
 {
 	int i, j, fd;
 	ssize_t size;
@@ -233,7 +278,7 @@ int read_files(const char *topdir, char *buf)
 	gettimeofday ( &before, NULL );
 	/* Read phase */
 	for (i = 0, j = 0; i < num_files; i++) {
-		snprintf(filename, 128, "%s/dir-%d/file-%d", topdir, j, i);
+		snprintf(filename, 128, "%s/dir-%d/file-%d-%d", topdir, j, cpu, i);
 		fd = open(filename, O_RDONLY);
 		if (fd == -1)
 			die("open");
@@ -255,7 +300,7 @@ int read_files(const char *topdir, char *buf)
 	return time;
 }
 
-int unlink_files(const char *topdir, char *buf)
+int unlink_files(const char *topdir, char *buf, int cpu)
 {
 	int i, j, ret;
 	char filename[128];
@@ -266,7 +311,7 @@ int unlink_files(const char *topdir, char *buf)
 	gettimeofday ( &before, NULL );
 	/* Unlink phase */
 	for (i = 0, j = 0; i < num_files; i++) {
-		snprintf(filename, 128, "%s/dir-%d/file-%d", topdir, j, i);
+		snprintf(filename, 128, "%s/dir-%d/file-%d-%d", topdir, j, cpu, i);
 		ret = unlink(filename);
 		if (ret == -1)
 			die("unlink");
