@@ -17,6 +17,10 @@
 
 #define MAXCPUS		128
 
+#define SYNC_NONE	0
+#define SYNC_UNLINK	1
+#define SYNC_CREATE_UNLINK 2
+
 int num_cpus;
 int num_files;
 int num_dirs;
@@ -27,6 +31,8 @@ char *topdir, *buf;
 
 pthread_t tid[MAXCPUS];
 pthread_barrier_t bar;
+
+int sync_when;
 
 void *run_benchmark(void *arg);
 void create_dirs(const char *topdir, int num_dirs);
@@ -39,7 +45,10 @@ int  sync_files(void);
 void usage(char *prog)
 {
 	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] "
-                "<working directory>\n", prog);
+		"[-y sync_when] <working directory>\n", prog);
+	fprintf(stderr, "where, sync_when can be:\n"
+		"0 - no sync\n1 - sync after unlink\n"
+		"2 - sync after create and unlink\n");
 	exit(1);
 }
 
@@ -59,10 +68,13 @@ int main(int argc, char **argv)
 		usage(argv[0]);
 	}
 
+	/* Set the defaults */
 	num_files = NUMFILES;
 	num_dirs = NUMDIRS;
 	num_cpus = 1;
-	while ((ch = getopt(argc, argv, "n:s:c:")) != -1) {
+	sync_when = SYNC_UNLINK;
+
+	while ((ch = getopt(argc, argv, "n:s:c:y:")) != -1) {
 		switch (ch) {
 			case 'n':
 				num_files = atoi(optarg);
@@ -74,6 +86,9 @@ int main(int argc, char **argv)
 				num_cpus = atoi(optarg);
 				if (num_cpus > MAXCPUS)
 					num_cpus = MAXCPUS;
+				break;
+			case 'y': // When to call sync()
+				sync_when = atoi(optarg);
 				break;
 			default:
 				usage(argv[0]);
@@ -95,7 +110,8 @@ int main(int argc, char **argv)
 	/* Create the directories for the files to be spread amongst */
 	create_dirs(topdir, num_dirs);
 
-	sync();
+	if (sync_when != SYNC_NONE)
+		sync();
 
 	/* Compute the overhead of the gettimeofday() call */
 
@@ -132,7 +148,8 @@ int main(int argc, char **argv)
 
 	delete_dirs(topdir, num_dirs);
 
-	sync();
+	if (sync_when != SYNC_NONE)
+		sync();
 
 	return 0;
 }
@@ -175,6 +192,16 @@ void *run_benchmark(void *arg)
 	fflush ( stdout );
 	total_sec += sec;
 
+	if (sync_when == SYNC_CREATE_UNLINK) {
+		sleep(2);
+
+		usec = sync_files();
+		sec = (float) usec / 1000000.0;
+		throughput = ((float) num_files / sec);
+		printf ( "sync_files_1\t%7.3f\t\t%7.3f\n", sec, throughput );
+		fflush ( stdout );
+		total_sec += sec;
+	}
 
 	usec = read_files(topdir, buf, cpu);
 	sec = (float) usec / 1000000.0;
@@ -190,14 +217,16 @@ void *run_benchmark(void *arg)
 	fflush ( stdout );
 	total_sec += sec;
 
-	sleep(2);
+	if (sync_when == SYNC_UNLINK || sync_when == SYNC_CREATE_UNLINK) {
+		sleep(2);
 
-	usec = sync_files();
-	sec = (float) usec / 1000000.0;
-	throughput = ((float) num_files / sec);
-	printf ( "sync_files\t%7.3f\t\t%7.3f\n", sec, throughput );
-	fflush ( stdout );
-	total_sec += sec;
+		usec = sync_files();
+		sec = (float) usec / 1000000.0;
+		throughput = ((float) num_files / sec);
+		printf ( "sync_files_2\t%7.3f\t\t%7.3f\n", sec, throughput );
+		fflush ( stdout );
+		total_sec += sec;
+	}
 
 	avg_throughput = ((float) num_files / total_sec);
 	printf ( "thread %d total \t%7.3f\t\t%7.3f\n", cpu, total_sec, avg_throughput );
