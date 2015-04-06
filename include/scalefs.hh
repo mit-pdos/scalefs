@@ -487,9 +487,9 @@ class mfs_interface
     sref<mnode> mnode_alloc(u64 inum, u8 mtype);
     sref<inode> get_inode(u64 mnode_inum, const char *str);
     // Mapping from disk inode numbers to the corresponding mnodes
-    linearhash<u64, sref<mnode>> *inum_to_mnode;
+    chainhash<u64, sref<mnode>> *inum_to_mnode;
     // Mapping from in-memory mnode numbers to disk inode numbers
-    linearhash<u64, u64> *mnode_to_inode;
+    chainhash<u64, u64> *mnode_to_inode;
 
     typedef struct mfs_op_idx {
       int create_index;
