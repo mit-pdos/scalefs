@@ -360,7 +360,7 @@ mfs_interface::process_metadata_log()
   // absorb all of them and discard those transactions, since the delete
   // cancels out everything else.
 
-  prune_trans_log = new linearhash<u64, mfs_op_idx>(ops.size());
+  prune_trans_log = new linearhash<u64, mfs_op_idx>(ops.size()*5);
   std::vector<unsigned long> erase_indices;
 
   // TODO: Handle the scenario where the transaction log contains delete,
