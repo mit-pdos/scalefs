@@ -539,7 +539,7 @@ public:
   page_state get_page(u64 pageidx);
   void put_page(u64 pageidx);
   void set_page_dirty(u64 pageidx);
-  void sync_file();
+  void sync_file(bool flush_journal);
   void remove_pgtable_mappings(u64 start_offset);
   void drop_pagecache();
 };

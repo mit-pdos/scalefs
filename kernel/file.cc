@@ -16,7 +16,7 @@ file_inode::fsync() {
   if (!ip)
     return -1;
   if (ip->type() == mnode::types::file)
-    ip->as_file()->sync_file();
+    ip->as_file()->sync_file(true);
   else if (ip->type() == mnode::types::dir)
     ip->as_dir()->sync_dir();
   return 0;

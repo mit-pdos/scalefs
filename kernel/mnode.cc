@@ -315,8 +315,11 @@ mfile::drop_pagecache()
   }
 }
 
+// If flush_journal is set to true, the transaction added to the journal is
+// immediately flushed to the disk. (The caller might choose to set this to
+// false in order to do a single flush covering many transactions, later on).
 void
-mfile::sync_file()
+mfile::sync_file(bool flush_journal)
 {
   if (!is_dirty())
     return;
@@ -373,10 +376,13 @@ mfile::sync_file()
   // Update the size and the inode.
   rootfs_interface->update_file_size(inum_, mlen, trans);
 
-  // Add the fsync transaction to the journal and flush the journal to disk.
-  rootfs_interface->add_fsync_to_journal(trans);
+  // Add the fsync transaction to the journal and possibly flush the journal
+  // to disk.
+  rootfs_interface->add_fsync_to_journal(trans, flush_journal);
 
-  //delete trans;
+  // We are done with this transaction, if we already flushed it to disk.
+  if (flush_journal)
+    delete trans;
 
   dirty(false);
 }

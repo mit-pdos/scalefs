@@ -504,7 +504,7 @@ mfs_interface::sync_dirty_files()
     sref<mnode> m;
     if (inum_to_mnode->lookup(i, &m) && m) {
       if(m->type() == mnode::types::file)
-        m->as_file()->sync_file();
+        m->as_file()->sync_file(false);
     }
   }
 }
@@ -731,13 +731,17 @@ mfs_interface::post_process_transaction(transaction *tr)
     (*b)->async_iowait();
 }
 
-// Logs a transaction in the disk journal and then applies it to the disk
+// Logs a transaction in the disk journal and then applies it to the disk,
+// if flush_journal is set to true.
 void
-mfs_interface::add_fsync_to_journal(transaction *tr)
+mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
   add_to_journal_locked(tr);
-#if 0
+
+  if (!flush_journal)
+    return;
+
   u64 timestamp = tr->timestamp_;
   transaction *trans;
 
@@ -763,7 +767,6 @@ mfs_interface::add_fsync_to_journal(transaction *tr)
   // can simply be truncated.) Since the journal is static, the journal file
   // simply needs to be zero-filled.)
   clear_journal();
-#endif
 }
 
 // Writes out the physical journal to the disk, and applies the committed
