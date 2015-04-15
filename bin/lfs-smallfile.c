@@ -99,6 +99,10 @@ int main(int argc, char **argv)
 	argv += optind;
 
 	topdir = argv[0];
+
+	if (num_files < num_dirs)
+		num_dirs = 1;
+
 	nfiles_per_dir = num_files/num_dirs;
 
 	buf = (char *)malloc(FILESIZE);
