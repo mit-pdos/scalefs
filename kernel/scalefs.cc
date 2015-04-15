@@ -737,10 +737,11 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
-  add_to_journal_locked(tr);
 
-  if (!flush_journal)
+  if (!flush_journal) {
+    add_to_journal_locked(tr);
     return;
+  }
 
   u64 timestamp = tr->timestamp_;
   transaction *trans;
