@@ -349,15 +349,19 @@ mfile::sync_file(bool flush_journal)
     }
 
     size_t pos = it.index() * PGSIZE;
-    size_t nbytes = mlen - pos;
-    if (nbytes > PGSIZE)
-      nbytes = PGSIZE;
-    assert(nbytes == rootfs_interface->sync_file_page(inum_, 
-                    (char*)it->get_page_info()->va(), pos, nbytes, trans));
+
+    // The actual number of bytes to be written is mlen - pos, but we use
+    // PGSIZE as the size argument in order to avoid expensive Read-Modify-Writes
+    // in writei() [because synchronous reads kill the performance benefits of
+    // asynchronous writes]. Since the rest of the bytes in the page are
+    // zero anyway, this is harmless; we won't leak any random bytes into the
+    // file.
+    assert(PGSIZE == rootfs_interface->sync_file_page(inum_,
+                    (char*)it->get_page_info()->va(), pos, PGSIZE, trans));
     it->set_dirty_bit(false);
     ++it;
   }
-  
+
   u64 ilen = rootfs_interface->get_file_size(inum_);
   // If the in-memory file is shorter, truncate the file on the disk.
   if (ilen > mlen)
