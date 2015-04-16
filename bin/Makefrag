@@ -93,6 +93,8 @@ UPROGS_NATIVE := \
 	forktest \
 	halt \
 	init \
+	lfs-largefile \
+	lfs-smallfile \
 	linkbench \
 	ls \
 	mail-deliver \

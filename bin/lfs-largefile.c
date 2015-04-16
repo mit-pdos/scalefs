@@ -37,6 +37,7 @@
 						/*    gettimeofday() */
 #define BLOCK_SIZE	8192
 
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,7 +46,7 @@
 #include <sys/time.h>
 
 #include "ASSERT.h"
-#include "user.h"
+#include "libutil.h"
 
 typedef unsigned long u_long;
 
