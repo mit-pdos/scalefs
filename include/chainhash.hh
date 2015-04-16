@@ -108,6 +108,30 @@ public:
     }
   }
 
+  bool remove(const K& k, u64 *tsc = NULL) {
+    if (!lookup(k))
+      return false;
+
+    bucket* b = &buckets_[hash(k) % nbuckets_];
+    scoped_acquire l(&b->lock);
+
+    auto i = b->chain.before_begin();
+    auto end = b->chain.end();
+    for (;;) {
+      auto prev = i;
+      ++i;
+      if (i == end)
+        return false;
+      if (i->key == k) {
+        b->chain.erase_after(prev);
+        gc_delayed(&*i);
+        if (tsc)
+          *tsc = get_tsc();
+        return true;
+      }
+    }
+  }
+
   bool replace_from(const K& kdst, const V* vpdst,
                     chainhash* src, const K& ksrc,
                     const V& vsrc, u64 *tsc = NULL)
