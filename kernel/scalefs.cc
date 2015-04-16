@@ -500,13 +500,17 @@ mfs_interface::sync_dirty_files()
 
   get_superblock(&sb);
 
-  for (int i = 0; i < sb.ninodes; i++) {
-    sref<mnode> m;
-    if (inum_to_mnode->lookup(i, &m) && m) {
-      if(m->type() == mnode::types::file)
-        m->as_file()->sync_file(false);
-    }
-  }
+  // Invoke sync_file() for every file mnode that we know of, by evaluating
+  // every key-value pair in the hash-table. This scheme (of using enumerate()
+  // with a callback) is more efficient than doing lookups for all inodes from
+  // 0 through sb.ninodes in the hash-table.
+
+  inum_to_mnode->enumerate([](const u64 &i, sref<mnode> &m)->bool {
+    if (m && m->type() == mnode::types::file)
+      m->as_file()->sync_file(false);
+
+    return false;
+  });
 }
 
 void
