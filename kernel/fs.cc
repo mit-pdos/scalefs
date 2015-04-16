@@ -520,6 +520,10 @@ try_ialloc(u32 inum, u32 dev, short type)
   return ip;
 }
 
+// Note down the last inode allocated by each CPU, so that we can try
+// to allocate the subsequent inode number next.
+DEFINE_PERCPU(int, last_inode);
+
 // Allocate a new inode with the given type on device dev.
 // Returns a locked inode.
 sref<inode>
@@ -534,8 +538,10 @@ ialloc(u32 dev, short type)
   // Try the local cache first..
   while ((inum = the_inode_cache.alloc()) > 0) {
     ip = try_ialloc(inum, dev, type);
-    if (ip)
+    if (ip) {
+      last_inode[myid()] = inum;
       return ip;
+    }
   }
 
   // search through this core's inodes
@@ -543,23 +549,46 @@ ialloc(u32 dev, short type)
     readsb(dev, &sb_root);
     superblock_read = true;
   }
+
+#if 0
+  // TODO: Partitioning inodes by CPU number this way is great for scalability,
+  // but it doesn't do a good job of handling situations that need a single CPU
+  // to allocate a large number of inodes, well beyond IPB (especially when the
+  // total number of inodes is limited). Fix that, and also use the last_inode[]
+  // scheme.
   for (int k = myid()*IPB; k < sb_root.ninodes; k += (NCPU*IPB)) {
     for(inum = k; inum < k+IPB && inum < sb_root.ninodes; inum++) {
       if (inum == 0)
         continue;
       ip = try_ialloc(inum, dev, type);
-      if (ip)
+      if (ip) {
+        last_inode[myid()] = inum;
         return ip;
+      }
     }
   }
+#endif
 
   // search through all inodes
-  for (int inum = 0; inum < sb_root.ninodes; inum++) {
+
+  bool all_scanned = false;
+  for (int inum = (last_inode[myid()] + 1) % sb_root.ninodes;
+       inum < sb_root.ninodes; inum++) {
+
     if (inum == 0)
       continue;
+
     ip = try_ialloc(inum, dev, type);
-    if (ip)
+    if (ip) {
+      last_inode[myid()] = inum;
       return ip;
+    }
+
+    if (inum == sb_root.ninodes - 1 && !all_scanned) {
+      inum = 0;
+      all_scanned = true;
+      continue;
+    }
   }
 
   cprintf("ialloc: 0/%u inodes\n", sb_root.ninodes);
