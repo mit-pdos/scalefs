@@ -268,6 +268,21 @@ public:
     return false;
   }
 
+  template<class CB>
+  void enumerate(CB cb) const {
+    scoped_gc_epoch rcu_read;
+
+    for (u64 i = 0; i < nbuckets_; i++) {
+      bucket* b = &buckets_[i];
+
+      for (const item& i: b->chain) {
+        V val = *seq_reader<V>(&i.val, &i.seq);
+        if (cb(i.key, val))
+          return;
+      }
+    }
+  }
+
   bool lookup(const K& k, V* vptr = nullptr) const {
     scoped_gc_epoch rcu_read;
 
