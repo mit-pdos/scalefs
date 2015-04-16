@@ -1362,15 +1362,27 @@ dir_flush(sref<inode> dp, transaction *trans)
     return;
 
   u32 off = 0;
-  dp->dir.load()->enumerate([&dp, &off, trans](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
+  char *buffer = (char *)zalloc("dir_flush");
+
+  dp->dir.load()->enumerate([&dp, &off, trans, buffer](const strbuf<DIRSIZ> &name, const u32 &inum)->bool{
       struct dirent de;
       strncpy(de.name, name.buf_, DIRSIZ);
       de.inum = inum;
-      if(writei(dp, (char*)&de, off, sizeof(de), trans) != sizeof(de))
-        panic("dir_flush_cb");
+
+      void *buf = buffer + off;
+      const void *de_ptr = &de;
+      memmove(buf, de_ptr, sizeof(de));
       off += sizeof(de);
+
+      if (off > PGSIZE)
+        panic("dir_flush buffer overflow");
+
       return false;
     });
+
+  if (writei(dp, buffer, 0, PGSIZE, trans) != PGSIZE)
+    panic("dir_flush writei");
+
   if (dp->size != off) {
     auto w = dp->seq.write_begin();
     dp->size = off;
