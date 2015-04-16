@@ -144,8 +144,6 @@ sys_close(int fd)
 void
 sys_sync(void)
 {
-  // XXX (rasha) This only flushes out the logical log. Dirty files need to be
-  // synced too.
   rootfs_interface->process_metadata_log_and_flush();
   rootfs_interface->sync_dirty_files();
   rootfs_interface->process_metadata_log_and_flush();
