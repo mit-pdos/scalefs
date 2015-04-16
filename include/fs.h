@@ -11,7 +11,10 @@
 
 #define ROOTINO 1  // root i-number
 #define BSIZE 4096  // block size
-#define BLKCNT 32768 // total number of disk blocks in fs.img, see tools/mkfs.c
+// total number of disk blocks in fs.img, see tools/mkfs.c
+#define BLKS_PER_MEG 256
+#define NMEGS 1024 // 1 GB
+
 
 // File system super block
 struct superblock {

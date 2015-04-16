@@ -20,8 +20,9 @@ extern u64 _fs_imgz_size;
 
 #include "zlib-decompress.hh"
 
-static const u64 _fs_img_size = BSIZE*BLKCNT;
-static unsigned char _fs_img_start[_fs_img_size];
+static u64 nblocks = NMEGS * BLKS_PER_MEG;
+static const u64 _fs_img_size = nblocks * BSIZE;
+static unsigned char *_fs_img_start;
 
 class memdisk : public disk
 {
@@ -73,6 +74,12 @@ private:
   u8* const data_;
   const u64 nbytes_;
 };
+
+void
+initmemdisk(void)
+{
+  _fs_img_start = (unsigned char *)early_kalloc(_fs_img_size, PGSIZE);
+}
 
 void
 initdisk(void)

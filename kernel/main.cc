@@ -31,6 +31,7 @@ void initseg(struct cpu *);
 void initphysmem(paddr mbaddr);
 void initpercpu(void);
 void initpageinfo(void);
+void initmemdisk(void);
 void initkalloc(void);
 void initz(void);
 void initrcu(void);
@@ -217,6 +218,9 @@ cmain(u64 mbmagic, u64 mbaddr)
   initfpu();               // Requires nothing
   initmsr();               // Requires nothing
   initcmdline();
+#if MEMIDE
+  initmemdisk();
+#endif
   initkalloc();            // Requires initpageinfo
   initz();
   initproc();      // process table

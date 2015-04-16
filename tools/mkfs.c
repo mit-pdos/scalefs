@@ -9,7 +9,7 @@
 #include "include/fs.h"
 
 int ninodes = NINODES;
-int size = BLKCNT;
+u32 size = NMEGS * BLKS_PER_MEG;
 
 int fsfd;
 struct superblock sb;
