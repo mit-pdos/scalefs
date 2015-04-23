@@ -195,4 +195,10 @@ private:
     unsigned char *debug;
 #endif
   } orders[MAX_ORDER + 1];
+
+  // The highest order allocation that can be fulfilled by this buddy
+  // allocator, given its current state. Eg: It is 6 if at least one
+  // block of order 6 is free, and there are no free blocks in any
+  // higher order in this buddy allocator.
+  std::size_t highest_avail_order;
 };

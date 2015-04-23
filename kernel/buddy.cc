@@ -67,6 +67,8 @@ buddy_allocator::buddy_allocator(void *base, size_t len,
   // Create free block list.
   uintptr_t block_base = ((uintptr_t)base + MIN_SIZE - 1) & ~(MIN_SIZE - 1);
   uintptr_t block_end = free_end & ~(MIN_SIZE - 1);
+  highest_avail_order = 0; // size_t can't hold -1, hence using 0.
+
   for (uintptr_t block = block_base; block < block_end; ) {
     if ((block & (MAX_SIZE - 1)) == 0 && block + MAX_SIZE <= block_end) {
       // Fast path for MAX_SIZE blocks
@@ -95,6 +97,10 @@ buddy_allocator::buddy_allocator(void *base, size_t len,
 void*
 buddy_allocator::alloc_order(size_t order)
 {
+
+  if (order > highest_avail_order)
+    return nullptr;
+
   // Is a block of this order available?
   if (!orders[order].blocks.empty()) {
     // Get a block
@@ -111,6 +117,17 @@ buddy_allocator::alloc_order(size_t order)
     }
 
     assert((uintptr_t)block >= base && (uintptr_t)block < limit);
+
+    if (order == highest_avail_order && orders[order].blocks.empty()) {
+      highest_avail_order = 0; // size_t can't hold -1, hence using 0.
+      for (int i = order - 1; i >= 0; i--) {
+        if (!orders[i].blocks.empty()) {
+          highest_avail_order = i;
+          break;
+        }
+      }
+    }
+
     return (void*)block;
   } else if (order == MAX_ORDER) {
     return nullptr;
@@ -124,6 +141,9 @@ buddy_allocator::alloc_order(size_t order)
     struct block *second_half =
       (struct block*)((char*)parent + (MIN_SIZE << order));
     orders[order].blocks.push_front(second_half);
+
+    if (order > highest_avail_order)
+      highest_avail_order = order;
 
     // Mark this pair as half-allocated
     bool state = flip_bit(parent, order);
@@ -166,6 +186,9 @@ buddy_allocator::free_order(void *ptr, size_t order)
     // This block's buddy is allocated.  Release this block to the
     // current order.
     orders[order].blocks.push_front((struct block*)ptr);
+
+    if (order > highest_avail_order)
+      highest_avail_order = order;
   }
 }
 
