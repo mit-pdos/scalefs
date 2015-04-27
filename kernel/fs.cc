@@ -924,7 +924,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
       if (trans) {
         char charbuf[BSIZE];
         memmove(charbuf, (void*)ip->iaddrs.load(), IADDRSSZ);
-        trans->add_unique_block(ip->addrs[NDIRECT], charbuf);
+        trans->add_block(ip->addrs[NDIRECT], charbuf);
       }
     }
 

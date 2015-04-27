@@ -127,8 +127,12 @@ class transaction
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
     // out the changes to disk.
-    // Note: This API is for internal use only, so don't use it directly.
-    // Use add_unique_block() instead.
+    void add_block(u32 bno, char buf[BSIZE])
+    {
+      auto b = std::make_unique<transaction_diskblock>(bno, buf);
+      add_block(std::move(b));
+    }
+
     void add_block(std::unique_ptr<transaction_diskblock> b)
     {
       auto l = write_lock.guard();

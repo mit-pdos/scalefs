@@ -101,7 +101,7 @@ buf::add_to_transaction(transaction *trans)
   // We can't issue a read() to read the contents of the buf because we are
   // already holding the seq-lock for write (hence we'll end up in a self-
   // deadlock if we do so). So read directly from data_ instead.
-  trans->add_unique_block(block_, data_->data);
+  trans->add_block(block_, data_->data);
 }
 
 void
