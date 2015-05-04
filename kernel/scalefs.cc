@@ -757,6 +757,7 @@ mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
   pre_process_transaction(tr);
 
   tr->prepare_for_commit();
+  tr->deduplicate_blocks();
 
   trans = new transaction(0);
 
