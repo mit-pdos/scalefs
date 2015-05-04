@@ -114,21 +114,14 @@ class transaction
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
-    explicit transaction(u64 t) : timestamp_(t)
-    {
-      // XXX: What would be the ideal size for this hash table?
-      trans_blocks = new linearhash<u64, transaction_diskblock *>(4099);
-    }
+    explicit transaction(u64 t) : timestamp_(t), htable_initialized(false) {}
 
-    transaction() : timestamp_(get_timestamp())
-    {
-      // XXX: What would be the ideal size for this hash table?
-      trans_blocks = new linearhash<u64, transaction_diskblock *>(4099);
-    }
+    transaction() : timestamp_(get_timestamp()), htable_initialized(false) {}
 
     ~transaction()
     {
-      delete trans_blocks;
+      if (htable_initialized)
+        delete trans_blocks;
     }
 
     // Add a diskblock to the transaction. These diskblocks are not necessarily
@@ -150,6 +143,13 @@ class transaction
       transaction_diskblock *tdp;
       u64 new_timestamp = get_timestamp();
       u64 blocknum = bno;
+
+      if (!htable_initialized) {
+        assert(blocks.size() == 0);
+        // XXX: What would be the ideal size for this hash table?
+        trans_blocks = new linearhash<u64, transaction_diskblock *>(4099);
+        htable_initialized = true;
+      }
 
       // Lookup the hash-table to see if we have already logged that block in
       // this transaction.
@@ -189,6 +189,13 @@ class transaction
       transaction_diskblock *tdp;
       u64 blocknum = b->blocknum;
       u64 new_timestamp = b->timestamp;
+
+      if (!htable_initialized) {
+        assert(blocks.size() == 0);
+        // XXX: What would be the ideal size for this hash table?
+        trans_blocks = new linearhash<u64, transaction_diskblock *>(4099);
+        htable_initialized = true;
+      }
 
       // Lookup the hash-table to see if we have already logged that block in
       // this transaction.
@@ -242,7 +249,9 @@ class transaction
       free_block_list.push_back(bno);
     }
 
-    // Prepare the transaction for two phase commit.
+    // Prepare the transaction for two phase commit. The transaction diskblocks
+    // are ordered by timestamp. (This is needed to ensure that multiple changes
+    // to the same block are written to disk in the correct order).
     void prepare_for_commit()
     {
       // All relevant blocks must have been added to the transaction at
@@ -254,6 +263,43 @@ class transaction
     void finish_after_commit()
     {
       write_lock.release();
+    }
+
+    void deduplicate_blocks()
+    {
+      // Sort the diskblocks in increasing timestamp order.
+      std::sort(blocks.begin(), blocks.end(), compare_transaction_db);
+
+      // Make a list of the most current version of the diskblocks. For each
+      // block number pick the diskblock with the highest timestamp and
+      // discard the rest.
+
+      std::vector<unsigned long> erase_indices;
+      for (auto b = blocks.begin(); b != blocks.end(); b++) {
+        if ((b+1) != blocks.end() && (*b)->blocknum == (*(b+1))->blocknum) {
+          erase_indices.push_back(b - blocks.begin());
+        }
+      }
+
+      std::sort(erase_indices.begin(), erase_indices.end(),
+                std::greater<unsigned long>());
+
+      for (auto &idx : erase_indices)
+        blocks.erase(blocks.begin() + idx);
+    }
+
+    // Comparison function to order diskblock updates. Diskblocks are ordered in
+    // increasing order of (blocknum, timestamp). This ensures that all diskblocks
+    // with the same blocknum are present in the list in sequence and ordered in
+    // increasing order of their timestamps. So while writing out the transaction
+    // to the journal, for each block number just the block with the highest
+    // timestamp needs to be written to disk. Gets rid of unnecessary I/O.
+    static bool compare_transaction_db(const
+    std::unique_ptr<transaction_diskblock>& b1, const
+    std::unique_ptr<transaction_diskblock>& b2) {
+      if (b1->blocknum == b2->blocknum)
+        return (b1->timestamp < b2->timestamp);
+      return (b1->blocknum < b2->blocknum);
     }
 
     // Write the blocks in this transaction to disk. Used to write the journal.
@@ -288,6 +334,10 @@ class transaction
     // Hash-table of blocks updated within the transaction. Used to ensure that
     // we don't log the same blocks repeatedly in the transaction.
     linearhash<u64, transaction_diskblock *> *trans_blocks;
+
+    // Notes whether the trans_blocks hash table has been initialized. Used
+    // to allocate memory for the hash table on-demand.
+    bool htable_initialized;
 
     // Guards updates to the transaction_diskblock vector.
     sleeplock write_lock;
