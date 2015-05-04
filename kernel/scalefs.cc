@@ -819,8 +819,7 @@ mfs_interface::flush_journal_locked()
 
     if (fits_in_journal((*it)->blocks.size())) {
 
-      for (auto &b : (*it)->blocks)
-        prune_trans->add_unique_block(b.get());
+      prune_trans->add_blocks(std::move((*it)->blocks));
 
       processed_trans_vec.push_back(*it);
 
@@ -833,6 +832,8 @@ mfs_interface::flush_journal_locked()
       // Explicitly release this sub-transaction's write_lock. We'll retry this
       // sub-transaction later.
       (*it)->finish_after_commit();
+
+      prune_trans->deduplicate_blocks();
 
       // Write out the transaction blocks to the disk journal in timestamp order.
       write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
@@ -868,6 +869,9 @@ mfs_interface::flush_journal_locked()
   // Finalize and flush out any remaining transactions from the journal.
 
   if (!processed_trans_vec.empty()) {
+
+      prune_trans->deduplicate_blocks();
+
       // Write out the transaction blocks to the disk journal in timestamp order.
       write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
   }
