@@ -725,7 +725,11 @@ mfs_interface::post_process_transaction(transaction *tr)
   for (auto f = tr->free_block_list.begin();
        f != tr->free_block_list.end(); f++)
     free_block(*f);
+}
 
+void
+mfs_interface::apply_trans_on_disk(transaction *tr)
+{
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
   for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
@@ -764,6 +768,8 @@ mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
   write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
 
   post_process_transaction(tr);
+  apply_trans_on_disk(tr);
+
   ideflush();
 
   // The blocks have been written to disk successfully. Safe to delete
@@ -780,7 +786,7 @@ void
 mfs_interface::flush_journal_locked()
 {
   u64 timestamp = 0, prolog_timestamp = 0;
-  transaction *trans, *prune_trans, *prune_trans2;
+  transaction *trans, *prune_trans;
 
   // A vector of processed transactions, which need to be applied later
   // (post-processed).
@@ -835,17 +841,14 @@ mfs_interface::flush_journal_locked()
 
       // Apply all the committed sub-transactions to their final destinations
       // on the disk.
-      prune_trans2 = new transaction(0);
       for (auto t = processed_trans_vec.begin();
            t != processed_trans_vec.end(); t++) {
 
-	for (auto &blk : (*t)->blocks)
-          prune_trans2->add_unique_block(blk.get());
+        post_process_transaction(*t);
 
       }
-      post_process_transaction(prune_trans2);
-      delete prune_trans2;
 
+      apply_trans_on_disk(prune_trans);
       ideflush();
 
       processed_trans_vec.clear();
@@ -866,17 +869,14 @@ mfs_interface::flush_journal_locked()
 
   write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
 
-  prune_trans2 = new transaction(0);
   for (auto t = processed_trans_vec.begin();
        t != processed_trans_vec.end(); t++) {
 
-    for (auto &blk : (*t)->blocks)
-       prune_trans2->add_unique_block(blk.get());
+    post_process_transaction(*t);
 
   }
-  post_process_transaction(prune_trans2);
-  delete prune_trans2;
 
+  apply_trans_on_disk(prune_trans);
   ideflush();
 
   processed_trans_vec.clear();

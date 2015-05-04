@@ -441,6 +441,7 @@ class mfs_interface
     void add_to_journal_locked(transaction *tr);
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
+    void apply_trans_on_disk(transaction *tr);
     void add_fsync_to_journal(transaction *tr, bool flush_journal);
     void flush_journal_locked();
     void write_journal_hdrblock(const char *header, const char *datablock,
