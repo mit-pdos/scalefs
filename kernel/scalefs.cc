@@ -867,8 +867,15 @@ mfs_interface::flush_journal_locked()
 
   // Finalize and flush out any remaining transactions from the journal.
 
+  if (!processed_trans_vec.empty()) {
+      // Write out the transaction blocks to the disk journal in timestamp order.
+      write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
+  }
+
   write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
 
+  // Apply all the committed sub-transactions to their final destinations on
+  // the disk.
   for (auto t = processed_trans_vec.begin();
        t != processed_trans_vec.end(); t++) {
 
