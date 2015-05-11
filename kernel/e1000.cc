@@ -315,12 +315,14 @@ e1000::handle_irq()
   while (icr & (ICR_TXDW|ICR_RXO|ICR_RXT0)) {
     if (icr & ICR_TXDW)
       cleantx();
-	
+
     if (icr & ICR_RXT0)
       cleanrx();
 
-    if (icr & ICR_RXO)
-      panic("ICR_RXO");
+    if (icr & ICR_RXO) {
+      //panic("ICR_RXO");
+      cprintf("e1000: handle_irq(): ICR_RXO (RX buffer overflow)\n");
+    }
 
     icr = erd(WMREG_ICR);
   }
