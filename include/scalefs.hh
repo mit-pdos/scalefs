@@ -482,7 +482,6 @@ class mfs_interface
                           transaction *tr, bool link_in_parent = true);
     void create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum,
                                 u8 type, transaction *tr);
-    void update_dir_inode(u64 mdir_inum, transaction *tr);
     void unlink_old_inode(u64 mdir_inum, char* name, transaction *tr);
     void delete_old_inode(u64 mfile_inum, transaction *tr);
 

@@ -149,8 +149,7 @@ mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
       panic("create_file_if_new: parent %ld does not exist on disk\n",
         parent_inum);
     ilock(parenti, 1);
-    dirlink(parenti, name, i->inum, false);
-    dir_flush(parenti, tr);
+    dirlink(parenti, name, i->inum, false, tr);
     iunlock(parenti);
   }
 
@@ -194,8 +193,7 @@ mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
   mnode_to_inode->insert(mdir_inum, i->inum);
   inum_to_mnode->insert(i->inum, root_fs->get(mdir_inum));
   returnval = i->inum;
-  dirlink(i, "..", parent_inum, false);
-  dir_flush(i, tr);
+  dirlink(i, "..", parent_inum, false, tr);
   iunlock(i);
 
   // If link_in_parent flag is set, create a directory entry in the parent
@@ -205,8 +203,7 @@ mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
   if (link_in_parent) {
     parenti = iget(1, parent_inum);
     ilock(parenti, 1);
-    dirlink(parenti, name, i->inum, true);
-    dir_flush(parenti, tr);
+    dirlink(parenti, name, i->inum, true, tr);
     iunlock(parenti);
   }
 
@@ -228,10 +225,13 @@ mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum
       return;
     // The name now refers to a different inode. Unlink the old one and create a
     // new directory entry for this mapping.
+    ilock(i, 1);
     if(di->type == T_DIR)
-      dirunlink(i, name, di->inum, true);
+      dirunlink(i, name, di->inum, true, tr);
     else
-      dirunlink(i, name, di->inum, false);
+      dirunlink(i, name, di->inum, false, tr);
+    iunlock(i);
+
     if(!di->nlink()) {
       ilock(di, 1);
       itrunc(di, 0, tr);
@@ -244,14 +244,14 @@ mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum
   u64 inum = 0;
   inode_lookup(dirent_inum, &inum);
   if (inum) { // inode exists. Just create a dir entry. No need to allocate
-    dirlink(i, name, inum, (type == mnode::types::dir)?true:false);
+    dirlink(i, name, inum, (type == mnode::types::dir)?true:false, tr);
   } else {  // allocate new inode
     if (type == mnode::types::file) {
       inum = create_file_if_new(dirent_inum, mdir_inum, type, name, tr, false);
-      dirlink(i, name, inum, false);
+      dirlink(i, name, inum, false, tr);
     } else if (type == mnode::types::dir) {
       inum = create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, false);
-      dirlink(i, name, inum, true);
+      dirlink(i, name, inum, true, tr);
     }
   }
   iunlock(i);
@@ -266,10 +266,13 @@ mfs_interface::unlink_old_inode(u64 mdir_inum, char* name, transaction *tr)
   sref<inode> target = dirlookup(i, name);
   if (!target)
     return;
+
+  ilock(i, 1);
   if (target->type == T_DIR)
-    dirunlink(i, name, target->inum, true);
+    dirunlink(i, name, target->inum, true, tr);
   else
-    dirunlink(i, name, target->inum, false);
+    dirunlink(i, name, target->inum, false, tr);
+  iunlock(i);
 
   // FIXME: The mfs delete transaction depends on hitting mnode::onzero()
   // when its last open file descriptor gets closed. But inum_to_mnode holds
@@ -299,14 +302,6 @@ mfs_interface::delete_old_inode(u64 mfile_inum, transaction *tr)
 
   free_inode(mfile_inum, tr);
   mnode_to_inode->remove(mfile_inum);
-}
-
-// Calls a dir_flush on the directory.
-void
-mfs_interface::update_dir_inode(u64 mdir_inum, transaction *tr)
-{
-  sref<inode> i = get_inode(mdir_inum, "update_dir_inode");
-  update_dir(i, tr);
 }
 
 // Initializes the mdir the first time it is referred to. Populates directory
@@ -664,7 +659,6 @@ mfs_interface::mfs_link(mfs_operation_link *op, transaction *tr)
 {
   scoped_gc_epoch e;
   create_directory_entry(op->parent, op->name, op->mnode, op->mnode_type, tr);
-  update_dir_inode(op->parent, tr);
 }
 
 // Unlink operation
@@ -675,7 +669,6 @@ mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr)
   char str[DIRSIZ];
   strcpy(str, op->name);
   unlink_old_inode(op->parent, str, tr);
-  update_dir_inode(op->parent, tr);
 }
 
 // Delete operation
@@ -696,10 +689,7 @@ mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr)
   strcpy(str, op->name);
 
   create_directory_entry(op->new_parent, op->newname, op->mnode, op->mnode_type, tr);
-  update_dir_inode(op->new_parent, tr);
-
   unlink_old_inode(op->parent, str, tr);
-  update_dir_inode(op->parent, tr);
 }
 
 // Logs a transaction to the physical journal. Does not apply it to the disk yet

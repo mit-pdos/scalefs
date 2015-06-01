@@ -1288,13 +1288,6 @@ update_size(sref<inode> ip, u32 size, transaction *trans) {
   iupdate(ip, trans);
 }
 
-void
-update_dir(sref<inode> ip, transaction *trans) {
-  ilock(ip, 1);
-  dir_flush(ip, trans);
-  iunlock(ip);
-}
-
 //PAGEBREAK!
 // Directories
 
@@ -1444,7 +1437,8 @@ dirlookup(sref<inode> dp, char *name)
 
 // Write a new directory entry (name, inum) into the directory dp.
 int
-dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link)
+dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
+        transaction *trans)
 {
   dir_init(dp);
 
@@ -1457,12 +1451,15 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link)
   if (inc_link)
     dp->link();
 
+  dir_flush(dp, trans);
+
   return 0;
 }
 
 // Remove a directory entry (name, inum) from the directory dp.
 int
-dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link)
+dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
+          transaction *trans)
 {
   dir_init(dp);
 
@@ -1474,6 +1471,8 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link)
     i->unlink();
   if (dec_link)
     dp->unlink();
+
+  dir_flush(dp, trans);
 
   return 0;
 }
