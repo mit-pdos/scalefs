@@ -68,7 +68,7 @@ public:
     ns = a_[i].load();
     if (ns != nullptr)
       return ns->lookup(key);
-    return 0;
+    return V();
   }
 
   template<class CB>

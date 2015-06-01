@@ -144,7 +144,7 @@ class xns : public rcu_freed {
       e = e->next;
     }
 
-    return 0;
+    return V();
   }
 
   bool remove(const K &key, const V *vp = 0) {
