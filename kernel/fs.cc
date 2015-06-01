@@ -642,6 +642,7 @@ iupdate(sref<inode> ip, transaction *trans)
 inode::inode(u32 d, u32 i)
   : rcu_freed("inode", this, sizeof(*this)),
     dev(d), inum(i),
+    dir_offset(0),
     valid(false),
     busy(false),
     readbusy(0)
@@ -1323,7 +1324,9 @@ dir_init(sref<inode> dp)
     panic("dir_init not DIR");
 
   auto dir = new dirns();
+  u32 dir_offset = 0;
   for (u32 off = 0; off < dp->size; off += BSIZE) {
+    assert(dir_offset == off);
     sref<buf> bp;
     try {
       bp = buf::get(dp->dev, bmap(dp, off / BSIZE, NULL, true));
@@ -1335,8 +1338,12 @@ dir_init(sref<inode> dp)
     for (const struct dirent *de = (const struct dirent *) copy->data;
 	 de < (const struct dirent *) (copy->data + BSIZE);
 	 de++) {
+
       if (de->inum)
-        dir->insert(strbuf<DIRSIZ>(de->name), de->inum);
+        dir->insert(strbuf<DIRSIZ>(de->name),
+                    dir_entry_info(de->inum, dir_offset));
+
+      dir_offset += sizeof(*de);
     }
   }
 
@@ -1344,8 +1351,37 @@ dir_init(sref<inode> dp)
     // XXX free all the dirents
     delete dir;
   }
+
+  if (!cmpxch(&dp->dir_offset, (u32) 0, dir_offset)) {
+
+    cmpxch(&dp->dir, dir, (decltype(dir)) 0);
+    delete dir;
+  }
 }
 
+void
+dir_flush_entry(sref<inode> dp, const char *name, transaction *trans)
+{
+  if (!dp->dir)
+    return;
+
+  auto de_info = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
+  struct dirent de;
+  strncpy(de.name, name, DIRSIZ);
+  de.inum = de_info.inum_;
+
+  if (writei(dp, (char *)&de, de_info.offset_, sizeof(de), trans) != sizeof(de))
+    panic("dir_flush_entry");
+
+  if (dp->size < de_info.offset_ + sizeof(de)) {
+    auto w = dp->seq.write_begin();
+    dp->size = de_info.offset_ + sizeof(de);
+  }
+
+  iupdate(dp, trans);
+}
+
+#if 0
 void
 dir_flush(sref<inode> dp, transaction *trans)
 {
@@ -1382,6 +1418,7 @@ dir_flush(sref<inode> dp, transaction *trans)
   }
   iupdate(dp, trans);
 }
+#endif
 
 #if 0
 void
@@ -1428,11 +1465,11 @@ dirlookup(sref<inode> dp, char *name)
 {
   dir_init(dp);
 
-  u32 inum = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
+  auto de_info = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
 
-  if (inum == 0)
+  if (de_info.inum_ == 0)
     return sref<inode>();
-  return iget(dp->dev, inum);
+  return iget(dp->dev, de_info.inum_);
 }
 
 // Write a new directory entry (name, inum) into the directory dp.
@@ -1443,15 +1480,25 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
   dir_init(dp);
 
   //cprintf("dirlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
-  if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name), inum))
+  u32 dir_offset = dp->dir_offset.load();
+  if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name),
+                              dir_entry_info(inum, dir_offset)))
     return -1;
+
+  if (!cmpxch(&dp->dir_offset, dir_offset,
+              (u32)(dir_offset + sizeof(struct dirent)))) {
+
+    dp->dir.load()->remove(strbuf<DIRSIZ>(name));
+    return -1;
+  }
+
   sref<inode> i = iget(1, inum);
   if (i)
     i->link();
   if (inc_link)
     dp->link();
 
-  dir_flush(dp, trans);
+  dir_flush_entry(dp, name, trans);
 
   return 0;
 }
@@ -1464,15 +1511,24 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
   dir_init(dp);
 
   //cprintf("dirunlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
-  if (!dp->dir.load()->remove(strbuf<DIRSIZ>(name), &inum))
+
+  auto de_info = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
+  if (!dp->dir.load()->remove(strbuf<DIRSIZ>(name)))
     return -1;
+
+  if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name),
+                              dir_entry_info(0, de_info.offset_)))
+    return -1;
+
   sref<inode> i = iget(1, inum);
   if (i)
     i->unlink();
   if (dec_link)
     dp->unlink();
 
-  dir_flush(dp, trans);
+  dir_flush_entry(dp, name, trans);
+
+  dp->dir.load()->remove(strbuf<DIRSIZ>(name));
 
   return 0;
 }

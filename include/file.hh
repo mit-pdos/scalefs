@@ -241,6 +241,7 @@ struct inode : public referenced, public rcu_freed
 
   // initially null, set once:
   std::atomic<dirns*> dir;
+  std::atomic<u32> dir_offset; // The offset at which we can add the next entry.
   std::atomic<bool> valid;
 
   // protected by seq/lock:
