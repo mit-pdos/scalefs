@@ -1390,6 +1390,7 @@ dir_flush(sref<inode> dp, transaction *trans)
   iupdate(dp, trans);
 }
 
+#if 0
 void
 dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec) {
   dir_init(dp);
@@ -1426,6 +1427,7 @@ dir_remove_entry(sref<inode> dp, char* entry_name) {
       return false;
     });
 }
+#endif
 
 // Look for a directory entry in a directory.
 sref<inode>
