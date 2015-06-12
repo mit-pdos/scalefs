@@ -32,6 +32,7 @@ void initphysmem(paddr mbaddr);
 void initpercpu(void);
 void initpageinfo(void);
 void initmemdisk(void);
+void initidedisk(void);
 void initkalloc(void);
 void initz(void);
 void initrcu(void);
@@ -220,6 +221,8 @@ cmain(u64 mbmagic, u64 mbaddr)
   initcmdline();
 #if MEMIDE
   initmemdisk();
+#elif AHCIIDE
+  initidedisk();
 #endif
   initkalloc();            // Requires initpageinfo
   initz();
