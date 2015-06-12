@@ -20,6 +20,10 @@ static struct {
 } allowed_disks[] = {
   { "QEMU HARDDISK                          ", "QM00005            " },
   { "ST9500620NS                            ", "            9XF00VT" },
+  { "HGST HTS721010A9E630                   ", "      JS10106200N9H" },
+  { "HGST HTS721010A9E630                   ", "      JS10106200NDY" },
+  { "HGST HTS721010A9E630                   ", "      JS10106200N5X" },
+  { "HGST HTS721010A9E630                   ", "      JS10106200NGG" },
 };
 
 class ahci_hba;
