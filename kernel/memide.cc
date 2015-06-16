@@ -76,6 +76,13 @@ private:
 };
 
 void
+write_output(const char *buf, u64 offset, u64 size)
+{
+  assert(size == BSIZE);
+  memcpy(_fs_img_start + offset, buf, BSIZE);
+}
+
+void
 initmemdisk(void)
 {
   _fs_img_start = (unsigned char *)early_kalloc(_fs_img_size, PGSIZE);
@@ -84,11 +91,13 @@ initmemdisk(void)
 void
 initdisk(void)
 {
-  zlib_decompress(_fs_imgz_start, _fs_imgz_size,
-                  _fs_img_start, _fs_img_size);
-
   memdisk* md = new memdisk(_fs_img_start, _fs_img_size);
   disk_register(md);
+
+  cprintf("initdisk: Flashing the filesystem image on the memdisk(s)\n");
+
+  zlib_decompress(_fs_imgz_start, _fs_imgz_size,
+                  _fs_img_size, write_output);
 }
 
 #endif  /* MEMIDE */

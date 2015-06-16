@@ -21,8 +21,8 @@ zlib_free(void *opaque, void *p)
 #define CHUNK BSIZE
 
 int
-zlib_decompress(unsigned char *src, u64 srclen,
-                unsigned char *dst, u64 dstlen)
+zlib_decompress(unsigned char *src, u64 srclen, u64 dstlen,
+                void (*copy_output)(const char *buf, u64 offset, u64 size))
 {
   unsigned char out[CHUNK];
   z_stream stream;
@@ -35,8 +35,8 @@ zlib_decompress(unsigned char *src, u64 srclen,
 
   stream.next_in = src;
   stream.avail_in = srclen;
-  stream.next_out = dst;
-  stream.avail_out = dstlen;
+  stream.next_out = out;
+  stream.avail_out = CHUNK;
 
   err = inflateInit(&stream);
   if (err != Z_OK)
@@ -68,7 +68,7 @@ zlib_decompress(unsigned char *src, u64 srclen,
       have = CHUNK - stream.avail_out;
       assert(have == CHUNK || have == 0);
       if (have) {
-        memcpy(dst + i*CHUNK, out, have);
+        copy_output((const char *)out, i*CHUNK, have);
         i++;
       }
     } while (stream.avail_out == 0);

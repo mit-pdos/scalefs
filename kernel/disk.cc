@@ -13,29 +13,32 @@ extern u64 _fs_imgz_size;
 
 static u64 nblocks = NMEGS * BLKS_PER_MEG;
 static const u64 _fs_img_size = nblocks * BSIZE;
-static unsigned char *_fs_img_start;
 
-
-void initidedisk()
+void
+write_output(const char *buf, u64 offset, u64 size)
 {
-   _fs_img_start = (unsigned char *)early_kalloc(_fs_img_size, PGSIZE);
-}
-
-void initdisk()
-{
-   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
-                   _fs_img_start, _fs_img_size);
-
-   cprintf("initdisk: Flashing the filesystem image on the disk(s)\n");
-
    // TODO: Use idewrite_async() to make this faster. At the moment, the
    // scheduler panics ("EMBRYO -> 1") when the AHCI driver tries to put
    // the async request to sleep on the cmdslot_alloc_cv condvar inside
    // alloc_cmdslot(). This is probably because we are doing this way too
    // early in the boot sequence.
 
-   for (u64 i = 0; i < _fs_img_size; i += BSIZE)
-     idewrite(1, (char *)_fs_img_start + i, BSIZE, i);
+   assert(size == BSIZE);
+   idewrite(1, buf, BSIZE, offset);
+}
+
+void
+initidedisk()
+{
+}
+
+void
+initdisk()
+{
+   cprintf("initdisk: Flashing the filesystem image on the disk(s)\n");
+
+   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
+                   _fs_img_size, write_output);
 }
 
 #endif
