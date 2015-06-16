@@ -1,6 +1,7 @@
 #include "types.h"
 #include "kernel.hh"
 #include "zlib.h"
+#include "fs.h"
 
 void *
 zlib_alloc(void *opaque, unsigned count, unsigned nbytes)
@@ -17,11 +18,15 @@ zlib_free(void *opaque, void *p)
   kmfree(x-1, x[-1] + sizeof(u64));
 }
 
+#define CHUNK BSIZE
+
 int
 zlib_decompress(unsigned char *src, u64 srclen,
                 unsigned char *dst, u64 dstlen)
 {
+  unsigned char out[CHUNK];
   z_stream stream;
+  u64 have;
   int err;
 
   stream.zalloc = zlib_alloc;
@@ -35,19 +40,47 @@ zlib_decompress(unsigned char *src, u64 srclen,
 
   err = inflateInit(&stream);
   if (err != Z_OK)
-    panic("zlib: inflateInit() failed!\n");
+    panic("%s: inflateInit() failed!\n", __func__);
 
-  err = inflate(&stream, Z_FINISH);
-  if (err != Z_STREAM_END) {
-    inflateEnd(&stream);
-    if (err == Z_NEED_DICT || (err == Z_BUF_ERROR && stream.avail_in == 0))
-      panic("zlib: inflate() Z_DATA_ERROR!\n");
-    panic("zlib: inflate() failed!\n");
-  }
+  u64 i = 0;
+  do {
+    if (srclen == 0)
+      break;
+    stream.avail_in = srclen;
+    stream.next_in = src;
+
+    // Run inflate() on input until the output buffer is not full.
+    do {
+      stream.avail_out = CHUNK;
+      stream.next_out = out;
+      err = inflate(&stream, Z_NO_FLUSH);
+      assert(err != Z_STREAM_ERROR); // state not clobbered
+
+      switch (err) {
+      case Z_NEED_DICT:
+        err = Z_DATA_ERROR; // fall through
+      case Z_DATA_ERROR:
+      case Z_MEM_ERROR:
+        inflateEnd(&stream);
+        panic("%s: inflate() failed with error %d\n", __func__, err);
+      }
+
+      have = CHUNK - stream.avail_out;
+      assert(have == CHUNK || have == 0);
+      if (have) {
+        memcpy(dst + i*CHUNK, out, have);
+        i++;
+      }
+    } while (stream.avail_out == 0);
+
+    // done when inflate() says its done!
+  } while (err != Z_STREAM_END);
 
   if (stream.total_out != dstlen)
-    panic("zlib: inflate() total_out != dstlen\n");
+    panic("%s: inflate() total_out != dstlen\n", __func__);
 
+  assert(i == dstlen/CHUNK);
   inflateEnd(&stream);
+  assert(err == Z_STREAM_END);
   return 0;
 }
