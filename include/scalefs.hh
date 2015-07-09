@@ -746,7 +746,7 @@ class mfs_operation_unlink: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_unlink);
 
-    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mn, u32 pt, char nm[])
+    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[])
       : mfs_operation(p, t), mnode(mn), parent(pt)
     {
       name = new char[DIRSIZ];
