@@ -112,6 +112,9 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+	for (i = 0; i < FILESIZE; i++)
+		buf[i] = 'a';
+
 	/* Create the directories for the files to be spread amongst */
 	create_dirs(topdir, num_dirs);
 
