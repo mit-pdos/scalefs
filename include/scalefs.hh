@@ -485,7 +485,6 @@ class mfs_interface
     void unlink_old_inode(u64 mdir_inum, char* name, transaction *tr);
     void delete_old_inode(u64 mfile_inum, transaction *tr);
 
-    void create_mapping(u64 mnode, u64 inode);
     bool inode_lookup(u64 mnode, u64 *inum);
     // Initializes the root directory. Called during boot.
     sref<mnode> load_root();

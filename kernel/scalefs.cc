@@ -1117,20 +1117,14 @@ mfs_interface::inode_lookup(u64 mnode, u64 *inum)
   return false;
 }
 
-void
-mfs_interface::create_mapping(u64 mnode, u64 inode)
-{
-  if (!mnode_to_inode)
-    panic("mnode_to_inode mapping does not exist yet");
-  mnode_to_inode->insert(mnode, inode);
-}
-
 sref<mnode>
 mfs_interface::mnode_alloc(u64 inum, u8 mtype)
 {
   auto m = root_fs->alloc(mtype);
   inum_to_mnode->insert(inum, m.mn());
-  create_mapping(m.mn()->inum_, inum);
+  if (!mnode_to_inode)
+    panic("mnode_to_inode mapping does not exist yet");
+  mnode_to_inode->insert(m.mn()->inum_, inum);
   return m.mn();
 }
 
