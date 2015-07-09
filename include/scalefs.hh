@@ -472,14 +472,12 @@ class mfs_interface
     int load_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes);
     int sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes,
                        transaction *tr);
-    u64 create_file_if_new(u64 mfile_inum, u64 parent, u8 type, char *name,
-                           transaction *tr);
+    u64 create_file_dir_if_new(u64 mnode_inum, u64 parent, u8 type, char *name,
+                               transaction *tr);
     void truncate_file(u64 mfile_inum, u32 offset, transaction *tr);
 
     // Directory functions
     void initialize_dir(sref<mnode> m);
-    u64 create_dir_if_new(u64 mdir_inum, u64 parent, u8 type, char *name,
-                          transaction *tr);
     void create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum,
                                 u8 type, transaction *tr);
     void unlink_old_inode(u64 mdir_inum, char* name, transaction *tr);

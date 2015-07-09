@@ -111,14 +111,14 @@ mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos,
   return writei(i, p, pos, nbytes, tr, true);
 }
 
-// Creates a new file on the disk if an mnode (mfile) does not have a corresponding
-// inode mapping.
+// Creates a new file [or directory] on the disk if an mnode (mfile) [or mdir]
+// does not have a corresponding inode mapping.
 u64
-mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
+mfs_interface::create_file_dir_if_new(u64 mnode_inum, u64 parent, u8 type,
 		                  char *name, transaction *tr)
 {
   u64 inum = 0, parent_inum = 0, returnval = 0;
-  if (inode_lookup(mfile_inum, &inum))
+  if (inode_lookup(mnode_inum, &inum))
     return 0;
 
   // The parent directory will always be present on the disk when the child is
@@ -129,22 +129,22 @@ mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
   // gets rid of the scenario where we would need to go up the directory tree
   // and explicitly sync all new ancestors.
   if (!inode_lookup(parent, &parent_inum))
-    panic("create_file_if_new: parent %ld does not exist\n", parent);
+    panic("create_file_dir_if_new: parent %ld does not exist\n", parent);
 
   sref<inode> i;
   i = ialloc(1, type);
-  mnode_to_inode->insert(mfile_inum, i->inum);
-  inum_to_mnode->insert(i->inum, root_fs->get(mfile_inum));
+  mnode_to_inode->insert(mnode_inum, i->inum);
+  inum_to_mnode->insert(i->inum, root_fs->get(mnode_inum));
   returnval = i->inum;
-  iupdate(i, tr);
+  if (type == mnode::types::file)
+    iupdate(i, tr);
+  else if (type == mnode::types::dir)
+    dirlink(i, "..", parent_inum, false, tr); // dirlink does an iupdate within.
   iunlock(i);
 
   sref<inode> parenti = iget(1, parent_inum);
-  if (!parenti)
-    panic("create_file_if_new: parent %ld does not exist on disk\n",
-      parent_inum);
   ilock(parenti, 1);
-  dirlink(parenti, name, i->inum, false, tr);
+  dirlink(parenti, name, i->inum, (type == mnode::types::file) ? false : true, tr);
   iunlock(parenti);
 
   return returnval;
@@ -162,41 +162,6 @@ mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr)
     m->as_file()->remove_pgtable_mappings(offset);
 }
 
-// Creates a new direcotry on the disk if an mnode (mdir) does not have a
-// corresponding inode mapping.
-u64
-mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
-                                 char *name, transaction *tr)
-{
-  u64 inum = 0, parent_inum = 0, returnval = 0;
-  if (inode_lookup(mdir_inum, &inum))
-    return 0;
-
-  // The parent directory will always be present on the disk when the child is
-  // created. This is because all create operations are logged in the logical
-  // log (metadata operations). A parent's create will have occurred before the
-  // child's create. This is the order the operations will be present in the
-  // logical log and hence this is the order they'll make it to the disk. This
-  // gets rid of the scenario where we would need to go up the directory tree
-  // and explicitly sync all new ancestors.
-  if (!inode_lookup(parent, &parent_inum))
-    panic("create_dir_if_new: parent %ld does not exist\n", parent);
-
-  sref<inode> i, parenti;
-  i = ialloc(1, type);
-  mnode_to_inode->insert(mdir_inum, i->inum);
-  inum_to_mnode->insert(i->inum, root_fs->get(mdir_inum));
-  returnval = i->inum;
-  dirlink(i, "..", parent_inum, false, tr);
-  iunlock(i);
-
-  parenti = iget(1, parent_inum);
-  ilock(parenti, 1);
-  dirlink(parenti, name, i->inum, true, tr);
-  iunlock(parenti);
-
-  return returnval;
-}
 
 // Creates a directory entry for a name that exists in the in-memory 
 // representation but not on the disk.
@@ -235,10 +200,7 @@ mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum
     dirlink(i, name, inum, (type == mnode::types::dir)?true:false, tr);
     iunlock(i);
   } else {  // allocate new inode
-    if (type == mnode::types::file)
-      create_file_if_new(dirent_inum, mdir_inum, type, name, tr);
-    else if (type == mnode::types::dir)
-      create_dir_if_new(dirent_inum, mdir_inum, type, name, tr);
+    create_file_dir_if_new(dirent_inum, mdir_inum, type, name, tr);
   }
 }
 
@@ -632,10 +594,7 @@ void
 mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  if (op->mnode_type == mnode::types::file)      // sync the parent directory too
-    create_file_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr);
-  else if (op->mnode_type == mnode::types::dir)
-    create_dir_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr);
+  create_file_dir_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr);
 }
 
 // Link operation
