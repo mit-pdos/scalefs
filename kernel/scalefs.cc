@@ -115,7 +115,7 @@ mfs_interface::sync_file_page(u64 mfile_inum, char *p, size_t pos,
 // inode mapping.
 u64
 mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
-		                  char *name, transaction *tr, bool link_in_parent)
+		                  char *name, transaction *tr)
 {
   u64 inum = 0, parent_inum = 0, returnval = 0;
   if (inode_lookup(mfile_inum, &inum))
@@ -139,19 +139,13 @@ mfs_interface::create_file_if_new(u64 mfile_inum, u64 parent, u8 type,
   iupdate(i, tr);
   iunlock(i);
 
-  // If link_in_parent flag is set, create a directory entry in the parent
-  // directory corresponding to this file. By default we always create directory
-  // entries in the parent directory for newly-created files that are fsynced.
-  // POSIX does not require this however.
-  if (link_in_parent) {
-    sref<inode> parenti = iget(1, parent_inum);
-    if (!parenti)
-      panic("create_file_if_new: parent %ld does not exist on disk\n",
-        parent_inum);
-    ilock(parenti, 1);
-    dirlink(parenti, name, i->inum, false, tr);
-    iunlock(parenti);
-  }
+  sref<inode> parenti = iget(1, parent_inum);
+  if (!parenti)
+    panic("create_file_if_new: parent %ld does not exist on disk\n",
+      parent_inum);
+  ilock(parenti, 1);
+  dirlink(parenti, name, i->inum, false, tr);
+  iunlock(parenti);
 
   return returnval;
 }
@@ -172,7 +166,7 @@ mfs_interface::truncate_file(u64 mfile_inum, u32 offset, transaction *tr)
 // corresponding inode mapping.
 u64
 mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
-                                 char *name, transaction *tr, bool link_in_parent)
+                                 char *name, transaction *tr)
 {
   u64 inum = 0, parent_inum = 0, returnval = 0;
   if (inode_lookup(mdir_inum, &inum))
@@ -196,16 +190,10 @@ mfs_interface::create_dir_if_new(u64 mdir_inum, u64 parent, u8 type,
   dirlink(i, "..", parent_inum, false, tr);
   iunlock(i);
 
-  // If link_in_parent flag is set, create a directory entry in the parent
-  // directory corresponding to this child directory. By default we always
-  // create directory entries in the parent directory for newly-created
-  // directories that are fsynced. POSIX does not require this however.
-  if (link_in_parent) {
-    parenti = iget(1, parent_inum);
-    ilock(parenti, 1);
-    dirlink(parenti, name, i->inum, true, tr);
-    iunlock(parenti);
-  }
+  parenti = iget(1, parent_inum);
+  ilock(parenti, 1);
+  dirlink(parenti, name, i->inum, true, tr);
+  iunlock(parenti);
 
   return returnval;
 }
@@ -248,9 +236,9 @@ mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum
     iunlock(i);
   } else {  // allocate new inode
     if (type == mnode::types::file)
-      create_file_if_new(dirent_inum, mdir_inum, type, name, tr, true);
+      create_file_if_new(dirent_inum, mdir_inum, type, name, tr);
     else if (type == mnode::types::dir)
-      create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, true);
+      create_dir_if_new(dirent_inum, mdir_inum, type, name, tr);
   }
 }
 
@@ -645,9 +633,9 @@ mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)
 {
   scoped_gc_epoch e;
   if (op->mnode_type == mnode::types::file)      // sync the parent directory too
-    create_file_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr, true);     
-  else if (op->mnode_type == mnode::types::dir)  
-    create_dir_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr, true);
+    create_file_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr);
+  else if (op->mnode_type == mnode::types::dir)
+    create_dir_if_new(op->mnode, op->parent, op->mnode_type, op->name, tr);
 }
 
 // Link operation
