@@ -240,21 +240,18 @@ mfs_interface::create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum
     }
   }
 
-  ilock(i, 1);
   u64 inum = 0;
   inode_lookup(dirent_inum, &inum);
   if (inum) { // inode exists. Just create a dir entry. No need to allocate
+    ilock(i, 1);
     dirlink(i, name, inum, (type == mnode::types::dir)?true:false, tr);
+    iunlock(i);
   } else {  // allocate new inode
-    if (type == mnode::types::file) {
-      inum = create_file_if_new(dirent_inum, mdir_inum, type, name, tr, false);
-      dirlink(i, name, inum, false, tr);
-    } else if (type == mnode::types::dir) {
-      inum = create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, false);
-      dirlink(i, name, inum, true, tr);
-    }
+    if (type == mnode::types::file)
+      create_file_if_new(dirent_inum, mdir_inum, type, name, tr, true);
+    else if (type == mnode::types::dir)
+      create_dir_if_new(dirent_inum, mdir_inum, type, name, tr, true);
   }
-  iunlock(i);
 }
 
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
