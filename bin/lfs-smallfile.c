@@ -66,7 +66,7 @@ int main(int argc, char **argv)
 	extern char *optarg;
 	extern int optind;
 
-	float sec;
+	float sec, throughput;
 	unsigned long usec;
 	struct timeval before, after, dummy;
 
@@ -162,8 +162,10 @@ int main(int argc, char **argv)
 	usec -= timer_overhead;
 
 	sec = (float) usec / 1000000.0;
-	printf("\nOverall benchmark (%s) : %7.3f sec\n",
-              (sync_when == FSYNC_CREATE)?"no sleep used":"including sleep", sec);
+	throughput = ((float) (num_files * num_cpus) / sec);
+	printf("\nOverall benchmark (%s) : %7.3f sec throughput : %7.3f files/sec\n",
+		(sync_when == FSYNC_CREATE)?"no sleep used":"including sleep",
+		sec, throughput);
 
 	delete_dirs(topdir, num_dirs);
 
