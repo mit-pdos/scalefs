@@ -24,10 +24,10 @@
 #define FSYNC_CREATE	3
 
 int num_cpus;
-int num_files;
-int num_dirs;
-int nfiles_per_dir;
-int timer_overhead;
+unsigned long num_files;
+unsigned long num_dirs;
+unsigned long nfiles_per_dir;
+unsigned long timer_overhead;
 
 char *topdir, *buf;
 
@@ -38,12 +38,12 @@ int sync_when;
 int per_cpu_dirs;
 
 void *run_benchmark(void *arg);
-void create_dirs(const char *topdir, int num_dirs);
-void delete_dirs(const char *topdir, int num_dirs);
-int  create_files(const char *topdir, char *buf, int cpu);
-int  read_files(const char *topdir, char *buf, int cpu);
-int  unlink_files(const char *topdir, char *buf, int cpu);
-int  sync_files(void);
+void create_dirs(const char *topdir, unsigned long num_dirs);
+void delete_dirs(const char *topdir, unsigned long num_dirs);
+unsigned long  create_files(const char *topdir, char *buf, int cpu);
+unsigned long  read_files(const char *topdir, char *buf, int cpu);
+unsigned long  unlink_files(const char *topdir, char *buf, int cpu);
+unsigned long  sync_files(void);
 
 void usage(char *prog)
 {
@@ -177,7 +177,7 @@ int main(int argc, char **argv)
 
 void *run_benchmark(void *arg)
 {
-	int usec;
+	unsigned long usec;
 	float sec, total_sec;
 	float throughput, avg_throughput;
 
@@ -200,9 +200,9 @@ void *run_benchmark(void *arg)
 	fflush ( stdout );
 	printf ( "Running smallfile test on %s, on CPU %d\n", topdir, cpu );
 	printf ( "File Size = %d bytes\n", FILESIZE );
-	printf ( "No. of files = %d\n", num_files );
-	printf ( "No. of dirs (spread) = %d\n", num_dirs );
-	printf ( "No. of files per dir = %d\n", nfiles_per_dir );
+	printf ( "No. of files = %ld\n", num_files );
+	printf ( "No. of dirs (spread) = %ld\n", num_dirs );
+	printf ( "No. of files per dir = %ld\n", nfiles_per_dir );
 	printf ( "Test            Time(sec)       Files/sec\n" );
 	printf ( "----            ---------       ---------\n" );
 
@@ -256,26 +256,27 @@ void *run_benchmark(void *arg)
 	return 0;
 }
 
-void create_dirs(const char *topdir, int num_dirs)
+void create_dirs(const char *topdir, unsigned long num_dirs)
 {
-	int i, j, ret;
+	int ret;
+	unsigned long i, j;
 	char dir[128], sub_dir[128];
 
 	if (per_cpu_dirs) {
 		for (j = 0; j < num_cpus; j++) {
-			snprintf(sub_dir, 128, "%s/cpu-%d", topdir, j);
+			snprintf(sub_dir, 128, "%s/cpu-%ld", topdir, j);
 			if ((ret = mkdir(sub_dir, 0777)) != 0)
 				die("mkdir %s failed %d\n", sub_dir, ret);
 
 			for (i = 0; i < num_dirs; i++) {
-				snprintf(dir, 128, "%s/cpu-%d/dir-%d", topdir, j, i);
+				snprintf(dir, 128, "%s/cpu-%ld/dir-%ld", topdir, j, i);
 				if ((ret = mkdir(dir, 0777)) != 0)
 					die("mkdir %s failed %d\n", dir, ret);
 			}
 		}
 	} else {
 		for (i = 0; i < num_dirs; i++) {
-			snprintf(dir, 128, "%s/dir-%d", topdir, i);
+			snprintf(dir, 128, "%s/dir-%ld", topdir, i);
 			if ((ret = mkdir(dir, 0777)) != 0)
 				die("mkdir %s failed %d\n", dir, ret);
 		}
@@ -283,17 +284,18 @@ void create_dirs(const char *topdir, int num_dirs)
 }
 
 
-void delete_dirs(const char *topdir, int num_dirs)
+void delete_dirs(const char *topdir, unsigned long num_dirs)
 {
-	int i, j, ret;
+	int ret;
+	unsigned long i, j;
 	char dir[128], sub_dir[128];
 
 	if (per_cpu_dirs) {
 		for (j = 0; j < num_cpus; j++) {
-			snprintf(sub_dir, 128, "%s/cpu-%d", topdir, j);
+			snprintf(sub_dir, 128, "%s/cpu-%ld", topdir, j);
 
 			for (i = 0; i < num_dirs; i++) {
-				snprintf(dir, 128, "%s/cpu-%d/dir-%d", topdir, j, i);
+				snprintf(dir, 128, "%s/cpu-%ld/dir-%ld", topdir, j, i);
 				if ((ret = unlink(dir)) != 0)
 					die("unlink %s failed %d\n", dir, ret);
 			}
@@ -303,7 +305,7 @@ void delete_dirs(const char *topdir, int num_dirs)
 		}
 	} else {
 		for (i = 0; i < num_dirs; i++) {
-			snprintf(dir, 128, "%s/dir-%d", topdir, i);
+			snprintf(dir, 128, "%s/dir-%ld", topdir, i);
 			if ((ret = unlink(dir)) != 0)
 				die("unlink %s failed %d\n", dir, ret);
 		}
@@ -311,9 +313,10 @@ void delete_dirs(const char *topdir, int num_dirs)
 }
 
 
-int create_files(const char *topdir, char *buf, int cpu)
+unsigned long create_files(const char *topdir, char *buf, int cpu)
 {
-	int i, j, fd;
+	int fd;
+	unsigned long i, j;
 	ssize_t size;
 	char filename[128];
 	unsigned long time;
@@ -324,10 +327,10 @@ int create_files(const char *topdir, char *buf, int cpu)
 	/* Create phase */
 	for (i = 0, j = 0; i < num_files; i++) {
 		if (per_cpu_dirs)
-			snprintf(filename, 128, "%s/cpu-%d/dir-%d/file-%d-%d",
+			snprintf(filename, 128, "%s/cpu-%d/dir-%ld/file-%d-%ld",
 				topdir, cpu, j, cpu, i);
 		else
-			snprintf(filename, 128, "%s/dir-%d/file-%d-%d",
+			snprintf(filename, 128, "%s/dir-%ld/file-%d-%ld",
 				topdir, j, cpu, i);
 
 		fd = open(filename, O_WRONLY | O_CREAT | O_EXCL,
@@ -356,9 +359,10 @@ int create_files(const char *topdir, char *buf, int cpu)
 	return time;
 }
 
-int read_files(const char *topdir, char *buf, int cpu)
+unsigned long read_files(const char *topdir, char *buf, int cpu)
 {
-	int i, j, fd;
+	int fd;
+	unsigned long i, j;
 	ssize_t size;
 	char filename[128];
 	unsigned long time;
@@ -369,10 +373,10 @@ int read_files(const char *topdir, char *buf, int cpu)
 	/* Read phase */
 	for (i = 0, j = 0; i < num_files; i++) {
 		if (per_cpu_dirs)
-			snprintf(filename, 128, "%s/cpu-%d/dir-%d/file-%d-%d",
+			snprintf(filename, 128, "%s/cpu-%d/dir-%ld/file-%d-%ld",
 				topdir, cpu, j, cpu, i);
 		else
-			snprintf(filename, 128, "%s/dir-%d/file-%d-%d",
+			snprintf(filename, 128, "%s/dir-%ld/file-%d-%ld",
 				topdir, j, cpu, i);
 
 		fd = open(filename, O_RDONLY);
@@ -396,9 +400,10 @@ int read_files(const char *topdir, char *buf, int cpu)
 	return time;
 }
 
-int unlink_files(const char *topdir, char *buf, int cpu)
+unsigned long unlink_files(const char *topdir, char *buf, int cpu)
 {
-	int i, j, ret;
+	int ret;
+	unsigned long i, j;
 	char filename[128];
 	unsigned long time;
 	struct timeval before, after;
@@ -408,10 +413,10 @@ int unlink_files(const char *topdir, char *buf, int cpu)
 	/* Unlink phase */
 	for (i = 0, j = 0; i < num_files; i++) {
 		if (per_cpu_dirs)
-			snprintf(filename, 128, "%s/cpu-%d/dir-%d/file-%d-%d",
+			snprintf(filename, 128, "%s/cpu-%d/dir-%ld/file-%d-%ld",
 				topdir, cpu, j, cpu, i);
 		else
-			snprintf(filename, 128, "%s/dir-%d/file-%d-%d",
+			snprintf(filename, 128, "%s/dir-%ld/file-%d-%ld",
 				topdir, j, cpu, i);
 
 		ret = unlink(filename);
@@ -428,7 +433,7 @@ int unlink_files(const char *topdir, char *buf, int cpu)
 	return time;
 }
 
-int sync_files(void)
+unsigned long sync_files(void)
 {
 	unsigned long time;
 	struct timeval before, after;
