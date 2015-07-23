@@ -125,6 +125,7 @@ UPROGS := $(UPROGS_BIN) \
 UPROGS := $(addprefix $(O)/bin/, $(UPROGS))
 
 FSEXTRA += \
+	bin/lfsbench-sml \
 	bin/linkbench-tom \
 	bin/linkbench-ben \
 	bin/mapbench-ben \
