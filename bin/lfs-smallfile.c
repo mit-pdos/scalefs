@@ -21,6 +21,7 @@
 #define SYNC_NONE	0
 #define SYNC_UNLINK	1
 #define SYNC_CREATE_UNLINK 2
+#define FSYNC_CREATE	3
 
 int num_cpus;
 int num_files;
@@ -48,8 +49,11 @@ void usage(char *prog)
 	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] "
 		"[-y sync_when] <working directory>\n", prog);
 	fprintf(stderr, "where, sync_when can be:\n"
-		"0 - no sync\n1 - sync after unlink\n"
-		"2 - sync after create and unlink\n");
+		"%d - no sync\n"
+		"%d - sync after unlink\n"
+		"%d - sync after create and unlink\n"
+		"%d - fsync during create\n",
+		SYNC_NONE, SYNC_UNLINK, SYNC_CREATE_UNLINK, FSYNC_CREATE);
 	exit(1);
 }
 
@@ -152,7 +156,8 @@ int main(int argc, char **argv)
 	usec -= timer_overhead;
 
 	sec = (float) usec / 1000000.0;
-	printf("\nOverall benchmark (including sleep) : %7.3f sec\n", sec);
+	printf("\nOverall benchmark (%s) : %7.3f sec\n",
+              (sync_when == FSYNC_CREATE)?"no sleep used":"including sleep", sec);
 
 	delete_dirs(topdir, num_dirs);
 
@@ -289,6 +294,9 @@ int create_files(const char *topdir, char *buf, int cpu)
 		size = write(fd, buf, FILESIZE);
 		if (size == -1)
 			die("write");
+
+		if (sync_when == FSYNC_CREATE && fsync(fd) < 0)
+			die("fsync");
 
 		if (close(fd) < 0)
 			die("close");
