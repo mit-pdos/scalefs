@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 
 #include "libutil.h"
 
@@ -35,7 +36,7 @@ pthread_t tid[MAXCPUS];
 pthread_barrier_t bar;
 
 int sync_when;
-int per_cpu_dirs;
+int per_cpu_dirs, use_fork;
 
 void *run_benchmark(void *arg);
 void create_dirs(const char *topdir, unsigned long num_dirs);
@@ -47,15 +48,16 @@ unsigned long  sync_files(void);
 
 void usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] [-p] "
+	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] [-p] [-f] "
 		"[-y sync_when] <working directory>\n", prog);
 	fprintf(stderr, "where, sync_when can be:\n"
 		"%d - no sync\n"
 		"%d - sync after unlink\n"
 		"%d - sync after create and unlink\n"
-		"%d - fsync during create\n",
+		"%d - fsync during create\n\n",
 		SYNC_NONE, SYNC_UNLINK, SYNC_CREATE_UNLINK, FSYNC_CREATE);
-	fprintf(stderr, "and -p creates files under per-cpu sub-directories\n");
+	fprintf(stderr, "-p creates files under per-cpu sub-directories\n");
+	fprintf(stderr, "-f uses fork instead of pthreads\n");
 	exit(1);
 }
 
@@ -69,6 +71,7 @@ int main(int argc, char **argv)
 	float sec, throughput;
 	unsigned long usec;
 	struct timeval before, after, dummy;
+	int forkret = 0;
 
 	/* Parse and test the arguments. */
 	if (argc < 2) {
@@ -80,9 +83,10 @@ int main(int argc, char **argv)
 	num_dirs = NUMDIRS;
 	num_cpus = 1;
 	per_cpu_dirs = 0;
+	use_fork = 0;
 	sync_when = SYNC_UNLINK;
 
-	while ((ch = getopt(argc, argv, "n:s:c:p:y:")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:c:p:f:y:")) != -1) {
 		switch (ch) {
 			case 'n':
 				num_files = atoi(optarg);
@@ -97,6 +101,9 @@ int main(int argc, char **argv)
 				break;
 			case 'p':
 				per_cpu_dirs = 1;
+				break;
+			case 'f':
+				use_fork = 1;
 				break;
 			case 'y': // When to call sync()
 				sync_when = atoi(optarg);
@@ -142,18 +149,34 @@ int main(int argc, char **argv)
 			 (after.tv_usec - before.tv_usec);
 	timer_overhead /= NTEST;
 
-	pthread_barrier_init(&bar, 0, num_cpus);
+	if (!use_fork)
+		pthread_barrier_init(&bar, 0, num_cpus);
 
 	/* Time the overall benchmark */
 	usec = 0;
 	gettimeofday(&before, NULL);
 
-	for (i = 0; i < num_cpus; i++) {
-	  pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
-	}
+	if (use_fork) {
+		for (i = 0; i < num_cpus; i++) {
+			forkret = fork();
+			if (forkret == 0) {
+				run_benchmark((void *) i);
+				return 0; // Each child exits here.
+			}
+		}
 
-	for (i = 0; i < num_cpus; i++) {
-	  pthread_join(tid[i], NULL);
+		// Parent
+		for (i = 0; i < num_cpus; i++)
+			waitpid(-1, NULL, 0);
+
+		// Fall-through to print out the statistics and
+		// cleanup the benchmark.
+	} else {
+		for (i = 0; i < num_cpus; i++)
+			pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
+
+		for (i = 0; i < num_cpus; i++)
+			pthread_join(tid[i], NULL);
 	}
 
 	gettimeofday(&after, NULL);
@@ -188,7 +211,8 @@ void *run_benchmark(void *arg)
 		return 0;
 	}
 
-	pthread_barrier_wait(&bar);
+	if (!use_fork)
+		pthread_barrier_wait(&bar);
 
 	/*
 	 * Now we just do the tests in sequence, printing the timing
