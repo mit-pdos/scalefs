@@ -13,7 +13,7 @@
 #define BSIZE 4096  // block size
 // total number of disk blocks in fs.img, see tools/mkfs.c
 #define BLKS_PER_MEG 256
-#define NMEGS 1024 // 1 GB
+#define NMEGS 4096 // 4 GB
 
 
 // File system super block
@@ -92,7 +92,7 @@ struct dinode {
 // Number of inodes to create in the filesystem. Consumed by tools/mkfs.c
 // as well as kernel/scalefs.cc (to decide the size of the inum<->mnode
 // lookup tables).
-#define NINODES		24000
+#define NINODES		1000000
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
