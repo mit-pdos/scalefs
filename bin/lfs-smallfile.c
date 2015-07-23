@@ -35,6 +35,7 @@ pthread_t tid[MAXCPUS];
 pthread_barrier_t bar;
 
 int sync_when;
+int per_cpu_dirs;
 
 void *run_benchmark(void *arg);
 void create_dirs(const char *topdir, int num_dirs);
@@ -46,7 +47,7 @@ int  sync_files(void);
 
 void usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] "
+	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] [-p] "
 		"[-y sync_when] <working directory>\n", prog);
 	fprintf(stderr, "where, sync_when can be:\n"
 		"%d - no sync\n"
@@ -54,6 +55,7 @@ void usage(char *prog)
 		"%d - sync after create and unlink\n"
 		"%d - fsync during create\n",
 		SYNC_NONE, SYNC_UNLINK, SYNC_CREATE_UNLINK, FSYNC_CREATE);
+	fprintf(stderr, "and -p creates files under per-cpu sub-directories\n");
 	exit(1);
 }
 
@@ -77,9 +79,10 @@ int main(int argc, char **argv)
 	num_files = NUMFILES;
 	num_dirs = NUMDIRS;
 	num_cpus = 1;
+	per_cpu_dirs = 0;
 	sync_when = SYNC_UNLINK;
 
-	while ((ch = getopt(argc, argv, "n:s:c:y:")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:c:p:y:")) != -1) {
 		switch (ch) {
 			case 'n':
 				num_files = atoi(optarg);
@@ -91,6 +94,9 @@ int main(int argc, char **argv)
 				num_cpus = atoi(optarg);
 				if (num_cpus > MAXCPUS)
 					num_cpus = MAXCPUS;
+				break;
+			case 'p':
+				per_cpu_dirs = 1;
 				break;
 			case 'y': // When to call sync()
 				sync_when = atoi(optarg);
@@ -250,26 +256,55 @@ void *run_benchmark(void *arg)
 
 void create_dirs(const char *topdir, int num_dirs)
 {
-	int i, ret;
-	char dir[128];
+	int i, j, ret;
+	char dir[128], sub_dir[128];
 
-	for (i = 0; i < num_dirs; i++) {
-		snprintf(dir, 128, "%s/dir-%d", topdir, i);
-		if ((ret = mkdir(dir, 0777)) != 0)
-			die("mkdir %s failed %d\n", dir, ret);
+	if (per_cpu_dirs) {
+		for (j = 0; j < num_cpus; j++) {
+			snprintf(sub_dir, 128, "%s/cpu-%d", topdir, j);
+			if ((ret = mkdir(sub_dir, 0777)) != 0)
+				die("mkdir %s failed %d\n", sub_dir, ret);
+
+			for (i = 0; i < num_dirs; i++) {
+				snprintf(dir, 128, "%s/cpu-%d/dir-%d", topdir, j, i);
+				if ((ret = mkdir(dir, 0777)) != 0)
+					die("mkdir %s failed %d\n", dir, ret);
+			}
+		}
+	} else {
+		for (i = 0; i < num_dirs; i++) {
+			snprintf(dir, 128, "%s/dir-%d", topdir, i);
+			if ((ret = mkdir(dir, 0777)) != 0)
+				die("mkdir %s failed %d\n", dir, ret);
+		}
 	}
 }
 
 
 void delete_dirs(const char *topdir, int num_dirs)
 {
-	int i, ret;
-	char dir[128];
+	int i, j, ret;
+	char dir[128], sub_dir[128];
 
-	for (i = 0; i < num_dirs; i++) {
-		snprintf(dir, 128, "%s/dir-%d", topdir, i);
-		if ((ret = unlink(dir)) != 0)
-			die("unlink %s failed %d\n", dir, ret);
+	if (per_cpu_dirs) {
+		for (j = 0; j < num_cpus; j++) {
+			snprintf(sub_dir, 128, "%s/cpu-%d", topdir, j);
+
+			for (i = 0; i < num_dirs; i++) {
+				snprintf(dir, 128, "%s/cpu-%d/dir-%d", topdir, j, i);
+				if ((ret = unlink(dir)) != 0)
+					die("unlink %s failed %d\n", dir, ret);
+			}
+
+			if ((ret = unlink(sub_dir)) != 0)
+				die("unlink %s failed %d\n", sub_dir, ret);
+		}
+	} else {
+		for (i = 0; i < num_dirs; i++) {
+			snprintf(dir, 128, "%s/dir-%d", topdir, i);
+			if ((ret = unlink(dir)) != 0)
+				die("unlink %s failed %d\n", dir, ret);
+		}
 	}
 }
 
@@ -286,8 +321,16 @@ int create_files(const char *topdir, char *buf, int cpu)
 	gettimeofday ( &before, NULL );
 	/* Create phase */
 	for (i = 0, j = 0; i < num_files; i++) {
-		snprintf(filename, 128, "%s/dir-%d/file-%d-%d", topdir, j, cpu, i);
-		fd = open(filename, O_WRONLY | O_CREAT | O_EXCL, S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+		if (per_cpu_dirs)
+			snprintf(filename, 128, "%s/cpu-%d/dir-%d/file-%d-%d",
+				topdir, cpu, j, cpu, i);
+		else
+			snprintf(filename, 128, "%s/dir-%d/file-%d-%d",
+				topdir, j, cpu, i);
+
+		fd = open(filename, O_WRONLY | O_CREAT | O_EXCL,
+			S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+
 		if (fd == -1)
 			die("open");
 
@@ -323,7 +366,13 @@ int read_files(const char *topdir, char *buf, int cpu)
 	gettimeofday ( &before, NULL );
 	/* Read phase */
 	for (i = 0, j = 0; i < num_files; i++) {
-		snprintf(filename, 128, "%s/dir-%d/file-%d-%d", topdir, j, cpu, i);
+		if (per_cpu_dirs)
+			snprintf(filename, 128, "%s/cpu-%d/dir-%d/file-%d-%d",
+				topdir, cpu, j, cpu, i);
+		else
+			snprintf(filename, 128, "%s/dir-%d/file-%d-%d",
+				topdir, j, cpu, i);
+
 		fd = open(filename, O_RDONLY);
 		if (fd == -1)
 			die("open");
@@ -356,7 +405,13 @@ int unlink_files(const char *topdir, char *buf, int cpu)
 	gettimeofday ( &before, NULL );
 	/* Unlink phase */
 	for (i = 0, j = 0; i < num_files; i++) {
-		snprintf(filename, 128, "%s/dir-%d/file-%d-%d", topdir, j, cpu, i);
+		if (per_cpu_dirs)
+			snprintf(filename, 128, "%s/cpu-%d/dir-%d/file-%d-%d",
+				topdir, cpu, j, cpu, i);
+		else
+			snprintf(filename, 128, "%s/dir-%d/file-%d-%d",
+				topdir, j, cpu, i);
+
 		ret = unlink(filename);
 		if (ret == -1)
 			die("unlink");
