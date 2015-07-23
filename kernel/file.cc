@@ -12,9 +12,6 @@ struct devsw __mpalign__ devsw[NDEV];
 int
 file_inode::fsync() {
 
-  if (!readable)
-    return -1;
-
   if (!ip)
     return -1;
 
