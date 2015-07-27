@@ -589,9 +589,8 @@ class mfs_operation
     virtual void apply(transaction *tr) = 0;
     virtual void print() = 0;
 
-    // Checks if the mnode the mfs_operation is performed on is present in the
-    // vector mnode_vec. If yes, the other mnodes the operation modifies (for
-    // eg. the parent mnode) are added to mnode_vec.
+    // If the mfs_operation depends on other mnodes (such as the parent mnode),
+    // those mnodes are added to mnode_vec.
     virtual bool check_dependency(std::vector<u64> &mnode_vec) = 0;
 
     virtual bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) = 0;
@@ -629,17 +628,14 @@ class mfs_operation_create: public mfs_operation
     bool check_dependency (std::vector<u64> &mnode_vec) override
     {
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
-        if (*it == mnode) {
-          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
-            if (*i == parent)
-              return true;
-          mnode_vec.push_back(parent);
+        if (*it == parent)
           return true;
-        }
       }
-      return false;
+      mnode_vec.push_back(parent);
+      return true;
     }
 
+    // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
       if (parent == pt) {
@@ -697,17 +693,14 @@ class mfs_operation_link: public mfs_operation
     bool check_dependency (std::vector<u64> &mnode_vec) override
     {
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
-        if (*it == mnode) {
-          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
-            if (*i == parent)
-              return true;
-          mnode_vec.push_back(parent);
+        if (*it == parent)
           return true;
-        }
       }
-      return false;
+      mnode_vec.push_back(parent);
+      return true;
     }
 
+    // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
       if (parent == pt) {
@@ -763,18 +756,12 @@ class mfs_operation_unlink: public mfs_operation
 
     bool check_dependency (std::vector<u64> &mnode_vec) override
     {
-      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
-        if (*it == mnode) {
-          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++)
-            if (*i == parent)
-              return true;
-          mnode_vec.push_back(parent);
-          return true;
-        }
-      }
-      return false;
+      // The corresponding create or link operation would have already
+      // handled the dependencies (if any).
+      return true;
     }
 
+    // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
       if (parent == pt) {
@@ -821,11 +808,12 @@ class mfs_operation_delete: public mfs_operation
       parent_mfs->mfs_delete(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override
+    bool check_dependency(std::vector<u64> &mnode_vec) override
     {
-      return false;
+      return true;
     }
 
+    // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
       return false;
@@ -873,25 +861,19 @@ class mfs_operation_rename: public mfs_operation
 
     bool check_dependency (std::vector<u64> &mnode_vec) override
     {
+      // The corresponding create or link of the mnode would have already
+      // added the source directory to the dependency list. So we just need
+      // to add the destination directory here.
+
       for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
-        if (*it == mnode) {
-          bool flag1 = false, flag2 = false;
-          for (auto i = mnode_vec.begin(); i != mnode_vec.end(); i++) {
-            if (*i == parent)
-              flag1 = true;
-            else if (*i == new_parent)
-              flag2 = true;
-          }
-          if (!flag1)
-            mnode_vec.push_back(parent);
-          if (!flag2)
-            mnode_vec.push_back(new_parent);
+        if (*it == new_parent)
           return true;
-        }
       }
-      return false;
+      mnode_vec.push_back(new_parent);
+      return true;
     }
 
+    // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
       if (parent == pt || new_parent == pt) {
