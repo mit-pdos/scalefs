@@ -271,28 +271,28 @@ mfs_interface::initialize_dir(sref<mnode> m)
 }
 
 void
-mfs_interface::metadata_op_start(size_t cpu, u64 tsc_val)
+mfs_interface::metadata_op_start(u64 mnode_inum, size_t cpu, u64 tsc_val)
 {
-#if 0
-  metadata_log->update_start_tsc(cpu, tsc_val);
-#endif
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnode_inum, &mfs_log));
+  mfs_log->update_start_tsc(cpu, tsc_val);
 }
 
 void
-mfs_interface::metadata_op_end(size_t cpu, u64 tsc_val)
+mfs_interface::metadata_op_end(u64 mnode_inum, size_t cpu, u64 tsc_val)
 {
-#if 0
-  metadata_log->update_end_tsc(cpu, tsc_val);
-#endif
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnode_inum, &mfs_log));
+  mfs_log->update_end_tsc(cpu, tsc_val);
 }
 
 // Adds a metadata operation to the logical log.
 void
-mfs_interface::add_to_metadata_log(mfs_operation *op)
+mfs_interface::add_to_metadata_log(u64 mnode_inum, mfs_operation *op)
 {
-#if 0
-  metadata_log->add_operation(op);
-#endif
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnode_inum, &mfs_log));
+  mfs_log->add_operation(op);
 }
 
 // Applies all metadata operations logged in the logical log. Called on sync.

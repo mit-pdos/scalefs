@@ -508,9 +508,9 @@ class mfs_interface
 
     // Metadata functions
     void metadata_log_alloc(u64 mnode_inum);
-    void metadata_op_start(size_t cpu, u64 tsc_val);
-    void metadata_op_end(size_t cpu, u64 tsc_val);
-    void add_to_metadata_log(mfs_operation *op);
+    void metadata_op_start(u64 mnode_inum, size_t cpu, u64 tsc_val);
+    void metadata_op_end(u64 mnode_inum, size_t cpu, u64 tsc_val);
+    void add_to_metadata_log(u64 mnode_inum, mfs_operation *op);
     void sync_dirty_files();
     void evict_bufcache();
     void evict_pagecache();

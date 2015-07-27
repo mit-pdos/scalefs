@@ -298,19 +298,19 @@ sys_link(userptr_str old_path, userptr_str new_path)
 
   if (md->fs_ == root_fs) {
     is_root_fs = true;
-    rootfs_interface->metadata_op_start(myid(), get_tsc());
+    rootfs_interface->metadata_op_start(mflink.mn()->inum_, myid(), get_tsc());
   }
 
   if (!md->as_dir()->insert(name, &mflink, &tsc)) {
     if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+      rootfs_interface->metadata_op_end(mflink.mn()->inum_, myid(), get_tsc());
     return -1;
   } else {
     if (is_root_fs) {
       mfs_operation *op = new mfs_operation_link(rootfs_interface, tsc,
         mflink.mn()->inum_, md->inum_, name.buf_, mflink.mn()->type());
-      rootfs_interface->add_to_metadata_log(op);
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+      rootfs_interface->add_to_metadata_log(mflink.mn()->inum_, op);
+      rootfs_interface->metadata_op_end(mflink.mn()->inum_, myid(), get_tsc());
     }
   }
 
@@ -321,7 +321,6 @@ sys_link(userptr_str old_path, userptr_str new_path)
 int
 sys_rename(userptr_str old_path, userptr_str new_path)
 {
-  bool is_root_fs = false;
   u64 tsc = 0;
   char old[PATH_MAX], newn[PATH_MAX];
   if (!old_path.load(old, sizeof old) || !new_path.load(newn, sizeof newn))
@@ -370,34 +369,27 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       return -1;
     }
 
-    if (mdold->fs_ == root_fs && !is_root_fs) {
-      is_root_fs = true;
-      rootfs_interface->metadata_op_start(myid(), get_tsc());
-    }
+    rootfs_interface->metadata_op_start(mfold->inum_, myid(), get_tsc());
 
     if (mfroadblock == mfold) {
       if (mdnew->as_dir()->replace_common_inode(newname, mfroadblock,
             mdold->as_dir(), oldname, &tsc)) {
         // Deletion of the source succeeded while the destination remained
         // unchanged. Log the operation in the logical log.
-        if (is_root_fs) {
-          mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc,
-            mfold->inum_, mdold->inum_, oldname.buf_);
-          rootfs_interface->add_to_metadata_log(op);
-          rootfs_interface->metadata_op_end(myid(), get_tsc());
-        }
+        mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc,
+                            mfold->inum_, mdold->inum_, oldname.buf_);
+        rootfs_interface->add_to_metadata_log(mfold->inum_, op);
+        rootfs_interface->metadata_op_end(mfold->inum_, myid(), get_tsc());
         return 0;
       }
     } else {
       if (mdnew->as_dir()->replace_from(newname, mfroadblock,
             mdold->as_dir(), oldname, mfold, &tsc)) {
-        if (is_root_fs) {
-          mfs_operation *op = new mfs_operation_rename(rootfs_interface, tsc,
-            oldname.buf_, mfold->inum_, mdold->inum_, newname.buf_,
-            mdnew->inum_, mfold->type());
-          rootfs_interface->add_to_metadata_log(op);
-          rootfs_interface->metadata_op_end(myid(), get_tsc());
-        }
+        mfs_operation *op = new mfs_operation_rename(rootfs_interface, tsc,
+                            oldname.buf_, mfold->inum_, mdold->inum_,
+                            newname.buf_, mdnew->inum_, mfold->type());
+        rootfs_interface->add_to_metadata_log(mfold->inum_, op);
+        rootfs_interface->metadata_op_end(mfold->inum_, myid(), get_tsc());
         return 0;
       }
     }
@@ -406,6 +398,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
      * The inodes for the source and/or the destination file names
      * must have changed.  Retry.
      */
+    rootfs_interface->metadata_op_end(mfold->inum_, myid(), get_tsc());
   }
 
 }
@@ -434,7 +427,7 @@ sys_unlink(userptr_str path)
 
   if (md->fs_ == root_fs) {
     is_root_fs = true;
-    rootfs_interface->metadata_op_start(myid(), get_tsc());
+    rootfs_interface->metadata_op_start(mf->inum_, myid(), get_tsc());
   }
 
   if (mf->type() == mnode::types::dir) {
@@ -444,7 +437,7 @@ sys_unlink(userptr_str path)
      */
     if (!mf->as_dir()->kill(md)) {
       if (is_root_fs)
-        rootfs_interface->metadata_op_end(myid(), get_tsc());
+        rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
       return -1;
     }
 
@@ -458,22 +451,22 @@ sys_unlink(userptr_str path)
     if (is_root_fs) {
       mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc,
                             mf->inum_, md->inum_, name.buf_);
-      rootfs_interface->add_to_metadata_log(op);
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+      rootfs_interface->add_to_metadata_log(mf->inum_, op);
+      rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
     }
     return 0;
   }
 
   if (!md->as_dir()->remove(name, mf, &tsc)) {
     if (is_root_fs)
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+      rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
     return -1;
   } else {
     if (is_root_fs) {
       mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc,
                             mf->inum_, md->inum_, name.buf_);
-      rootfs_interface->add_to_metadata_log(op);
-      rootfs_interface->metadata_op_end(myid(), get_tsc());
+      rootfs_interface->add_to_metadata_log(mf->inum_, op);
+      rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
     }
   }
 
@@ -483,7 +476,6 @@ sys_unlink(userptr_str path)
 sref<mnode>
 create(sref<mnode> cwd, const char *path, short type, short major, short minor, bool excl)
 {
-  bool is_root_fs = false;
   u64 tsc = 0;
   for (;;) {
     strbuf<DIRSIZ> name;
@@ -502,13 +494,6 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       return mf;
     }
 
-    // The check for !is_root_fs ensures that the start time is updated just
-    // once and not during every iteration of the for loop
-    if (md->fs_ == root_fs && !is_root_fs) {
-      is_root_fs = true;
-      rootfs_interface->metadata_op_start(myid(), get_tsc());
-    }
-
     u8 mtype = 0;
     switch (type) {
     case T_DIR:    mtype = mnode::types::dir;  break;
@@ -521,6 +506,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     auto ilink = md->fs_->alloc(mtype, md->inum_);
     mf = ilink.mn();
     mf->initialized(true);
+
+    rootfs_interface->metadata_op_start(mf->inum_, myid(), get_tsc());
 
     if (mtype == mnode::types::dir) {
       /*
@@ -538,11 +525,11 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       parentlink.acquire();
       assert(mf->as_dir()->insert("..", &parentlink));
       if (md->as_dir()->insert(name, &ilink, &tsc)) {
-        if (myproc() != bootproc && is_root_fs) {
-          mfs_operation *op = new mfs_operation_create(rootfs_interface, tsc, 
+        if (myproc() != bootproc) {
+          mfs_operation *op = new mfs_operation_create(rootfs_interface, tsc,
                                 mf->inum_, md->inum_, name.buf_, type);
-          rootfs_interface->add_to_metadata_log(op);
-          rootfs_interface->metadata_op_end(myid(), get_tsc());
+          rootfs_interface->add_to_metadata_log(mf->inum_, op);
+          rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
         }
         return mf;
       }
@@ -552,6 +539,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
        * parent directory (md) was removed, and nameiparent will fail.
        */
       assert(mf->as_dir()->remove("..", md));
+      rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
       continue;
     }
 
@@ -559,16 +547,17 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       mf->as_dev()->init(major, minor);
 
     if (md->as_dir()->insert(name, &ilink, &tsc)) {
-      if (myproc() != bootproc && is_root_fs) {
+      if (myproc() != bootproc) {
         mfs_operation *op = new mfs_operation_create(rootfs_interface, tsc,
                               mf->inum_, md->inum_, name.buf_, type);
-        rootfs_interface->add_to_metadata_log(op);
-        rootfs_interface->metadata_op_end(myid(), get_tsc());
+        rootfs_interface->add_to_metadata_log(mf->inum_, op);
+        rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
       }
       return mf;
     }
 
     /* Failed to insert, retry */
+    rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
   }
 }
 
