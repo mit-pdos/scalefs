@@ -10,10 +10,13 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+// A prime number larger than NINODES (defined in include/fs.h)
+#define NINODES_PRIME 1000003
+
 mfs_interface::mfs_interface()
 {
-  inum_to_mnode = new chainhash<u64, sref<mnode>>(1000003);
-  mnode_to_inode = new chainhash<u64, u64>(1000003);
+  inum_to_mnode = new chainhash<u64, sref<mnode>>(NINODES_PRIME);
+  mnode_to_inode = new chainhash<u64, u64>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log = new mfs_logical_log();
   // XXX(rasha) Set up the physical journal file
