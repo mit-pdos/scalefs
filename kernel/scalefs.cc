@@ -592,6 +592,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir)
   do {
     it--;
     transaction *tr = new transaction((*it)->timestamp);
+    auto journal_lock = fs_journal->prepare_for_commit();
     (*it)->apply(tr);
     add_to_journal_locked(tr);
     delete (*it);
@@ -601,8 +602,8 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir)
 void
 mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir)
 {
-  auto journal_lock = fs_journal->prepare_for_commit();
   process_metadata_log(max_tsc, inum, isdir);
+  auto journal_lock = fs_journal->prepare_for_commit();
   flush_journal_locked();
 }
 
