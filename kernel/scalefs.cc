@@ -267,26 +267,33 @@ mfs_interface::initialize_dir(sref<mnode> m)
 void
 mfs_interface::metadata_op_start(size_t cpu, u64 tsc_val)
 {
+#if 0
   metadata_log->update_start_tsc(cpu, tsc_val);
+#endif
 }
 
 void
 mfs_interface::metadata_op_end(size_t cpu, u64 tsc_val)
 {
+#if 0
   metadata_log->update_end_tsc(cpu, tsc_val);
+#endif
 }
 
 // Adds a metadata operation to the logical log.
 void
 mfs_interface::add_to_metadata_log(mfs_operation *op)
 {
+#if 0
   metadata_log->add_operation(op);
+#endif
 }
 
 // Applies all metadata operations logged in the logical log. Called on sync.
 void
 mfs_interface::process_metadata_log()
 {
+#if 0
   mfs_operation_vec ops;
   u64 sync_tsc = 0;
   if (cpuid::features().rdtscp)
@@ -428,19 +435,23 @@ mfs_interface::process_metadata_log()
     add_to_journal_locked(tr);
     delete (*it);
   }
+#endif
 }
 
 void
 mfs_interface::process_metadata_log_and_flush()
 {
+#if 0
   auto journal_lock = fs_journal->prepare_for_commit();
   process_metadata_log();
   flush_journal_locked();
+#endif
 }
 
 void
 mfs_interface::sync_dirty_files()
 {
+#if 0
   superblock sb;
 
   get_superblock(&sb);
@@ -456,6 +467,7 @@ mfs_interface::sync_dirty_files()
 
     return false;
   });
+#endif
 }
 
 void
@@ -533,6 +545,7 @@ evict_caches(mdev*, const char *buf, u32 n)
 void
 mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir)
 {
+#if 0
   mfs_operation_vec dependent_ops;
   {
     // Synchronize the oplog loggers.
@@ -553,14 +566,17 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir)
     add_to_journal_locked(tr);
     delete (*it);
   } while (it != dependent_ops.begin());
+#endif
 }
 
 void
 mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir)
 {
+#if 0
   auto journal_lock = fs_journal->prepare_for_commit();
   process_metadata_log(max_tsc, inum, isdir);
   flush_journal_locked();
+#endif
 }
 
 // Goes through the metadata log and filters out the operations that the fsync()
@@ -569,7 +585,7 @@ void
 mfs_interface::find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops,
                                   bool isdir)
 {
-
+#if 0
   if (metadata_log->operation_vec.size() == 0)
     return;
 
@@ -590,6 +606,7 @@ mfs_interface::find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops,
       metadata_log->operation_vec.erase(metadata_log->operation_vec.begin()+index);
     }
   } while (it != metadata_log->operation_vec.begin());
+#endif
 }
 
 // Create operation
@@ -1271,7 +1288,9 @@ mfs_interface::print_free_blocks(print_stream *s)
 void
 mfs_interface::preload_oplog()
 {
+#if 0
   metadata_log->preload_oplog();
+#endif
 }
 
 void

@@ -144,19 +144,24 @@ sys_close(int fd)
 void
 sys_sync(void)
 {
+#if 0
   rootfs_interface->process_metadata_log_and_flush();
   rootfs_interface->sync_dirty_files();
   rootfs_interface->process_metadata_log_and_flush();
+#endif
 }
 
 //SYSCALL
 int
-sys_fsync(int fd) 
+sys_fsync(int fd)
 {
+  return -1; // temporarily disabled.
+#if 0
   sref<file> f = getfile(fd);
   if (!f)
     return -1;
   return f->fsync();
+#endif
 }
 
 //SYSCALL
