@@ -1322,9 +1322,12 @@ mfs_interface::print_free_blocks(print_stream *s)
 void
 mfs_interface::preload_oplog()
 {
-#if 0
-  metadata_log->preload_oplog();
-#endif
+  // Invoke preload_oplog() on every mfs_log that has been populated in the
+  // hash table.
+  metadata_log_htab->enumerate([](const u64 &i, mfs_logical_log* &mfs_log)->bool {
+    mfs_log->preload_oplog();
+    return false;
+  });
 }
 
 void
