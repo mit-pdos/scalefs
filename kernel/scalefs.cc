@@ -18,8 +18,14 @@ mfs_interface::mfs_interface()
   inum_to_mnode = new chainhash<u64, sref<mnode>>(NINODES_PRIME);
   mnode_to_inode = new chainhash<u64, u64>(NINODES_PRIME);
   fs_journal = new journal();
-  metadata_log = new mfs_logical_log();
+  metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
   // XXX(rasha) Set up the physical journal file
+}
+
+void
+mfs_interface::metadata_log_alloc(u64 mnode_inum)
+{
+  metadata_log_htab->insert(mnode_inum, new mfs_logical_log());
 }
 
 void

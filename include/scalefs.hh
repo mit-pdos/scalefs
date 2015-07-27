@@ -507,6 +507,7 @@ class mfs_interface
     void clear_journal();
 
     // Metadata functions
+    void metadata_log_alloc(u64 mnode_inum);
     void metadata_op_start(size_t cpu, u64 tsc_val);
     void metadata_op_end(size_t cpu, u64 tsc_val);
     void add_to_metadata_log(mfs_operation *op);
@@ -560,7 +561,7 @@ class mfs_interface
     linearhash<u64, mfs_op_idx> *prune_trans_log;
 
     journal *fs_journal;            // The phsyical journal
-    mfs_logical_log *metadata_log;  // The logical log
+    chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
     sref<inode> sv6_journal;
 
     // The free block bitmap in memory. Transactions marking a block free or not
