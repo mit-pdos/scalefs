@@ -516,9 +516,11 @@ class mfs_interface
     void evict_pagecache();
     void process_metadata_log();
     void process_metadata_log_and_flush();
-    void process_metadata_log(u64 max_tsc, u64 inum, bool isdir);
+    void process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir);
     void process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir);
-    void find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops, bool isdir);
+    void find_dependent_mnodes(mfs_logical_log *mfs_log, u64 mnode_inum,
+                               mfs_operation_vec &ops,
+                               std::vector<u64> &dependent_mnodes, bool isdir);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
@@ -590,8 +592,8 @@ class mfs_operation
     virtual void print() = 0;
 
     // If the mfs_operation depends on other mnodes (such as the parent mnode),
-    // those mnodes are added to mnode_vec.
-    virtual bool check_dependency(std::vector<u64> &mnode_vec) = 0;
+    // those mnodes are added to dependent_mnodes.
+    virtual bool check_dependency(std::vector<u64> &dependent_mnodes) = 0;
 
     virtual bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt) = 0;
 
@@ -625,13 +627,14 @@ class mfs_operation_create: public mfs_operation
       parent_mfs->mfs_create(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override
+    bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
-      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+      for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
+           it++) {
         if (*it == parent)
           return true;
       }
-      mnode_vec.push_back(parent);
+      dependent_mnodes.push_back(parent);
       return true;
     }
 
@@ -690,13 +693,14 @@ class mfs_operation_link: public mfs_operation
       parent_mfs->mfs_link(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override
+    bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
-      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+      for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
+           it++) {
         if (*it == parent)
           return true;
       }
-      mnode_vec.push_back(parent);
+      dependent_mnodes.push_back(parent);
       return true;
     }
 
@@ -754,7 +758,7 @@ class mfs_operation_unlink: public mfs_operation
       parent_mfs->mfs_unlink(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override
+    bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
       // The corresponding create or link operation would have already
       // handled the dependencies (if any).
@@ -808,7 +812,7 @@ class mfs_operation_delete: public mfs_operation
       parent_mfs->mfs_delete(this, tr);
     }
 
-    bool check_dependency(std::vector<u64> &mnode_vec) override
+    bool check_dependency(std::vector<u64> &dependent_mnodes) override
     {
       return true;
     }
@@ -859,17 +863,18 @@ class mfs_operation_rename: public mfs_operation
       parent_mfs->mfs_rename(this, tr);
     }
 
-    bool check_dependency (std::vector<u64> &mnode_vec) override
+    bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
       // The corresponding create or link of the mnode would have already
       // added the source directory to the dependency list. So we just need
       // to add the destination directory here.
 
-      for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+      for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
+           it++) {
         if (*it == new_parent)
           return true;
       }
-      mnode_vec.push_back(new_parent);
+      dependent_mnodes.push_back(new_parent);
       return true;
     }
 
@@ -992,4 +997,5 @@ class mfs_logical_log: public mfs_logged_object
 
   protected:
     mfs_operation_vec operation_vec;
+    sleeplock lock;
 };

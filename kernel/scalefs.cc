@@ -549,70 +549,98 @@ evict_caches(mdev*, const char *buf, u32 n)
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void
-mfs_interface::process_metadata_log(u64 max_tsc, u64 inum, bool isdir)
+mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir)
 {
-#if 0
-  mfs_operation_vec dependent_ops;
+  mfs_operation_vec ops;
+  std::vector<u64> dependent_mnodes;
+
+  mfs_logical_log *mfs_log;
+  metadata_log_htab->lookup(mnode_inum, &mfs_log);
+
+  // This lock prevents concurrent fsync()s from trampling over each other
+  // while trying to flush operations from the same mfs_log.
+  auto l = mfs_log->lock.guard();
+
   {
     // Synchronize the oplog loggers.
-    auto guard = metadata_log->wait_synchronize(max_tsc);
-    // Find out the metadata operations the fsync() call depends on and just
-    // apply those. inum refers to the mnode that is executing the fsync().
-    find_dependent_ops(inum, dependent_ops, isdir);
+    auto guard = mfs_log->wait_synchronize(max_tsc);
+
+    // The next step is to find dependencies between metadata operations as
+    // applicable to the fsync() call and apply them, preserving their relative
+    // order. This whole process is carried out recursively (see below), which
+    // not only preserves the relative order, but also gracefully sidesteps any
+    // locking issues (deadlocks).
+
+    // Find the mnodes that the mnode_inum's metadata operations depend on.
+    find_dependent_mnodes(mfs_log, mnode_inum, ops, dependent_mnodes, isdir);
   }
 
-  if (dependent_ops.size() == 0)
+  // Recursively handle all dependencies. Each branch of recursion releases
+  // all acquired locks when it returns, so that a subsequent branch of
+  // recursion at the same level always starts with a clean slate w.r.t. locks.
+  // This is crucial to avoid deadlocks when trying to flush concurrent
+  // rename()s for example.
+  for (auto &dep_mnode : dependent_mnodes)
+    process_metadata_log(max_tsc, dep_mnode, isdir);
+
+  if (!ops.size())
     return;
 
-  auto it = dependent_ops.end();
+  // At this point, all dependent operations have been applied and added to
+  // the journal's transaction_log. So it is safe to apply and add this set now.
+  auto it = ops.end();
   do {
     it--;
     transaction *tr = new transaction((*it)->timestamp);
     (*it)->apply(tr);
     add_to_journal_locked(tr);
     delete (*it);
-  } while (it != dependent_ops.begin());
-#endif
+  } while (it != ops.begin());
 }
 
 void
 mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir)
 {
-#if 0
   auto journal_lock = fs_journal->prepare_for_commit();
   process_metadata_log(max_tsc, inum, isdir);
   flush_journal_locked();
-#endif
 }
 
-// Goes through the metadata log and filters out the operations that the fsync()
-// call depends on. inum refers to the mnode that is executing the fsync().
+// Go through the operations in mfs_log and build a list of mnodes that they
+// depend on (dependent_mnodes).
 void
-mfs_interface::find_dependent_ops(u64 inum, mfs_operation_vec &dependent_ops,
-                                  bool isdir)
+mfs_interface::find_dependent_mnodes(mfs_logical_log *mfs_log, u64 mnode_inum,
+                                     mfs_operation_vec &ops,
+                                     std::vector<u64> &dependent_mnodes,
+                                     bool isdir)
 {
-#if 0
-  if (metadata_log->operation_vec.size() == 0)
+  if (!mfs_log->operation_vec.size())
     return;
 
-  // mnode_vec is a monotonically growing list of mnode inums whose dependent
-  // operations need to be flushed too.
-  std::vector<u64> mnode_vec;
-  mnode_vec.push_back(inum);
-  auto it = metadata_log->operation_vec.end();
-  int index = metadata_log->operation_vec.size();
+  // We'll need to copy everything from mfs_log->operation_vec to ops.
+  // So reserve the necessary space upfront.
+  ops.reserve(mfs_log->operation_vec.size());
+
+  auto it = mfs_log->operation_vec.end();
+  int index = mfs_log->operation_vec.size();
   do {
     it--;
     index--;
-    if (isdir && (*it)->check_parent_dependency(mnode_vec, inum)) {
-      dependent_ops.push_back(*it);
+
+#if 0
+    // TODO: Revisit this later, when handling fsync() on directories.
+    if (isdir && (*it)->check_parent_dependency(dependent_mnodes, inum)) {
+      ops.push_back(*it);
       metadata_log->operation_vec.erase(metadata_log->operation_vec.begin()+index);
-    } else if((*it)->check_dependency(mnode_vec)) {
-      dependent_ops.push_back(*it);
-      metadata_log->operation_vec.erase(metadata_log->operation_vec.begin()+index);
-    }
-  } while (it != metadata_log->operation_vec.begin());
+    } else
 #endif
+
+    if ((*it)->check_dependency(dependent_mnodes)) {
+      ops.push_back(*it);
+      mfs_log->operation_vec.erase(mfs_log->operation_vec.begin()+index);
+    }
+
+  } while (it != mfs_log->operation_vec.begin());
 }
 
 // Create operation
