@@ -155,13 +155,10 @@ sys_sync(void)
 int
 sys_fsync(int fd)
 {
-  return -1; // temporarily disabled.
-#if 0
   sref<file> f = getfile(fd);
   if (!f)
     return -1;
   return f->fsync();
-#endif
 }
 
 //SYSCALL
