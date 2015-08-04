@@ -412,19 +412,19 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
     } else {
 
-      rootfs_interface->metadata_op_start(mfold->inum_, myid(), get_tsc());
+      rootfs_interface->metadata_op_start(mdold->inum_, myid(), get_tsc());
 
       if (mdnew->as_dir()->replace_from(newname, mfroadblock,
             mdold->as_dir(), oldname, mfold, &tsc)) {
         mfs_operation *op = new mfs_operation_rename(rootfs_interface, tsc,
                             oldname.buf_, mfold->inum_, mdold->inum_,
                             newname.buf_, mdnew->inum_, mfold->type());
-        rootfs_interface->add_to_metadata_log(mfold->inum_, op);
-        rootfs_interface->metadata_op_end(mfold->inum_, myid(), get_tsc());
+        rootfs_interface->add_to_metadata_log(mdold->inum_, op);
+        rootfs_interface->metadata_op_end(mdold->inum_, myid(), get_tsc());
         return 0;
       }
 
-      rootfs_interface->metadata_op_end(mfold->inum_, myid(), get_tsc());
+      rootfs_interface->metadata_op_end(mdold->inum_, myid(), get_tsc());
     }
 
     /*
