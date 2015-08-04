@@ -322,19 +322,19 @@ sys_link(userptr_str old_path, userptr_str new_path)
 
   if (md->fs_ == root_fs) {
     is_root_fs = true;
-    rootfs_interface->metadata_op_start(mflink.mn()->inum_, myid(), get_tsc());
+    rootfs_interface->metadata_op_start(md->inum_, myid(), get_tsc());
   }
 
   if (!md->as_dir()->insert(name, &mflink, &tsc)) {
     if (is_root_fs)
-      rootfs_interface->metadata_op_end(mflink.mn()->inum_, myid(), get_tsc());
+      rootfs_interface->metadata_op_end(md->inum_, myid(), get_tsc());
     return -1;
   } else {
     if (is_root_fs) {
       mfs_operation *op = new mfs_operation_link(rootfs_interface, tsc,
         mflink.mn()->inum_, md->inum_, name.buf_, mflink.mn()->type());
-      rootfs_interface->add_to_metadata_log(mflink.mn()->inum_, op);
-      rootfs_interface->metadata_op_end(mflink.mn()->inum_, myid(), get_tsc());
+      rootfs_interface->add_to_metadata_log(md->inum_, op);
+      rootfs_interface->metadata_op_end(md->inum_, myid(), get_tsc());
     }
   }
 
