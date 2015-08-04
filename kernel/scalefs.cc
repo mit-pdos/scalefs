@@ -565,6 +565,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir)
     // Synchronize the oplog loggers.
     auto guard = mfs_log->wait_synchronize(max_tsc);
 
+#if 0
     // The next step is to find dependencies between metadata operations as
     // applicable to the fsync() call and apply them, preserving their relative
     // order. This whole process is carried out recursively (see below), which
@@ -573,8 +574,21 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir)
 
     // Find the mnodes that the mnode_inum's metadata operations depend on.
     find_dependent_mnodes(mfs_log, mnode_inum, ops, dependent_mnodes, isdir);
+#endif
+
+    // Just copy mfs_log->operation_vec to ops vector. This is a temporary
+    // piece of code until we implement dependency tracking for the new
+    // scheme of logging metadata operations.
+    ops.reserve(mfs_log->operation_vec.size());
+    auto it = mfs_log->operation_vec.end();
+    do {
+      it--;
+      ops.push_back(*it);
+    } while (it != mfs_log->operation_vec.begin());
+    mfs_log->operation_vec.clear();
   }
 
+#if 0
   // Recursively handle all dependencies. Each branch of recursion releases
   // all acquired locks when it returns, so that a subsequent branch of
   // recursion at the same level always starts with a clean slate w.r.t. locks.
@@ -582,6 +596,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir)
   // rename()s for example.
   for (auto &dep_mnode : dependent_mnodes)
     process_metadata_log(max_tsc, dep_mnode, isdir);
+#endif
 
   if (!ops.size())
     return;
