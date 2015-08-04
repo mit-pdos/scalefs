@@ -531,7 +531,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     mf = ilink.mn();
     mf->initialized(true);
 
-    rootfs_interface->metadata_op_start(mf->inum_, myid(), get_tsc());
+    rootfs_interface->metadata_op_start(md->inum_, myid(), get_tsc());
 
     if (mtype == mnode::types::dir) {
       /*
@@ -552,8 +552,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
         if (myproc() != bootproc) {
           mfs_operation *op = new mfs_operation_create(rootfs_interface, tsc,
                                 mf->inum_, md->inum_, name.buf_, type);
-          rootfs_interface->add_to_metadata_log(mf->inum_, op);
-          rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
+          rootfs_interface->add_to_metadata_log(md->inum_, op);
+          rootfs_interface->metadata_op_end(md->inum_, myid(), get_tsc());
         }
         return mf;
       }
@@ -563,7 +563,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
        * parent directory (md) was removed, and nameiparent will fail.
        */
       assert(mf->as_dir()->remove("..", md));
-      rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
+      rootfs_interface->metadata_op_end(md->inum_, myid(), get_tsc());
       continue;
     }
 
@@ -574,14 +574,14 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       if (myproc() != bootproc) {
         mfs_operation *op = new mfs_operation_create(rootfs_interface, tsc,
                               mf->inum_, md->inum_, name.buf_, type);
-        rootfs_interface->add_to_metadata_log(mf->inum_, op);
-        rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
+        rootfs_interface->add_to_metadata_log(md->inum_, op);
+        rootfs_interface->metadata_op_end(md->inum_, myid(), get_tsc());
       }
       return mf;
     }
 
     /* Failed to insert, retry */
-    rootfs_interface->metadata_op_end(mf->inum_, myid(), get_tsc());
+    rootfs_interface->metadata_op_end(md->inum_, myid(), get_tsc());
   }
 }
 
