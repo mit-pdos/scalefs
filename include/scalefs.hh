@@ -794,10 +794,16 @@ class mfs_operation_unlink: public mfs_operation
     char *name;       // name of the file/directory
 };
 
+
 // This operation is used to delete an inode and its file-contents, when its
 // last link has been removed and its last open file descriptor has been closed.
 // Called when the corresponding mnode's reference count drops to zero (which
 // indicates that both the above conditions are true).
+
+// Special, invalid mnode number, used to consolidate all delete operations
+// together in a common, dedicated (per-cpu) mfs_log instance.
+#define MFS_DELETE_MNUM 0
+
 class mfs_operation_delete: public mfs_operation
 {
   friend mfs_interface;

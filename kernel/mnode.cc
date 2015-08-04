@@ -113,10 +113,14 @@ mnode::onzero()
   // operation has been logged), then we won't be able to reclaim the blocks
   // belonging to this file upon reboot.
 
-  rootfs_interface->metadata_op_start(inum_, myid(), get_tsc());
+  // Always log all delete operations in a common, dedicated (per-cpu) mfs_log
+  // instance, using the special invalid mnode number MFS_DELETE_MNUM (which is
+  // guaranteed to never clash with any valid mnode number).
+
+  rootfs_interface->metadata_op_start(MFS_DELETE_MNUM, myid(), get_tsc());
   mfs_operation *op = new mfs_operation_delete(rootfs_interface, get_tsc(), inum_);
-  rootfs_interface->add_to_metadata_log(inum_, op);
-  rootfs_interface->metadata_op_end(inum_, myid(), get_tsc());
+  rootfs_interface->add_to_metadata_log(MFS_DELETE_MNUM, op);
+  rootfs_interface->metadata_op_end(MFS_DELETE_MNUM, myid(), get_tsc());
 
   mnode_cache.cleanup(weakref_);
   kstats::inc(&kstats::mnode_free);
