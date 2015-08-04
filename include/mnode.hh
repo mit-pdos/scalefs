@@ -37,6 +37,7 @@ private:
     {
       assert(type < (1 << type_bits));
       assert(cpu < (1 << cpu_bits));
+      assert(v_); // Zero is an invalid mnode number.
     }
 
     u8 type() {
