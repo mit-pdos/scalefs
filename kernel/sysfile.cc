@@ -151,6 +151,33 @@ sys_sync(void)
 #endif
 }
 
+
+/*
+ * Semantics for fsync:
+ * --------------------
+ * Calling fsync() on a file, synchronizes the in-memory state of the file's
+ * inode and the file's contents (data blocks) to the disk (and nothing else).
+ * To guarantee that the file is reachable on the disk via path-names, the
+ * directory containing the file should be fsync()'ed too.
+ *
+ * Calling fsync() on a directory, synchronizes the in-memory state of the
+ * directory's inode and the directory's contents (data blocks) to the disk.
+ *
+ * To guarantee that a file is reachable on the disk and also has its latest
+ * contents, the file as well as its parent directory have to be fsync()'ed
+ * individually.
+ *
+ * File renames are handled in such a way that no combination of rename() and
+ * fsync() will ever render the file unreachable or cause unintentional deletion.
+ * (However, after a rename, it is possible for the file to have both its
+ * source and destination links on the disk, as this is safe.)
+ *
+ * In general, the kernel strives to ensure that the set of possible system
+ * states after an fsync(), is a subset of the set of possible system states
+ * after a sync(), including crash states. That is,
+ *               fsync <= sync <= all possible system states
+ */
+
 //SYSCALL
 int
 sys_fsync(int fd)
