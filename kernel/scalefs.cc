@@ -157,8 +157,12 @@ void
 mfs_interface::truncate_file(u64 mfile_mnum, u32 offset, transaction *tr)
 {
   scoped_gc_epoch e;
-  sref<inode> i = get_inode(mfile_mnum, "truncate_file");
-  itrunc(i, offset, tr);
+
+  sref<inode> ip = get_inode(mfile_mnum, "truncate_file");
+  ilock(ip, 1);
+  itrunc(ip, offset, tr);
+  iunlock(ip);
+
   sref<mnode> m = root_fs->get(mfile_mnum);
   if (m)
     m->as_file()->remove_pgtable_mappings(offset);
