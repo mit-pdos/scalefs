@@ -66,27 +66,27 @@ sys_dup2(int ofd, int nfd)
 }
 
 static off_t
-compute_offset(file_inode *fi, off_t *fioffp, off_t offset, int whence)
+compute_offset(file_mnode *fm, off_t *fmoffp, off_t offset, int whence)
 {
   switch (whence) {
   case SEEK_SET:
     return offset;
 
   case SEEK_CUR: {
-    off_t fioff = fi->off;
-    if (fioffp) *fioffp = fioff;
-    return fioff + offset;
+    off_t fmoff = fm->off;
+    if (fmoffp) *fmoffp = fmoff;
+    return fmoff + offset;
   }
 
   case SEEK_END:
     if (offset < 0) {
-      mfile::page_state ps = fi->ip->as_file()->get_page((-offset - 1) / PGSIZE);
+      mfile::page_state ps = fm->m->as_file()->get_page((-offset - 1) / PGSIZE);
       if (!ps.get_page_info())
         // Attempt to seek before the beginning of the file
         return -1;
     }
 
-    return offset + *fi->ip->as_file()->read_size();
+    return offset + *fm->m->as_file()->read_size();
   }
   return -1;
 }
@@ -100,30 +100,30 @@ sys_lseek(int fd, off_t offset, int whence)
     return -1;
 
   file* ff = f.get();
-  if (&typeid(*ff) != &typeid(file_inode))
+  if (&typeid(*ff) != &typeid(file_mnode))
     return -1;
 
-  file_inode* fi = static_cast<file_inode*>(ff);
-  if (fi->ip->type() != mnode::types::file)
+  file_mnode* fm = static_cast<file_mnode*>(ff);
+  if (fm->m->type() != mnode::types::file)
     return -1;                  // ESPIPE
 
-  // Pre-validate offset and whence.  Be careful to only read fi->off
+  // Pre-validate offset and whence.  Be careful to only read fm->off
   // once, regardless of what code path we take.
-  off_t fioff = -1;
-  off_t orig_new_off = compute_offset(fi, &fioff, offset, whence);
+  off_t fmoff = -1;
+  off_t orig_new_off = compute_offset(fm, &fmoff, offset, whence);
   if (orig_new_off < 0)
     return -1;
-  if (fioff == -1)
-    fioff = fi->off;
-  if (orig_new_off == fioff)
+  if (fmoff == -1)
+    fmoff = fm->off;
+  if (orig_new_off == fmoff)
     // No change; don't acquire the lock
     return orig_new_off;
 
-  auto l = fi->off_lock.guard();
-  off_t new_offset = compute_offset(fi, nullptr, offset, whence);
+  auto l = fm->off_lock.guard();
+  off_t new_offset = compute_offset(fm, nullptr, offset, whence);
   if (new_offset < 0)
     return -1;
-  fi->off = new_offset;
+  fm->off = new_offset;
 
   return new_offset;
 }
@@ -605,10 +605,10 @@ sys_openat(int dirfd, userptr_str path, int omode, ...)
     if (!fdir)
       return -1;
     file* ff = fdir.get();
-    if (&typeid(*ff) != &typeid(file_inode))
+    if (&typeid(*ff) != &typeid(file_mnode))
       return -1;
-    file_inode* fdiri = static_cast<file_inode*>(ff);
-    cwd = fdiri->ip;
+    file_mnode* fdirm = static_cast<file_mnode*>(ff);
+    cwd = fdirm->m;
   }
 
   char path_copy[PATH_MAX];
@@ -632,7 +632,7 @@ sys_openat(int dirfd, userptr_str path, int omode, ...)
     if (*m->as_file()->read_size())
       m->as_file()->write_size().resize_nogrow(0);
 
-  sref<file> f = make_sref<file_inode>(
+  sref<file> f = make_sref<file_mnode>(
     m, !(rwmode == O_WRONLY), !(rwmode == O_RDONLY), !!(omode & O_APPEND));
   return fdalloc(std::move(f), omode);
 }
@@ -649,10 +649,10 @@ sys_mkdirat(int dirfd, userptr_str path, mode_t mode)
     if (!fdir)
       return -1;
     file* ff = fdir.get();
-    if (&typeid(*ff) != &typeid(file_inode))
+    if (&typeid(*ff) != &typeid(file_mnode))
       return -1;
-    file_inode* fdiri = static_cast<file_inode*>(ff);
-    cwd = fdiri->ip;
+    file_mnode* fdirm = static_cast<file_mnode*>(ff);
+    cwd = fdirm->m;
   }
 
   char path_copy[PATH_MAX];
@@ -782,11 +782,11 @@ sys_readdir(int dirfd, const userptr<char> prevptr, userptr<char> nameptr)
     return -1;
 
   file* dff = df.get();
-  if (&typeid(*dff) != &typeid(file_inode))
+  if (&typeid(*dff) != &typeid(file_mnode))
     return -1;
 
-  file_inode* dfi = static_cast<file_inode*>(dff);
-  if (dfi->ip->type() != mnode::types::dir)
+  file_mnode* dfm = static_cast<file_mnode*>(dff);
+  if (dfm->m->type() != mnode::types::dir)
     return -1;
 
   strbuf<DIRSIZ> prev;
@@ -794,7 +794,7 @@ sys_readdir(int dirfd, const userptr<char> prevptr, userptr<char> nameptr)
     return -1;
 
   strbuf<DIRSIZ> name;
-  if (!dfi->ip->as_dir()->enumerate(prevptr ? &prev : nullptr, &name))
+  if (!dfm->m->as_dir()->enumerate(prevptr ? &prev : nullptr, &name))
     return 0;
 
   if (!nameptr.store(name.buf_, sizeof(name.buf_)))

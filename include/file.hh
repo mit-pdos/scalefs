@@ -64,16 +64,16 @@ protected:
   file() {}
 };
 
-struct file_inode : public refcache::referenced, public file {
+struct file_mnode : public refcache::referenced, public file {
 public:
-  file_inode(sref<mnode> i, bool r, bool w, bool a)
-    : ip(i), readable(r), writable(w), append(a), off(0) {}
-  NEW_DELETE_OPS(file_inode);
+  file_mnode(sref<mnode> m, bool r, bool w, bool a)
+    : m(m), readable(r), writable(w), append(a), off(0) {}
+  NEW_DELETE_OPS(file_mnode);
 
   void inc() override { refcache::referenced::inc(); }
   void dec() override { refcache::referenced::dec(); }
 
-  const sref<mnode> ip;
+  const sref<mnode> m;
   const bool readable;
   const bool writable;
   const bool append;
@@ -91,7 +91,7 @@ public:
     delete this;
   }
 
-  sref<mnode> get_mnode() override { return ip; }
+  sref<mnode> get_mnode() override { return m; }
 };
 
 struct file_pipe_reader : public refcache::referenced, public file {

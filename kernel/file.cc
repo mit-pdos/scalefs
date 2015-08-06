@@ -10,9 +10,9 @@
 struct devsw __mpalign__ devsw[NDEV];
 
 int
-file_inode::fsync() {
+file_mnode::fsync() {
 
-  if (!ip)
+  if (!m)
     return -1;
 
   u64 fsync_tsc;
@@ -21,14 +21,14 @@ file_inode::fsync() {
   else
     fsync_tsc = rdtsc_serialized();
 
-  if (ip->type() == mnode::types::file) {
+  if (m->type() == mnode::types::file) {
 
     // Apply pending metadata operations to the disk filesystem first.
     // This takes care of any dependencies.
-    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->mnum_, false);
-    ip->as_file()->sync_file(true);
+    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, false);
+    m->as_file()->sync_file(true);
 
-  } else if (ip->type() == mnode::types::dir) {
+  } else if (m->type() == mnode::types::dir) {
 
     // Apply pending metadata operations to the disk filesystem first.
     // This takes care of any dependencies.
@@ -36,71 +36,71 @@ file_inode::fsync() {
     // to be flushed explicitly. If there were any operations on the directory
     // they will have been applied when the logical log was processed. This means
     // that the fsync will not block any operations on the mdir.
-    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->mnum_, true);
-    ip->as_dir()->sync_dir();
+    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, true);
+    m->as_dir()->sync_dir();
   }
   return 0;
 }
 
 int
-file_inode::stat(struct stat *st, enum stat_flags flags)
+file_mnode::stat(struct stat *st, enum stat_flags flags)
 {
   u8 stattype = 0;
-  switch (ip->type()) {
+  switch (m->type()) {
   case mnode::types::dir:  stattype = T_DIR;  break;
   case mnode::types::file: stattype = T_FILE; break;
   case mnode::types::dev:  stattype = T_DEV;  break;
   case mnode::types::sock: stattype = T_SOCKET;  break;
-  default:                 cprintf("Unknown type %d\n", ip->type());
+  default:                 cprintf("Unknown type %d\n", m->type());
   }
 
   st->st_mode = stattype << __S_IFMT_SHIFT;
-  st->st_dev = (uintptr_t) ip->fs_;
-  st->st_ino = ip->mnum_;
+  st->st_dev = (uintptr_t) m->fs_;
+  st->st_ino = m->mnum_;
   if (!(flags & STAT_OMIT_NLINK))
-    st->st_nlink = ip->nlink_.get_consistent();
+    st->st_nlink = m->nlink_.get_consistent();
   st->st_size = 0;
-  if (ip->type() == mnode::types::file)
-    st->st_size = *ip->as_file()->read_size();
-  if (ip->type() == mnode::types::dev &&
-      ip->as_dev()->major() < NDEV &&
-      devsw[ip->as_dev()->major()].stat)
-    devsw[ip->as_dev()->major()].stat(ip->as_dev(), st);
+  if (m->type() == mnode::types::file)
+    st->st_size = *m->as_file()->read_size();
+  if (m->type() == mnode::types::dev &&
+      m->as_dev()->major() < NDEV &&
+      devsw[m->as_dev()->major()].stat)
+    devsw[m->as_dev()->major()].stat(m->as_dev(), st);
   return 0;
 }
 
 ssize_t
-file_inode::read(char *addr, size_t n)
+file_mnode::read(char *addr, size_t n)
 {
   if (!readable)
     return -1;
 
   lock_guard<sleeplock> l;
   ssize_t r;
-  if (ip->type() == mnode::types::dev) {
-    u16 major = ip->as_dev()->major();
+  if (m->type() == mnode::types::dev) {
+    u16 major = m->as_dev()->major();
     if (major >= NDEV)
       return -1;
     if (devsw[major].read) {
-      return devsw[major].read(ip->as_dev(), addr, n);
+      return devsw[major].read(m->as_dev(), addr, n);
     } else if (devsw[major].pread) {
       l = off_lock.guard();
-      r = devsw[major].pread(ip->as_dev(), addr, off, n);
+      r = devsw[major].pread(m->as_dev(), addr, off, n);
     } else {
       return -1;
     }
-  } else if (ip->type() != mnode::types::file) {
+  } else if (m->type() != mnode::types::file) {
     return -1;
   } else {
-    mfile::page_state ps = ip->as_file()->get_page(off / PGSIZE);
+    mfile::page_state ps = m->as_file()->get_page(off / PGSIZE);
     if (!ps.get_page_info())
       return 0;
 
-    if (ps.is_partial_page() && off >= *ip->as_file()->read_size())
+    if (ps.is_partial_page() && off >= *m->as_file()->read_size())
       return 0;
 
     l = off_lock.guard();
-    r = readi(ip, addr, off, n);
+    r = readi(m, addr, off, n);
   }
   if (r > 0)
     off += r;
@@ -108,34 +108,34 @@ file_inode::read(char *addr, size_t n)
 }
 
 ssize_t
-file_inode::write(const char *addr, size_t n)
+file_mnode::write(const char *addr, size_t n)
 {
   if (!writable)
     return -1;
 
   lock_guard<sleeplock> l;
   ssize_t r;
-  if (ip->type() == mnode::types::dev) {
-    u16 major = ip->as_dev()->major();
+  if (m->type() == mnode::types::dev) {
+    u16 major = m->as_dev()->major();
     if (major >= NDEV)
       return -1;
     if (devsw[major].write) {
-      return devsw[major].write(ip->as_dev(), addr, n);
+      return devsw[major].write(m->as_dev(), addr, n);
     } else if (devsw[major].pwrite) {
       l = off_lock.guard();
-      r = devsw[major].pwrite(ip->as_dev(), addr, off, n);
+      r = devsw[major].pwrite(m->as_dev(), addr, off, n);
     } else {
       return -1;
     }
-  } else if (ip->type() == mnode::types::file) {
+  } else if (m->type() == mnode::types::file) {
     l = off_lock.guard();
     mfile::resizer resize;
     if (append) {
-      resize = ip->as_file()->write_size();
+      resize = m->as_file()->write_size();
       off = resize.read_size();
     }
 
-    r = writei(ip, addr, off, n, append ? &resize : nullptr);
+    r = writei(m, addr, off, n, append ? &resize : nullptr);
   } else {
     return -1;
   }
@@ -146,31 +146,31 @@ file_inode::write(const char *addr, size_t n)
 }
 
 ssize_t
-file_inode::pread(char *addr, size_t n, off_t off)
+file_mnode::pread(char *addr, size_t n, off_t off)
 {
   if (!readable)
     return -1;
-  if (ip->type() == mnode::types::dev) {
-    u16 major = ip->as_dev()->major();
+  if (m->type() == mnode::types::dev) {
+    u16 major = m->as_dev()->major();
     if (major >= NDEV || !devsw[major].pread)
       return -1;
-    return devsw[major].pread(ip->as_dev(), addr, off, n);
+    return devsw[major].pread(m->as_dev(), addr, off, n);
   }
-  return readi(ip, addr, off, n);
+  return readi(m, addr, off, n);
 }
 
 ssize_t
-file_inode::pwrite(const char *addr, size_t n, off_t off)
+file_mnode::pwrite(const char *addr, size_t n, off_t off)
 {
   if (!writable)
     return -1;
-  if (ip->type() == mnode::types::dev) {
-    u16 major = ip->as_dev()->major();
+  if (m->type() == mnode::types::dev) {
+    u16 major = m->as_dev()->major();
     if (major >= NDEV || !devsw[major].pwrite)
       return -1;
-    return devsw[major].pwrite(ip->as_dev(), addr, off, n);
+    return devsw[major].pwrite(m->as_dev(), addr, off, n);
   }
-  return writei(ip, addr, off, n);
+  return writei(m, addr, off, n);
 }
 
 
