@@ -122,42 +122,34 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
 }
 
 // Creates a new file [or directory] on the disk if an mnode (mfile) [or mdir]
-// does not have a corresponding inode mapping.
+// does not have a corresponding inode mapping. Returns the inode number of
+// the newly created inode.
 u64
 mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
-		                  char *name, transaction *tr)
+                                      transaction *tr)
 {
-  u64 inum = 0, parent_inum = 0, returnval = 0;
+  u64 inum = 0, parent_inum = 0;
   if (inum_lookup(mnum, &inum))
-    return 0;
+    return inum;
 
-  // The parent directory will always be present on the disk when the child is
-  // created. This is because all create operations are logged in the logical
-  // log (metadata operations). A parent's create will have occurred before the
-  // child's create. This is the order the operations will be present in the
-  // logical log and hence this is the order they'll make it to the disk. This
-  // gets rid of the scenario where we would need to go up the directory tree
-  // and explicitly sync all new ancestors.
-  if (!inum_lookup(parent_mnum, &parent_inum))
-    panic("create_file_dir_if_new: parent %ld does not exist\n", parent_mnum);
+  // To create a new directory, we need to allocate a new inode as well as
+  // initialize it with the ".." link, for which we need to know its parent's
+  // inode number.
+  if (type == mnode::types::dir && !inum_lookup(parent_mnum, &parent_inum))
+    panic("%s: Parent mnode %ld does not have a corresponding inode\n", __func__,
+          parent_mnum);
 
   sref<inode> i;
   i = ialloc(1, type);
   mnum_to_inum->insert(mnum, i->inum);
   inum_to_mnode->insert(i->inum, root_fs->get(mnum));
-  returnval = i->inum;
   if (type == mnode::types::file)
     iupdate(i, tr);
   else if (type == mnode::types::dir)
     dirlink(i, "..", parent_inum, false, tr); // dirlink does an iupdate within.
   iunlock(i);
 
-  sref<inode> parenti = iget(1, parent_inum);
-  ilock(parenti, 1);
-  dirlink(parenti, name, i->inum, (type == mnode::types::file) ? false : true, tr);
-  iunlock(parenti);
-
-  return returnval;
+  return i->inum;
 }
 
 // Truncates a file on disk to the specified size (offset).
@@ -179,39 +171,37 @@ void
 mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 		                      u8 type, transaction *tr)
 {
-  sref<inode> i = get_inode(mdir_mnum, "create_directory_entry");
+  sref<inode> mdir_i = get_inode(mdir_mnum, "create_directory_entry");
 
-  sref<inode> di = dirlookup(i, name);
-  if (di) {
-    // directory entry exists
-    if (di->inum == dirent_mnum) // Fix this!! (Don't compare inum to mnum)
+  u64 dirent_inum = create_file_dir_if_new(dirent_mnum, mdir_mnum, type, tr);
+
+  // Check if the directory entry already exists.
+  sref<inode> i = dirlookup(mdir_i, name);
+
+  if (i) {
+    if (i->inum == dirent_inum)
       return;
+
     // The name now refers to a different inode. Unlink the old one and create a
     // new directory entry for this mapping.
-    ilock(i, 1);
-    if(di->type == T_DIR)
-      dirunlink(i, name, di->inum, true, tr);
+    ilock(mdir_i, 1);
+    if (i->type == T_DIR)
+      dirunlink(mdir_i, name, i->inum, true, tr);
     else
-      dirunlink(i, name, di->inum, false, tr);
-    iunlock(i);
+      dirunlink(mdir_i, name, i->inum, false, tr);
+    iunlock(mdir_i);
 
-    if(!di->nlink()) {
-      ilock(di, 1);
-      itrunc(di, 0, tr);
-      iunlock(di);
-      inum_to_mnode->remove(di->inum);
+    if (!i->nlink()) {
+      ilock(i, 1);
+      itrunc(i, 0, tr);
+      iunlock(i);
+      inum_to_mnode->remove(i->inum);
     }
   }
 
-  u64 dirent_inum = 0;
-  inum_lookup(dirent_mnum, &dirent_inum);
-  if (dirent_inum) { // Inode exists. Just create a dir entry. No need to allocate
-    ilock(i, 1);
-    dirlink(i, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
-    iunlock(i);
-  } else {  // Allocate new inode
-    create_file_dir_if_new(dirent_mnum, mdir_mnum, type, name, tr);
-  }
+  ilock(mdir_i, 1);
+  dirlink(mdir_i, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
+  iunlock(mdir_i);
 }
 
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
@@ -665,8 +655,8 @@ void
 mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  create_file_dir_if_new(op->mnode_mnum, op->parent_mnum, op->mnode_type,
-                         op->name, tr);
+  create_directory_entry(op->parent_mnum, op->name, op->mnode_mnum,
+                         op->mnode_type, tr);
 }
 
 // Link operation

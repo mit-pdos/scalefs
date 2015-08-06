@@ -472,7 +472,7 @@ class mfs_interface
     int load_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes);
     int sync_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes,
                        transaction *tr);
-    u64 create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type, char *name,
+    u64 create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
                                transaction *tr);
     void truncate_file(u64 mfile_mnum, u32 offset, transaction *tr);
 
