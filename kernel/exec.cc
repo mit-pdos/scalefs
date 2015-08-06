@@ -19,10 +19,10 @@
 #define BRK (USERTOP >> 1)
 
 static int
-dosegment(sref<mnode> ip, vmap* vmp, u64 off, u64 *load_addr)
+dosegment(sref<mnode> m, vmap* vmp, u64 off, u64 *load_addr)
 {
   struct proghdr ph;
-  if(readi(ip, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
+  if(readm(m, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
     return -1;
   if(ph.type != ELF_PROG_LOAD)
     return -1;
@@ -54,7 +54,7 @@ dosegment(sref<mnode> ip, vmap* vmp, u64 off, u64 *load_addr)
       cprintf("ELF segment is not page-aligned\n");
       return -1;
     }
-    if (vmp->insert(vmdesc(ip, ph.vaddr - ph.offset),
+    if (vmp->insert(vmdesc(m, ph.vaddr - ph.offset),
                     va_start, mapped_end - va_start) < 0)
       return -1;
 
@@ -77,7 +77,7 @@ dosegment(sref<mnode> ip, vmap* vmp, u64 off, u64 *load_addr)
       size_t to_read = ph.filesz - seg_pos;
       if (to_read > sizeof(buf))
         to_read = sizeof(buf);
-      int res = readi(ip, buf, ph.offset + seg_pos, to_read);
+      int res = readm(m, buf, ph.offset + seg_pos, to_read);
       if (res <= 0)
         return -1;
       if (vmp->copyout(ph.vaddr + seg_pos, buf, res) < 0)
@@ -207,17 +207,17 @@ int
 load_image(proc *p, const char *path, const char * const *argv,
            sref<vmap> *oldvmap_out)
 {
-  sref<mnode> ip = namei(p->cwd_m, path);
-  if (!ip)
+  sref<mnode> m = namei(p->cwd_m, path);
+  if (!m)
     return -1;
 
   scoped_gc_epoch rcu;
 
   // Check header
   char buf[1024];
-  if (ip->type() != mnode::types::file)
+  if (m->type() != mnode::types::file)
     return -1;
-  size_t sz = readi(ip, buf, 0, sizeof(buf));
+  size_t sz = readm(m, buf, 0, sizeof(buf));
   if (sz < 0)
     return -1;
 
@@ -251,14 +251,14 @@ load_image(proc *p, const char *path, const char * const *argv,
   u64 load_addr = -1;
   for (size_t i=0, off=elf->phoff; i<elf->phnum; i++, off+=sizeof(proghdr)){
     Elf64_Word type;
-    if(readi(ip, (char*)&type, 
+    if(readm(m, (char*)&type, 
              off+__offsetof(struct proghdr, type), 
              sizeof(type)) != sizeof(type))
       return -1;
 
     switch (type) {
     case ELF_PROG_LOAD:
-      if (dosegment(ip, vmp.get(), off, &load_addr) < 0)
+      if (dosegment(m, vmp.get(), off, &load_addr) < 0)
         return -1;
       break;
     default:

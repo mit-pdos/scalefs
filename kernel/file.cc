@@ -100,7 +100,7 @@ file_mnode::read(char *addr, size_t n)
       return 0;
 
     l = off_lock.guard();
-    r = readi(m, addr, off, n);
+    r = readm(m, addr, off, n);
   }
   if (r > 0)
     off += r;
@@ -135,7 +135,7 @@ file_mnode::write(const char *addr, size_t n)
       off = resize.read_size();
     }
 
-    r = writei(m, addr, off, n, append ? &resize : nullptr);
+    r = writem(m, addr, off, n, append ? &resize : nullptr);
   } else {
     return -1;
   }
@@ -156,7 +156,7 @@ file_mnode::pread(char *addr, size_t n, off_t off)
       return -1;
     return devsw[major].pread(m->as_dev(), addr, off, n);
   }
-  return readi(m, addr, off, n);
+  return readm(m, addr, off, n);
 }
 
 ssize_t
@@ -170,7 +170,7 @@ file_mnode::pwrite(const char *addr, size_t n, off_t off)
       return -1;
     return devsw[major].pwrite(m->as_dev(), addr, off, n);
   }
-  return writei(m, addr, off, n);
+  return writem(m, addr, off, n);
 }
 
 
