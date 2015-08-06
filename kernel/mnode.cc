@@ -118,6 +118,10 @@ mnode::onzero()
   // guaranteed to never clash with any valid mnode number).
 
   rootfs_interface->metadata_op_start(MFS_DELETE_MNUM, myid(), get_tsc());
+
+  if (type() == types::file)
+    this->as_file()->remove_pgtable_mappings(0);
+
   mfs_operation *op = new mfs_operation_delete(rootfs_interface, get_tsc(), mnum_);
   rootfs_interface->add_to_metadata_log(MFS_DELETE_MNUM, op);
   rootfs_interface->metadata_op_end(MFS_DELETE_MNUM, myid(), get_tsc());
