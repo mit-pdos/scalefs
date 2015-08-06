@@ -182,21 +182,9 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
     if (i->inum == dirent_inum)
       return;
 
-    // The name now refers to a different inode. Unlink the old one and create a
-    // new directory entry for this mapping.
-    ilock(mdir_i, 1);
-    if (i->type == T_DIR)
-      dirunlink(mdir_i, name, i->inum, true, tr);
-    else
-      dirunlink(mdir_i, name, i->inum, false, tr);
-    iunlock(mdir_i);
-
-    if (!i->nlink()) {
-      ilock(i, 1);
-      itrunc(i, 0, tr);
-      iunlock(i);
-      inum_to_mnode->remove(i->inum);
-    }
+    // The name now refers to a different inode. Unlink the old one to make
+    // way for a new directory entry for this mapping.
+    unlink_old_inode(mdir_mnum, name, tr);
   }
 
   ilock(mdir_i, 1);
