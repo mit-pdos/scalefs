@@ -7,15 +7,15 @@
 #include "vm.hh"
 
 namespace {
-  // 32MB icache (XXX make this proportional to physical RAM)
+  // 32MB mcache (XXX make this proportional to physical RAM)
   weakcache<pair<mfs*, u64>, mnode> mnode_cache(32 << 20);
 };
 
 sref<mnode>
-mfs::get(u64 inum)
+mfs::get(u64 mnum)
 {
   for (;;) {
-    sref<mnode> m = mnode_cache.lookup(make_pair(this, inum));
+    sref<mnode> m = mnode_cache.lookup(make_pair(this, mnum));
     if (m) {
       // wait for the mnode to be loaded from disk
       while (!m->valid_) {
@@ -29,37 +29,37 @@ mfs::get(u64 inum)
 }
 
 mlinkref
-mfs::alloc(u8 type, u64 parent)
+mfs::alloc(u8 type, u64 parent_mnum)
 {
   scoped_cli cli;
-  auto inum = mnode::inumber(type, myid(), (*next_inum_)++).v_;
+  auto mnum = mnode::mnumber(type, myid(), (*next_mnum_)++).v_;
 
   sref<mnode> m;
   switch (type) {
   case mnode::types::dir:
-    m = sref<mnode>::transfer(new mdir(this, inum, parent));
+    m = sref<mnode>::transfer(new mdir(this, mnum, parent_mnum));
     break;
 
   case mnode::types::file:
-    m = sref<mnode>::transfer(new mfile(this, inum, parent));
+    m = sref<mnode>::transfer(new mfile(this, mnum, parent_mnum));
     break;
 
   case mnode::types::dev:
-    m = sref<mnode>::transfer(new mdev(this, inum));
+    m = sref<mnode>::transfer(new mdev(this, mnum));
     break;
 
   case mnode::types::sock:
-    m = sref<mnode>::transfer(new msock(this, inum));
+    m = sref<mnode>::transfer(new msock(this, mnum));
     break;
 
   default:
-    panic("unknown type in inum 0x%lx", inum);
+    panic("unknown type in mnum 0x%lx", mnum);
   }
 
-  if (!mnode_cache.insert(make_pair(this, inum), m.get()))
-    panic("mnode_cache insert failed (duplicate inumber?)");
+  if (!mnode_cache.insert(make_pair(this, mnum), m.get()))
+    panic("mnode_cache insert failed (duplicate mnumber?)");
 
-  rootfs_interface->metadata_log_alloc(inum);
+  rootfs_interface->metadata_log_alloc(mnum);
   m->cache_pin(true);
   m->valid_ = true;
   mlinkref mlink(std::move(m));
@@ -67,8 +67,8 @@ mfs::alloc(u8 type, u64 parent)
   return mlink;
 }
 
-mnode::mnode(mfs* fs, u64 inum)
-  : fs_(fs), inum_(inum), initialized_(false), cache_pin_(false), dirty_(false),
+mnode::mnode(mfs* fs, u64 mnum)
+  : fs_(fs), mnum_(mnum), initialized_(false), cache_pin_(false), dirty_(false),
     valid_(false)
 {
   kstats::inc(&kstats::mnode_alloc);
@@ -118,7 +118,7 @@ mnode::onzero()
   // guaranteed to never clash with any valid mnode number).
 
   rootfs_interface->metadata_op_start(MFS_DELETE_MNUM, myid(), get_tsc());
-  mfs_operation *op = new mfs_operation_delete(rootfs_interface, get_tsc(), inum_);
+  mfs_operation *op = new mfs_operation_delete(rootfs_interface, get_tsc(), mnum_);
   rootfs_interface->add_to_metadata_log(MFS_DELETE_MNUM, op);
   rootfs_interface->metadata_op_end(MFS_DELETE_MNUM, myid(), get_tsc());
 
@@ -228,7 +228,7 @@ mfile::get_page(u64 pageidx)
       if (nbytes > PGSIZE)
         nbytes = PGSIZE;
 
-      size_t bytes_read = rootfs_interface->load_file_page(inum_, p, pos, nbytes);
+      size_t bytes_read = rootfs_interface->load_file_page(mnum_, p, pos, nbytes);
       assert(nbytes == bytes_read);
       auto lock = pages_.acquire(it);
       page_state ps(pi);
@@ -361,19 +361,19 @@ mfile::sync_file(bool flush_journal)
     // asynchronous writes]. Since the rest of the bytes in the page are
     // zero anyway, this is harmless; we won't leak any random bytes into the
     // file.
-    assert(PGSIZE == rootfs_interface->sync_file_page(inum_,
+    assert(PGSIZE == rootfs_interface->sync_file_page(mnum_,
                     (char*)it->get_page_info()->va(), pos, PGSIZE, trans));
     it->set_dirty_bit(false);
     ++it;
   }
 
-  u64 ilen = rootfs_interface->get_file_size(inum_);
+  u64 ilen = rootfs_interface->get_file_size(mnum_);
   // If the in-memory file is shorter, truncate the file on the disk.
   if (ilen > mlen)
-    rootfs_interface->truncate_file(inum_, mlen, trans);
+    rootfs_interface->truncate_file(mnum_, mlen, trans);
 
   // Update the size and the inode.
-  rootfs_interface->update_file_size(inum_, mlen, trans);
+  rootfs_interface->update_file_size(mnum_, mlen, trans);
 
   // Add the fsync transaction to the journal and possibly flush the journal
   // to disk.

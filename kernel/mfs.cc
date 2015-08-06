@@ -5,14 +5,14 @@
 #include "kstream.hh"
 #include "file.hh"
 
-u64 root_inum;
+u64 root_mnum;
 mfs* root_fs;
 mfs* anon_fs;
 mfs_interface* rootfs_interface;
 
 // This hash table stores mappings from mnode numbers in memory to inode numbers
 // on the disk.
-linearhash<u64, u64> *mnode_to_inode = NULL;
+linearhash<u64, u64> *mnum_to_inum = NULL;
 
 // Copy the next path element from path into name.
 // Update the pointer to the element following the copied one.
@@ -67,7 +67,7 @@ namex(sref<mnode> cwd, const char* path, bool nameiparent, strbuf<DIRSIZ>* name)
   sref<mnode> m;
 
   if (*path == '/')
-    m = root_fs->get(root_inum);
+    m = root_fs->get(root_mnum);
   else
     m = cwd;
 

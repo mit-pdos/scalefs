@@ -3,7 +3,7 @@
 #include "mnode.hh"
 #include "spinlock.hh"
 
-extern u64 root_inum;
+extern u64 root_mnum;
 extern mfs* root_fs;
 extern mfs* anon_fs;
 

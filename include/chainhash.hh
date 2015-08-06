@@ -201,15 +201,15 @@ public:
     return true;
   }
 
-  bool replace_common_inode(const K& kdst, const V* vpdst,
+  bool replace_common_mnode(const K& kdst, const V* vpdst,
                     chainhash* src, const K& ksrc, u64 *tsc = NULL)
   {
     // This is used by the rename syscall when the source and destination file
-    // names point to the same inode. The destination is read under a seqlock
+    // names point to the same mnode. The destination is read under a seqlock
     // and the source is simply removed. This ensures no cache line movement for
     // the destination if the optimistic read succeeds. The call does not
     // succeed (and returns false) if the destination file name does not exist
-    // anymore, or if the inode it maps to has changed in any way. In this case
+    // anymore, or if the mnode it maps to has changed in any way. In this case
     // the rename syscall retries with a conventional replace_from() call.
     bucket* bdst = &buckets_[hash(kdst) % nbuckets_];
     auto dsti = bdst->chain.before_begin();
@@ -229,14 +229,14 @@ public:
     do {
       dstv = dsti->val;
     } while (r.do_retry());
-    // Fail if the inode for the destination file name has changed.
+    // Fail if the mnode for the destination file name has changed.
     if (dstv != *vpdst)
       return false;
 
     // Delete the source optimistically
     if (!src->remove(ksrc, *vpdst, tsc))
       return false;
-    // If the inode for the destination file name has changed, revert the
+    // If the mnode for the destination file name has changed, revert the
     // deletion of the source and return false.
     if (r.need_retry()) {
       // We should be able to insert the source that we just deleted. If we

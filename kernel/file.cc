@@ -25,7 +25,7 @@ file_inode::fsync() {
 
     // Apply pending metadata operations to the disk filesystem first.
     // This takes care of any dependencies.
-    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->inum_, false);
+    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->mnum_, false);
     ip->as_file()->sync_file(true);
 
   } else if (ip->type() == mnode::types::dir) {
@@ -36,7 +36,7 @@ file_inode::fsync() {
     // to be flushed explicitly. If there were any operations on the directory
     // they will have been applied when the logical log was processed. This means
     // that the fsync will not block any operations on the mdir.
-    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->inum_, true);
+    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, ip->mnum_, true);
     ip->as_dir()->sync_dir();
   }
   return 0;
@@ -56,7 +56,7 @@ file_inode::stat(struct stat *st, enum stat_flags flags)
 
   st->st_mode = stattype << __S_IFMT_SHIFT;
   st->st_dev = (uintptr_t) ip->fs_;
-  st->st_ino = ip->inum_;
+  st->st_ino = ip->mnum_;
   if (!(flags & STAT_OMIT_NLINK))
     st->st_nlink = ip->nlink_.get_consistent();
   st->st_size = 0;

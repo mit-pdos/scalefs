@@ -26,13 +26,13 @@ class mnode : public refcache::weak_referenced
 {
 private:
   friend class mfs;
-  struct inumber {
+  struct mnumber {
     u64 v_;
     static const int type_bits = 8;
     static const int cpu_bits = 8;
 
-    inumber(u64 v) : v_(v) {}
-    inumber(u8 type, u64 cpu, u64 count)
+    mnumber(u64 v) : v_(v) {}
+    mnumber(u8 type, u64 cpu, u64 count)
       : v_(type | (cpu << type_bits) | (count << (type_bits + cpu_bits)))
     {
       assert(type < (1 << type_bits));
@@ -58,7 +58,7 @@ public:
   void cache_pin(bool flag);
   void dirty(bool flag);
   bool is_dirty();
-  u8 type() const { return inumber(inum_).type(); }
+  u8 type() const { return mnumber(mnum_).type(); }
   void initialized(bool flag) { initialized_ = flag; }
   bool is_initialized() { return initialized_; }
 
@@ -78,12 +78,12 @@ public:
   };
 
   mfs* const fs_;
-  const u64 inum_;
+  const u64 mnum_;
   linkcount nlink_ __mpalign__;
   __padout__;
 
 protected:
-  mnode(mfs* fs, u64 inum);
+  mnode(mfs* fs, u64 mnum);
   std::atomic<bool> initialized_;
 
 private:
@@ -98,7 +98,7 @@ private:
  * An mlinkref represents a link count reference on an mnode.
  * The caller must ensure that mlinkref::acquire() is not called
  * after mnode::nlink_ reaches stable zero, perhaps by blocking
- * refcache epochs using cli when looking up the inode number in
+ * refcache epochs using cli when looking up the mnode number in
  * a directory.
  *
  * Each mlinkref holds a reference to the mnode as well, to ensure
@@ -148,25 +148,25 @@ private:
 class mfs {
 private:
   friend class mnode;
-  percpu<u64> next_inum_;
+  percpu<u64> next_mnum_;
 
 public:
   NEW_DELETE_OPS(mfs);
 
-  sref<mnode> get(u64 n);
-  mlinkref alloc(u8 type, u64 parent = 0);
+  sref<mnode> get(u64 mnum);
+  mlinkref alloc(u8 type, u64 parent_mnum = 0);
 };
 
 
 class mdir : public mnode {
 private:
   // ~32K cache
-  mdir(mfs* fs, u64 inum, u64 parent) : mnode(fs, inum), parent_(parent),
-      map_(1367) {}
+  mdir(mfs* fs, u64 mnum, u64 parent_mnum) : mnode(fs, mnum),
+      parent_mnum_(parent_mnum), map_(1367) {}
   NEW_DELETE_OPS(mdir);
   friend class mnode;
   friend class mfs;
-  u64 parent_;
+  u64 parent_mnum_;
 
   // XXX We should deal with varying directory sizes better.  One way
   // would be to make this a resizable hash table.  Linux uses a
@@ -175,19 +175,19 @@ private:
   chainhash<strbuf<DIRSIZ>, u64> map_;
 
 public:
-  bool insert(const strbuf<DIRSIZ>& name, mlinkref* ilink, u64 *tsc = NULL) {
+  bool insert(const strbuf<DIRSIZ>& name, mlinkref* mlink, u64 *tsc = NULL) {
     if (name == ".")
       return false;
-    if (!map_.insert(name, ilink->mn()->inum_, tsc))
+    if (!map_.insert(name, mlink->mn()->mnum_, tsc))
       return false;
-    assert(ilink->held());
-    ilink->mn()->nlink_.inc();
+    assert(mlink->held());
+    mlink->mn()->nlink_.inc();
     dirty(true);
     return true;
   }
 
   bool remove(const strbuf<DIRSIZ>& name, sref<mnode> m, u64 *tsc = NULL) {
-    if (!map_.remove(name, m->inum_, tsc))
+    if (!map_.remove(name, m->mnum_, tsc))
       return false;
     m->nlink_.dec();
     dirty(true);
@@ -197,9 +197,9 @@ public:
   bool replace_from(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
                     mdir* src, const strbuf<DIRSIZ>& srcname, sref<mnode> msrc,
                     u64 *tsc = NULL) {
-    u64 dstinum = mdst ? mdst->inum_ : 0;
-    if (!map_.replace_from(dstname, mdst ? &dstinum : nullptr,
-                           &src->map_, srcname, msrc->inum_, tsc))
+    u64 dstmnum = mdst ? mdst->mnum_ : 0;
+    if (!map_.replace_from(dstname, mdst ? &dstmnum : nullptr,
+                           &src->map_, srcname, msrc->mnum_, tsc))
       return false;
     if (mdst)
       mdst->nlink_.dec();
@@ -212,9 +212,9 @@ public:
     return true;
   }
 
-  bool replace_common_inode(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
+  bool replace_common_mnode(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
                     mdir* src, const strbuf<DIRSIZ>& srcname, u64 *tsc = NULL) {
-    if (!map_.replace_common_inode(dstname, &mdst->inum_, &src->map_, srcname, tsc))
+    if (!map_.replace_common_mnode(dstname, &mdst->mnum_, &src->map_, srcname, tsc))
       return false;
     mdst->nlink_.dec();
     mdst->dirty(true);
@@ -231,25 +231,25 @@ public:
 
   sref<mnode> lookup(const strbuf<DIRSIZ>& name) const {
     if (name == ".")
-      return fs_->get(inum_);
+      return fs_->get(mnum_);
 
-    u64 iprev = -1;
+    u64 mprev = -1;
     for (;;) {
-      u64 inum = 0;
-      if (!map_.lookup(name, &inum))
+      u64 mnum = 0;
+      if (!map_.lookup(name, &mnum))
         return sref<mnode>();
 
-      sref<mnode> m = fs_->get(inum);
+      sref<mnode> m = fs_->get(mnum);
       if (m)
         return m;
 
       /*
-       * The inode was GCed between the lookup and mnode::get().
+       * The mnode was GCed between the lookup and mnode::get().
        * Retry the lookup.  Crash if we repeatedly can't find
-       * the same inode (to make such bugs easier to track down).
+       * the same mnode (to make such bugs easier to track down).
        */
-      assert(inum != iprev);
-      iprev = inum;
+      assert(mnum != mprev);
+      mprev = mnum;
     }
   }
 
@@ -271,40 +271,40 @@ public:
        * Retry the lookup, now that we have an sref<mnode>, since
        * we don't want to do lookup's mnode::get() under cli.
        */
-      u64 inum;
-      if (!map_.lookup(name, &inum) || inum != m->inum_)
+      u64 mnum;
+      if (!map_.lookup(name, &mnum) || mnum != m->mnum_)
         /*
          * The name has either been unlinked or changed to point
-         * to another inode.  Retry.
+         * to another mnode.  Retry.
          */
         continue;
 
-      mlinkref ilink(m);
+      mlinkref mlink(m);
 
       /*
-       * At this point, we know the inode had a non-zero link
+       * At this point, we know the mnode had a non-zero link
        * count prior to the second lookup.  Since we are holding
        * cli, refcache cannot advance its epoch, and will not
-       * garbage-collect the inode until after we release cli.
+       * garbage-collect the mnode until after we release cli.
        *
-       * Mild POSIX violation: an inode can appear to have a
+       * Mild POSIX violation: an mnode can appear to have a
        * zero link count, according to fstat, but get a positive
-       * link counter later, because the fstat occurs after the
+       * link count later, because the fstat occurs after the
        * last name has been unlinked, but before we increment
        * the link count here.
        */
 
-      ilink.acquire();
+      mlink.acquire();
 
       /*
-       * Mild POSIX violation: an inode can appear to have a
+       * Mild POSIX violation: an mnode can appear to have a
        * link count, according to fstat, that is higher than
        * the number of all its names.  For instance, sys_link()
        * first grabs a mlinkref on the existing name, and then
        * drops it if the new name already exists.
        */
 
-      return ilink;
+      return mlink;
     }
   }
 
@@ -321,7 +321,7 @@ public:
   }
 
   bool kill(sref<mnode> parent) {
-    if (!map_.remove_and_kill("..", parent->inum_))
+    if (!map_.remove_and_kill("..", parent->mnum_))
       return false;
 
     parent->nlink_.dec();
@@ -343,7 +343,7 @@ mnode::as_dir()
   auto md = static_cast<mdir*>(this);
   if (!initialized_ && fs_ == root_fs) {
     initialized_ = true;
-    rootfs_interface->initialize_dir(root_fs->get(inum_));
+    rootfs_interface->initialize_dir(root_fs->get(mnum_));
   }
   return md;
 }
@@ -358,11 +358,12 @@ mnode::as_dir() const
 
 class mfile : public mnode {
 private:
-  mfile(mfs* fs, u64 inum, u64 parent) : mnode(fs, inum), parent_(parent), size_(0) {}
+  mfile(mfs* fs, u64 mnum, u64 parent_mnum) : mnode(fs, mnum),
+        parent_mnum_(parent_mnum), size_(0) {}
   NEW_DELETE_OPS(mfile);
   friend class mnode;
   friend class mfs;
-  u64 parent_;
+  u64 parent_mnum_;
 
 public:
   class page_state {
@@ -552,7 +553,7 @@ mnode::as_file()
   auto mf = static_cast<mfile*>(this);
   if (!initialized_ && fs_ == root_fs) {
     initialized_ = true;
-    rootfs_interface->initialize_file(root_fs->get(inum_));
+    rootfs_interface->initialize_file(root_fs->get(mnum_));
   }
   return mf;
 }
@@ -567,7 +568,7 @@ mnode::as_file() const
 
 class mdev : public mnode {
 private:
-  mdev(mfs* fs, u64 inum) : mnode(fs, inum), major_(0), minor_(0) {}
+  mdev(mfs* fs, u64 mnum) : mnode(fs, mnum), major_(0), minor_(0) {}
   NEW_DELETE_OPS(mdev);
   friend class mnode;
   friend class mfs;
@@ -603,7 +604,7 @@ mnode::as_dev() const
 
 class msock : public mnode {
 private:
-  msock(mfs* fs, u64 inum) : mnode(fs, inum), localsock_(nullptr) {}
+  msock(mfs* fs, u64 mnum) : mnode(fs, mnum), localsock_(nullptr) {}
   NEW_DELETE_OPS(msock);
   friend class mnode;
   friend class mfs;

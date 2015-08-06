@@ -464,26 +464,27 @@ class mfs_interface
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
-    void free_inode(u64 mnode_inum, transaction *tr);
+    void free_inode(u64 mnode_mnum, transaction *tr);
     // File functions
-    u64 get_file_size(u64 mfile_inum);
-    void update_file_size(u64 mfile_inum, u32 size, transaction *tr);
+    u64 get_file_size(u64 mfile_mnum);
+    void update_file_size(u64 mfile_mnum, u32 size, transaction *tr);
     void initialize_file(sref<mnode> m);
-    int load_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes);
-    int sync_file_page(u64 mfile_inum, char *p, size_t pos, size_t nbytes,
+    int load_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes);
+    int sync_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes,
                        transaction *tr);
-    u64 create_file_dir_if_new(u64 mnode_inum, u64 parent, u8 type, char *name,
+    u64 create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type, char *name,
                                transaction *tr);
-    void truncate_file(u64 mfile_inum, u32 offset, transaction *tr);
+    void truncate_file(u64 mfile_mnum, u32 offset, transaction *tr);
 
     // Directory functions
     void initialize_dir(sref<mnode> m);
-    void create_directory_entry(u64 mdir_inum, char *name, u64 dirent_inum,
+    void create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
                                 u8 type, transaction *tr);
-    void unlink_old_inode(u64 mdir_inum, char* name, transaction *tr);
-    void delete_old_inode(u64 mfile_inum, transaction *tr);
+    void unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr);
+    void delete_old_inode(u64 mfile_mnum, transaction *tr);
 
-    bool inode_lookup(u64 mnode, u64 *inum);
+    bool inum_lookup(u64 mnum, u64 *inum);
+
     // Initializes the root directory. Called during boot.
     sref<mnode> load_root();
 
@@ -507,18 +508,18 @@ class mfs_interface
     void clear_journal();
 
     // Metadata functions
-    void metadata_log_alloc(u64 mnode_inum);
-    void metadata_op_start(u64 mnode_inum, size_t cpu, u64 tsc_val);
-    void metadata_op_end(u64 mnode_inum, size_t cpu, u64 tsc_val);
-    void add_to_metadata_log(u64 mnode_inum, mfs_operation *op);
+    void metadata_log_alloc(u64 mnum);
+    void metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val);
+    void metadata_op_end(u64 mnum, size_t cpu, u64 tsc_val);
+    void add_to_metadata_log(u64 mnum, mfs_operation *op);
     void sync_dirty_files();
     void evict_bufcache();
     void evict_pagecache();
     void process_metadata_log();
     void process_metadata_log_and_flush();
-    void process_metadata_log(u64 max_tsc, u64 mnode_inum, bool isdir);
-    void process_metadata_log_and_flush(u64 max_tsc, u64 inum, bool isdir);
-    void find_dependent_mnodes(mfs_logical_log *mfs_log, u64 mnode_inum,
+    void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
+    void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
+    void find_dependent_mnodes(mfs_logical_log *mfs_log, u64 mnode_mnum,
                                mfs_operation_vec &ops,
                                std::vector<u64> &dependent_mnodes, bool isdir);
     void mfs_create(mfs_operation_create *op, transaction *tr);
@@ -539,11 +540,11 @@ class mfs_interface
     void load_dir(sref<inode> i, sref<mnode> m);
     sref<mnode> load_dir_entry(u64 inum, sref<mnode> parent);
     sref<mnode> mnode_alloc(u64 inum, u8 mtype);
-    sref<inode> get_inode(u64 mnode_inum, const char *str);
+    sref<inode> get_inode(u64 mnum, const char *str);
     // Mapping from disk inode numbers to the corresponding mnodes
     chainhash<u64, sref<mnode>> *inum_to_mnode;
     // Mapping from in-memory mnode numbers to disk inode numbers
-    chainhash<u64, u64> *mnode_to_inode;
+    chainhash<u64, u64> *mnum_to_inum;
 
     typedef struct mfs_op_idx {
       int create_index;
@@ -609,9 +610,9 @@ class mfs_operation_create: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_create);
 
-    mfs_operation_create(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[],
+    mfs_operation_create(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[],
                          short m_type)
-      : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type)
+      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -631,21 +632,21 @@ class mfs_operation_create: public mfs_operation
     {
       for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
            it++) {
-        if (*it == parent)
+        if (*it == parent_mnum)
           return true;
       }
-      dependent_mnodes.push_back(parent);
+      dependent_mnodes.push_back(parent_mnum);
       return true;
     }
 
     // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
-      if (parent == pt) {
+      if (parent_mnum == pt) {
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
-          if (*it == mnode)
+          if (*it == mnode_mnum)
             return true;
-        mnode_vec.push_back(mnode);
+        mnode_vec.push_back(mnode_mnum);
         return true;
       }
       return false;
@@ -656,17 +657,17 @@ class mfs_operation_create: public mfs_operation
       cprintf("CREATE\n");
       cprintf("Op Type : Create\n");
       cprintf("Timestamp: %ld\n", timestamp);
-      cprintf("Mnode: %ld\n", mnode);
-      cprintf("Parent: %ld\n", parent);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
+      cprintf("Parent Mnode Num: %ld\n", parent_mnum);
       cprintf("Name: %s\n", name);
       cprintf("Mnode type: %d\n", mnode_type);
     }
 
   private:
-    u64 mnode;        // mnode number of the new file/directory
-    u64 parent;       // mnode number of the parent directory
+    u64 mnode_mnum;   // mnode number of the new file/directory
+    u64 parent_mnum;  // mnode number of the parent directory
     char *name;       // name of the new file/directory
-    short mnode_type; // creation type for the new inode
+    short mnode_type; // type for the new mnode
 };
 
 class mfs_operation_link: public mfs_operation
@@ -675,9 +676,9 @@ class mfs_operation_link: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_link);
 
-    mfs_operation_link(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[],
+    mfs_operation_link(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[],
                        short m_type)
-      : mfs_operation(p, t), mnode(mn), parent(pt), mnode_type(m_type)
+      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -697,21 +698,21 @@ class mfs_operation_link: public mfs_operation
     {
       for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
            it++) {
-        if (*it == parent)
+        if (*it == parent_mnum)
           return true;
       }
-      dependent_mnodes.push_back(parent);
+      dependent_mnodes.push_back(parent_mnum);
       return true;
     }
 
     // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
-      if (parent == pt) {
+      if (parent_mnum == pt) {
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
-          if (*it == mnode)
+          if (*it == mnode_mnum)
             return true;
-        mnode_vec.push_back(mnode);
+        mnode_vec.push_back(mnode_mnum);
         return true;
       }
       return false;
@@ -722,17 +723,17 @@ class mfs_operation_link: public mfs_operation
       cprintf("LINK\n");
       cprintf("Op Type : Link\n");
       cprintf("Timestamp: %ld\n", timestamp);
-      cprintf("Mnode: %ld\n", mnode);
-      cprintf("Parent: %ld\n", parent);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
+      cprintf("Parent Mnode Num: %ld\n", parent_mnum);
       cprintf("Name: %s\n", name);
       cprintf("Mnode type: %d\n", mnode_type);
     }
 
   private:
-    u64 mnode;        // mnode number of the file/directory to be linked
-    u64 parent;       // mnode number of the parent directory
+    u64 mnode_mnum;   // mnode number of the file/directory to be linked
+    u64 parent_mnum;  // mnode number of the parent directory
     char *name;       // name of the file/directory
-    short mnode_type; // type of the inode (file/dir)
+    short mnode_type; // type of the mnode (file/dir)
 };
 
 class mfs_operation_unlink: public mfs_operation
@@ -741,8 +742,8 @@ class mfs_operation_unlink: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_unlink);
 
-    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mn, u64 pt, char nm[])
-      : mfs_operation(p, t), mnode(mn), parent(pt)
+    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[])
+      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -768,11 +769,11 @@ class mfs_operation_unlink: public mfs_operation
     // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
-      if (parent == pt) {
+      if (parent_mnum == pt) {
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++)
-          if (*it == mnode)
+          if (*it == mnode_mnum)
             return true;
-        mnode_vec.push_back(mnode);
+        mnode_vec.push_back(mnode_mnum);
         return true;
       }
       return false;
@@ -783,14 +784,14 @@ class mfs_operation_unlink: public mfs_operation
       cprintf("UNLINK\n");
       cprintf("Op Type : Unlink\n");
       cprintf("Timestamp: %ld\n", timestamp);
-      cprintf("Mnode: %ld\n", mnode);
-      cprintf("Parent: %ld\n", parent);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
+      cprintf("Parent Mnode Num: %ld\n", parent_mnum);
       cprintf("Name: %s\n", name);
     }
 
   private:
-    u64 mnode;        // mnode number of the file/directory to be unlinked
-    u64 parent;       // mnode number of the parent directory
+    u64 mnode_mnum;   // mnode number of the file/directory to be unlinked
+    u64 parent_mnum;  // mnode number of the parent directory
     char *name;       // name of the file/directory
 };
 
@@ -810,8 +811,8 @@ class mfs_operation_delete: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_delete);
 
-    mfs_operation_delete(mfs_interface *p, u64 t, u64 mn)
-      : mfs_operation(p, t), mnode(mn) { }
+    mfs_operation_delete(mfs_interface *p, u64 t, u64 mnum)
+      : mfs_operation(p, t), mnode_mnum(mnum) { }
 
     void apply(transaction *tr) override
     {
@@ -834,11 +835,11 @@ class mfs_operation_delete: public mfs_operation
       cprintf("DELETE\n");
       cprintf("Op Type : Delete\n");
       cprintf("Timestamp: %ld\n", timestamp);
-      cprintf("Mnode: %ld\n", mnode);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
     }
 
   private:
-    u64 mnode;        // mnode number of the file/directory to be deleted
+    u64 mnode_mnum;  // mnode number of the file/directory to be deleted
 };
 
 class mfs_operation_rename: public mfs_operation
@@ -847,10 +848,10 @@ class mfs_operation_rename: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_rename);
 
-    mfs_operation_rename(mfs_interface *p, u64 t, char oldnm[], u64 mn, u64 pt,
-                         char newnm[], u64 newpt, u8 m_type)
-      : mfs_operation(p, t), mnode(mn), parent(pt), new_parent(newpt),
-        mnode_type(m_type)
+    mfs_operation_rename(mfs_interface *p, u64 t, char oldnm[], u64 mnum,
+                         u64 src_pt, char newnm[], u64 dst_pt, u8 m_type)
+      : mfs_operation(p, t), mnode_mnum(mnum), src_parent_mnum(src_pt),
+        dst_parent_mnum(dst_pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       newname = new char[DIRSIZ];
@@ -877,37 +878,37 @@ class mfs_operation_rename: public mfs_operation
 
       for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
            it++) {
-        if (*it == new_parent)
+        if (*it == dst_parent_mnum)
           return true;
       }
-      dependent_mnodes.push_back(new_parent);
+      dependent_mnodes.push_back(dst_parent_mnum);
       return true;
     }
 
     // TODO: Revisit this later, when handling fsync() on directories.
     bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
     {
-      if (parent == pt || new_parent == pt) {
+      if (src_parent_mnum == pt || dst_parent_mnum == pt) {
         bool is_parent = false;
-        if (parent == pt)
+        if (src_parent_mnum == pt)
           is_parent = true;
 
         bool present = false;
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
-          if (*it == mnode) {
+          if (*it == mnode_mnum) {
             present = true;
             break;
           }
         }
         if (!present)
-          mnode_vec.push_back(mnode);
+          mnode_vec.push_back(mnode_mnum);
 
         present = false;
         for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
-          if (is_parent && *it == new_parent) {
+          if (is_parent && *it == dst_parent_mnum) {
             present = true;
             break;
-          } else if (!is_parent && *it == parent) {
+          } else if (!is_parent && *it == src_parent_mnum) {
             present = true;
             break;
           }
@@ -915,9 +916,9 @@ class mfs_operation_rename: public mfs_operation
 
         if (!present) {
           if (is_parent)
-            mnode_vec.push_back(new_parent);
+            mnode_vec.push_back(dst_parent_mnum);
           else
-            mnode_vec.push_back(parent);
+            mnode_vec.push_back(src_parent_mnum);
         }
         return true;
       }
@@ -930,23 +931,23 @@ class mfs_operation_rename: public mfs_operation
       cprintf("Op Type : Rename\n");
       cprintf("Timestamp: %ld\n", timestamp);
       cprintf("Name: %s\n", name);
-      cprintf("Mnode: %ld\n", mnode);
-      cprintf("Parent: %ld\n", parent);
-      cprintf("Newname: %s\n", newname);
-      cprintf("New parent: %ld\n", new_parent);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
+      cprintf("Src Parent Mnode Num: %ld\n", src_parent_mnum);
+      cprintf("New Name: %s\n", newname);
+      cprintf("Dst Parent Mnode Num: %ld\n", dst_parent_mnum);
       cprintf("Mnode type: %d\n", mnode_type);
     }
 
   private:
-    u64 mnode;        // mnode number of the file/directory to be moved
-    u64 parent;       // mnode number of the source directory
-    u64 new_parent;   // mnode number of the destination directory
-    short mnode_type; // type of the inode
-    char *name;       // source name
-    char *newname;    // destination name
+    u64 mnode_mnum;        // mnode number of the file/directory to be moved
+    u64 src_parent_mnum;   // mnode number of the source directory
+    u64 dst_parent_mnum;   // mnode number of the destination directory
+    short mnode_type;      // type of the mnode
+    char *name;            // source name
+    char *newname;         // destination name
 };
 
-// The "logical" log of metadata operations. These operations are applied on an fsync 
+// The "logical" log of metadata operations. These operations are applied on an fsync
 // call so that any previous dependencies can be resolved before the mnode is fsynced.
 // The list of operations is oplog-maintained.
 class mfs_logical_log: public mfs_logged_object
