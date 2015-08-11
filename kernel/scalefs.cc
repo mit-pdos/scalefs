@@ -675,8 +675,7 @@ void
 mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  create_directory_entry(op->parent_mnum, op->name, op->mnode_mnum,
-                         op->mnode_type, tr);
+  create_file_dir_if_new(op->mnode_mnum, op->parent_mnum, op->mnode_type, tr);
 }
 
 // Link operation
