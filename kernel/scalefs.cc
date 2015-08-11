@@ -157,15 +157,28 @@ mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
                                       transaction *tr)
 {
   u64 inum = 0, parent_inum = 0;
-  if (inum_lookup(mnum, &inum))
-    return inum;
+  if (inum_lookup(mnum, &inum)) {
+    // A file just needs its inode to be allocated, so it is safe to return
+    // here.
+    if (type == mnode::types::file)
+      return inum;
+
+    // A directory, on the other hand, should additionally have its ".." link
+    // initialized. Verify that it has been initialized, and if its not, then
+    // continue where we had left off.
+    char name[DIRSIZ];
+    strcpy(name, "..");
+    if (type == mnode::types::dir && dirlookup(iget(1, mnum), name))
+        return inum;
+  }
 
   // To create a new directory, we need to allocate a new inode as well as
   // initialize it with the ".." link, for which we need to know its parent's
   // inode number.
-  if (type == mnode::types::dir && !inum_lookup(parent_mnum, &parent_inum))
-    panic("%s: Parent mnode %ld does not have a corresponding inode\n", __func__,
-          parent_mnum);
+  if (type == mnode::types::dir && !inum_lookup(parent_mnum, &parent_inum)) {
+    sref<inode> parent_i = alloc_inode_for_mnode(parent_mnum, mnode::types::dir);
+    parent_inum = parent_i->inum;
+  }
 
   sref<inode> i = alloc_inode_for_mnode(mnum, type);
   if (type == mnode::types::file) {
