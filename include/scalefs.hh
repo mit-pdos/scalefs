@@ -509,6 +509,7 @@ class mfs_interface
     void clear_journal();
 
     // Metadata functions
+    void alloc_mnode_lock(u64 mnum);
     void alloc_metadata_log(u64 mnum);
     void metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val);
     void metadata_op_end(u64 mnum, size_t cpu, u64 tsc_val);
@@ -546,6 +547,7 @@ class mfs_interface
     chainhash<u64, sref<mnode>> *inum_to_mnode;
     // Mapping from in-memory mnode numbers to disk inode numbers
     chainhash<u64, u64> *mnum_to_inum;
+    chainhash<u64, sleeplock*> *mnum_to_lock;
 
     typedef struct mfs_op_idx {
       int create_index;

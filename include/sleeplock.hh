@@ -5,6 +5,7 @@
 
 class sleeplock {
  public:
+  NEW_DELETE_OPS(sleeplock);
   sleeplock() : held_(false) {}
 
   void acquire() {

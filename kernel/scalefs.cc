@@ -17,10 +17,17 @@ mfs_interface::mfs_interface()
 {
   inum_to_mnode = new chainhash<u64, sref<mnode>>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
+  mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
   alloc_metadata_log(MFS_DELETE_MNUM);
   // XXX(rasha) Set up the physical journal file
+}
+
+void
+mfs_interface::alloc_mnode_lock(u64 mnum)
+{
+  mnum_to_lock->insert(mnum, new sleeplock());
 }
 
 void
@@ -124,8 +131,15 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
 sref<inode>
 mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
 {
-  sref<inode> i;
+  sleeplock *mnode_lock;
+  assert(mnum_to_lock->lookup(mnum, &mnode_lock));
+  auto lk = mnode_lock->guard();
 
+  u64 inum;
+  if (inum_lookup(mnum, &inum))
+    return iget(1, inum);
+
+  sref<inode> i;
   i = ialloc(1, type);
   iunlock(i);
 
