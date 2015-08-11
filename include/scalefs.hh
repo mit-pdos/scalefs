@@ -633,12 +633,7 @@ class mfs_operation_create: public mfs_operation
 
     bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
-      for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
-           it++) {
-        if (*it == parent_mnum)
-          return true;
-      }
-      dependent_mnodes.push_back(parent_mnum);
+      // Create doesn't depend on anything.
       return true;
     }
 
