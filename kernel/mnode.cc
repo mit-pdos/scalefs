@@ -59,7 +59,7 @@ mfs::alloc(u8 type, u64 parent_mnum)
   if (!mnode_cache.insert(make_pair(this, mnum), m.get()))
     panic("mnode_cache insert failed (duplicate mnumber?)");
 
-  rootfs_interface->metadata_log_alloc(mnum);
+  rootfs_interface->alloc_metadata_log(mnum);
   m->cache_pin(true);
   m->valid_ = true;
   mlinkref mlink(std::move(m));

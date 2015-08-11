@@ -19,12 +19,12 @@ mfs_interface::mfs_interface()
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
-  metadata_log_alloc(MFS_DELETE_MNUM);
+  alloc_metadata_log(MFS_DELETE_MNUM);
   // XXX(rasha) Set up the physical journal file
 }
 
 void
-mfs_interface::metadata_log_alloc(u64 mnum)
+mfs_interface::alloc_metadata_log(u64 mnum)
 {
   metadata_log_htab->insert(mnum, new mfs_logical_log());
 }
