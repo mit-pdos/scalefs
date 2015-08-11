@@ -121,6 +121,20 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
   return writei(i, p, pos, nbytes, tr, true);
 }
 
+sref<inode>
+mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
+{
+  sref<inode> i;
+
+  i = ialloc(1, type);
+  iunlock(i);
+
+  inum_to_mnode->insert(i->inum, root_fs->get(mnum));
+  mnum_to_inum->insert(mnum, i->inum);
+
+  return i;
+}
+
 // Creates a new file [or directory] on the disk if an mnode (mfile) [or mdir]
 // does not have a corresponding inode mapping. Returns the inode number of
 // the newly created inode.
@@ -139,14 +153,14 @@ mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
     panic("%s: Parent mnode %ld does not have a corresponding inode\n", __func__,
           parent_mnum);
 
-  sref<inode> i;
-  i = ialloc(1, type);
-  mnum_to_inum->insert(mnum, i->inum);
-  inum_to_mnode->insert(i->inum, root_fs->get(mnum));
-  if (type == mnode::types::file)
+  sref<inode> i = alloc_inode_for_mnode(mnum, type);
+  if (type == mnode::types::file) {
+    ilock(i, 0); // iupdate only reads the inode, so a readlock is sufficient.
     iupdate(i, tr);
-  else if (type == mnode::types::dir)
+  } else if (type == mnode::types::dir) {
+    ilock(i, 1);
     dirlink(i, "..", parent_inum, false, tr); // dirlink does an iupdate within.
+  }
   iunlock(i);
 
   return i->inum;
