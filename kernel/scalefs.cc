@@ -579,7 +579,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
   std::vector<u64> dependent_mnodes;
 
   mfs_logical_log *mfs_log;
-  metadata_log_htab->lookup(mnode_mnum, &mfs_log);
+  assert(metadata_log_htab->lookup(mnode_mnum, &mfs_log));
 
   // This lock prevents concurrent fsync()s from trampling over each other
   // while trying to flush operations from the same mfs_log.
@@ -588,6 +588,9 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
   {
     // Synchronize the oplog loggers.
     auto guard = mfs_log->wait_synchronize(max_tsc);
+
+    if (!mfs_log->operation_vec.size())
+      return;
 
 #if 0
     // The next step is to find dependencies between metadata operations as
@@ -654,9 +657,6 @@ mfs_interface::find_dependent_mnodes(mfs_logical_log *mfs_log, u64 mnode_mnum,
                                      std::vector<u64> &dependent_mnodes,
                                      bool isdir)
 {
-  if (!mfs_log->operation_vec.size())
-    return;
-
   // We'll need to copy everything from mfs_log->operation_vec to ops.
   // So reserve the necessary space upfront.
   ops.reserve(mfs_log->operation_vec.size());
