@@ -694,12 +694,7 @@ class mfs_operation_link: public mfs_operation
 
     bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
-      for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
-           it++) {
-        if (*it == parent_mnum)
-          return true;
-      }
-      dependent_mnodes.push_back(parent_mnum);
+      // Link doesn't depend on anything.
       return true;
     }
 
@@ -759,8 +754,7 @@ class mfs_operation_unlink: public mfs_operation
 
     bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
-      // The corresponding create or link operation would have already
-      // handled the dependencies (if any).
+      // Unlink doesn't depend on anything.
       return true;
     }
 
@@ -819,6 +813,7 @@ class mfs_operation_delete: public mfs_operation
 
     bool check_dependency(std::vector<u64> &dependent_mnodes) override
     {
+      // Delete doesn't depend on anything.
       return true;
     }
 
