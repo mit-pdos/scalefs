@@ -326,12 +326,12 @@ namespace oplog {
         (*it)->print();
     }
 
-    // Returns an iterator it where all operations in [ops_.begin(),
-    // it) have timestamps less than max_tsc
+    // Returns an iterator 'it' where all operations in [ops_.begin(),
+    // it) have timestamps less than or equal to max_tsc.
     op_iter ops_before_max_tsc(u64 max_tsc) {
       auto it = ops_.begin(), end = ops_.end();
       for (; it != end; it++)
-        if ((*it)->tsc >= max_tsc)
+        if ((*it)->tsc > max_tsc)
           break;
       return it;
     }
@@ -448,7 +448,7 @@ namespace oplog {
     percpu<mfs_tsc> mfs_end_tsc;
 
     // Heap-merges pending loggers and applies the operations, leaving behind
-    // operations that have timestamps greater than or equal to max_tsc.
+    // operations that have timestamps greater than max_tsc.
     void flush_finish_max_timestamp(u64 max_tsc) {
       if (pending_.empty())
         return;
@@ -538,7 +538,7 @@ namespace oplog {
         // need to wait for an operation that is executing to be logged in order
         // to know where the linearization point of the operation lies with
         // respect to wait_tsc.
-        if (end_tsc < start_tsc && start_tsc < wait_tsc)
+        if (end_tsc < start_tsc && start_tsc <= wait_tsc)
           while (!r_end.need_retry());
       }
 
