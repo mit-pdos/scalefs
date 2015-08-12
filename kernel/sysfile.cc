@@ -412,19 +412,41 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
     } else {
 
-      rootfs_interface->metadata_op_start(mdold->mnum_, myid(), get_tsc());
+      // Strictly speaking, it is important to invoke metadata_op_start() on
+      // the destination directory first, because the rename operation has
+      // to be processed in that order: perform the link, and then the unlink.
+      // Maintaining that order here helps oplog's wait_synchronize() to
+      // capture the rename operation in a consistent manner, irrespective
+      // of when fsync() is invoked. (We don't want to end up in a situation
+      // where it sees the rename_unlink but fails to notice the rename_link!).
+      u64 tsc_val = get_tsc();
+      rootfs_interface->metadata_op_start(mdnew->mnum_, myid(), tsc_val);
+      rootfs_interface->metadata_op_start(mdold->mnum_, myid(), tsc_val);
 
       if (mdnew->as_dir()->replace_from(newname, mfroadblock,
             mdold->as_dir(), oldname, mfold, &tsc)) {
-        mfs_operation *op = new mfs_operation_rename(rootfs_interface, tsc,
-                            oldname.buf_, mfold->mnum_, mdold->mnum_,
-                            newname.buf_, mdnew->mnum_, mfold->type());
-        rootfs_interface->add_to_metadata_log(mdold->mnum_, op);
-        rootfs_interface->metadata_op_end(mdold->mnum_, myid(), get_tsc());
+
+        mfs_operation *op_rename_link, *op_rename_unlink;
+
+        op_rename_link = new mfs_operation_rename_link(rootfs_interface, tsc,
+                             oldname.buf_, mfold->mnum_, mdold->mnum_,
+                             newname.buf_, mdnew->mnum_, mfold->type());
+        rootfs_interface->add_to_metadata_log(mdnew->mnum_, op_rename_link);
+
+        op_rename_unlink = new mfs_operation_rename_unlink(rootfs_interface, tsc,
+                               oldname.buf_, mfold->mnum_, mdold->mnum_,
+                               newname.buf_, mdnew->mnum_, mfold->type());
+        rootfs_interface->add_to_metadata_log(mdold->mnum_, op_rename_unlink);
+
+        tsc_val = get_tsc();
+        rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
+        rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
         return 0;
       }
 
-      rootfs_interface->metadata_op_end(mdold->mnum_, myid(), get_tsc());
+      tsc_val = get_tsc();
+      rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
+      rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
     }
 
     /*

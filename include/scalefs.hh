@@ -15,7 +15,8 @@ class mfs_operation_create;
 class mfs_operation_link;
 class mfs_operation_unlink;
 class mfs_operation_delete;
-class mfs_operation_rename;
+class mfs_operation_rename_link;
+class mfs_operation_rename_unlink;
 class mfs_logical_log;
 typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
@@ -528,7 +529,8 @@ class mfs_interface
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
     void mfs_delete(mfs_operation_delete *op, transaction *tr);
-    void mfs_rename(mfs_operation_rename *op, transaction *tr);
+    void mfs_rename_link(mfs_operation_rename_link *op, transaction *tr);
+    void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
 
     // Block free bit vector functions
     void initialize_free_bit_vector();
@@ -835,14 +837,14 @@ class mfs_operation_delete: public mfs_operation
     u64 mnode_mnum;  // mnode number of the file/directory to be deleted
 };
 
-class mfs_operation_rename: public mfs_operation
+class mfs_operation_rename_link: public mfs_operation
 {
   friend mfs_interface;
   public:
-    NEW_DELETE_OPS(mfs_operation_rename);
+    NEW_DELETE_OPS(mfs_operation_rename_link);
 
-    mfs_operation_rename(mfs_interface *p, u64 t, char oldnm[], u64 mnum,
-                         u64 src_pt, char newnm[], u64 dst_pt, u8 m_type)
+    mfs_operation_rename_link(mfs_interface *p, u64 t, char oldnm[], u64 mnum,
+                              u64 src_pt, char newnm[], u64 dst_pt, u8 m_type)
       : mfs_operation(p, t), mnode_mnum(mnum), src_parent_mnum(src_pt),
         dst_parent_mnum(dst_pt), mnode_type(m_type)
     {
@@ -852,7 +854,7 @@ class mfs_operation_rename: public mfs_operation
       strncpy(newname, newnm, DIRSIZ);
     }
 
-    ~mfs_operation_rename()
+    ~mfs_operation_rename_link()
     {
       delete[] name;
       delete[] newname;
@@ -860,9 +862,10 @@ class mfs_operation_rename: public mfs_operation
 
     void apply(transaction *tr) override
     {
-      parent_mfs->mfs_rename(this, tr);
+      parent_mfs->mfs_rename_link(this, tr);
     }
 
+    // TODO: Remnants of an earlier design; rework this later.
     bool check_dependency (std::vector<u64> &dependent_mnodes) override
     {
       // The corresponding create or link of the mnode would have already
@@ -920,8 +923,114 @@ class mfs_operation_rename: public mfs_operation
 
     void print()
     {
-      cprintf("RENAME\n");
-      cprintf("Op Type : Rename\n");
+      cprintf("RENAME LINK\n");
+      cprintf("Op Type : Rename Link\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Name: %s\n", name);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
+      cprintf("Src Parent Mnode Num: %ld\n", src_parent_mnum);
+      cprintf("New Name: %s\n", newname);
+      cprintf("Dst Parent Mnode Num: %ld\n", dst_parent_mnum);
+      cprintf("Mnode type: %d\n", mnode_type);
+    }
+
+  private:
+    u64 mnode_mnum;        // mnode number of the file/directory to be moved
+    u64 src_parent_mnum;   // mnode number of the source directory
+    u64 dst_parent_mnum;   // mnode number of the destination directory
+    short mnode_type;      // type of the mnode
+    char *name;            // source name
+    char *newname;         // destination name
+};
+
+class mfs_operation_rename_unlink: public mfs_operation
+{
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_rename_unlink);
+
+    mfs_operation_rename_unlink(mfs_interface *p, u64 t, char oldnm[], u64 mnum,
+                                u64 src_pt, char newnm[], u64 dst_pt, u8 m_type)
+      : mfs_operation(p, t), mnode_mnum(mnum), src_parent_mnum(src_pt),
+        dst_parent_mnum(dst_pt), mnode_type(m_type)
+    {
+      name = new char[DIRSIZ];
+      newname = new char[DIRSIZ];
+      strncpy(name, oldnm, DIRSIZ);
+      strncpy(newname, newnm, DIRSIZ);
+    }
+
+    ~mfs_operation_rename_unlink()
+    {
+      delete[] name;
+      delete[] newname;
+    }
+
+    void apply(transaction *tr) override
+    {
+      parent_mfs->mfs_rename_unlink(this, tr);
+    }
+
+    // TODO: Remnants of an earlier design; rework this later.
+    bool check_dependency (std::vector<u64> &dependent_mnodes) override
+    {
+      // The corresponding create or link of the mnode would have already
+      // added the source directory to the dependency list. So we just need
+      // to add the destination directory here.
+
+      for (auto it = dependent_mnodes.begin(); it != dependent_mnodes.end();
+           it++) {
+        if (*it == dst_parent_mnum)
+          return true;
+      }
+      dependent_mnodes.push_back(dst_parent_mnum);
+      return true;
+    }
+
+    // TODO: Revisit this later, when handling fsync() on directories.
+    bool check_parent_dependency(std::vector<u64> &mnode_vec, u64 pt)
+    {
+      if (src_parent_mnum == pt || dst_parent_mnum == pt) {
+        bool is_parent = false;
+        if (src_parent_mnum == pt)
+          is_parent = true;
+
+        bool present = false;
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+          if (*it == mnode_mnum) {
+            present = true;
+            break;
+          }
+        }
+        if (!present)
+          mnode_vec.push_back(mnode_mnum);
+
+        present = false;
+        for (auto it = mnode_vec.begin(); it != mnode_vec.end(); it++) {
+          if (is_parent && *it == dst_parent_mnum) {
+            present = true;
+            break;
+          } else if (!is_parent && *it == src_parent_mnum) {
+            present = true;
+            break;
+          }
+        }
+
+        if (!present) {
+          if (is_parent)
+            mnode_vec.push_back(dst_parent_mnum);
+          else
+            mnode_vec.push_back(src_parent_mnum);
+        }
+        return true;
+      }
+      return false;
+    }
+
+    void print()
+    {
+      cprintf("RENAME UNLINK\n");
+      cprintf("Op Type : Rename Unlink\n");
       cprintf("Timestamp: %ld\n", timestamp);
       cprintf("Name: %s\n", name);
       cprintf("Mnode Num: %ld\n", mnode_mnum);

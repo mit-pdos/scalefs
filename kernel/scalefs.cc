@@ -719,16 +719,23 @@ mfs_interface::mfs_delete(mfs_operation_delete *op, transaction *tr)
   delete_old_inode(op->mnode_mnum, tr);
 }
 
-// Rename operation
+// Rename Link operation
 void
-mfs_interface::mfs_rename(mfs_operation_rename *op, transaction *tr)
+mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
+{
+  scoped_gc_epoch e;
+  create_directory_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
+                         op->mnode_type, tr);
+}
+
+// Rename Unlink operation
+void
+mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr)
 {
   scoped_gc_epoch e;
   char str[DIRSIZ];
   strcpy(str, op->name);
 
-  create_directory_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
-                         op->mnode_type, tr);
   unlink_old_inode(op->src_parent_mnum, str, tr);
 }
 
