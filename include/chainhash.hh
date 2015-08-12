@@ -9,15 +9,8 @@
 #include "lockwrap.hh"
 #include "hash.hh"
 #include "ilist.hh"
+#include "hpet.hh"
 #include "cpuid.hh"
-
-static u64 get_tsc() {
-  if (cpuid::features().rdtscp)
-    return rdtscp();
-  // cpuid + rdtsc combination (more expensive) is used as an alternative to
-  // rdtscp where it's not supported.
-  return rdtsc_serialized();
-}
 
 template<class K, class V>
 class chainhash {

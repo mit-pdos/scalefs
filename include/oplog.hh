@@ -4,6 +4,7 @@
 #include "cpu.hh"
 #include "spinlock.hh"
 #include "percpu.hh"
+#include "hpet.hh"
 #include "cpuid.hh"
 
 #include <atomic>
@@ -267,13 +268,6 @@ namespace oplog {
     std::vector<std::unique_ptr<op> > ops_;
     typedef decltype(ops_)::iterator op_iter;
 
-    static uint64_t rdtscp() 
-    {
-      if (cpuid::features().rdtscp)
-        return rdtscp();
-      return rdtsc_serialized();
-    }
-
     void reset()
     {
       ops_.clear();
@@ -305,7 +299,7 @@ namespace oplog {
       // introduces a TSO dependency from the TSC memory write to
       // the lock release.
       ops_.push_back(std::make_unique<op_inst<CB> >(
-                       rdtscp(), std::forward<CB>(cb)));
+                       get_tsc(), std::forward<CB>(cb)));
     }
 
     // Same as push<CB>, the only difference being that the tsc value is passed
@@ -316,7 +310,7 @@ namespace oplog {
     void push_with_tsc(CB &&cb)
     {
       ops_.push_back(std::make_unique<op_inst<CB> >(
-                       cb.get_tsc(), std::forward<CB>(cb)));
+                       cb.get_timestamp(), std::forward<CB>(cb)));
     }
 
     static bool compare_tsc(const std::unique_ptr<op> &op1, const std::unique_ptr<op> &op2) {

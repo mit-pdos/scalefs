@@ -22,16 +22,6 @@ typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
 typedef struct transaction_diskblock transaction_diskblock;
 
-static u64
-get_timestamp()
-{
-  if (cpuid::features().rdtscp)
-    return rdtscp();
-  // cpuid + rdtsc combination (more expensive) is used as an alternative to
-  // rdtscp where it's not supported.
-  return rdtsc_serialized();
-}
-
 // A single disk block that was updated as the result of a transaction. All
 // diskblocks that were written to during the transaction are stored as a linked
 // list in the transaction object.
@@ -53,7 +43,7 @@ struct transaction_diskblock
     blockdata = (char *) kmalloc(BSIZE, "transaction_diskblock");
     blocknum = n;
     memmove(blockdata, buf, BSIZE);
-    timestamp = get_timestamp();
+    timestamp = get_tsc();
   }
 
   transaction_diskblock(u32 n, char buf[BSIZE], u64 blk_timestamp)
@@ -117,7 +107,7 @@ class transaction
     NEW_DELETE_OPS(transaction);
     explicit transaction(u64 t) : timestamp_(t), htable_initialized(false) {}
 
-    transaction() : timestamp_(get_timestamp()), htable_initialized(false) {}
+    transaction() : timestamp_(get_tsc()), htable_initialized(false) {}
 
     ~transaction()
     {
@@ -146,7 +136,7 @@ class transaction
     void add_unique_block(u32 bno, char buf[BSIZE])
     {
       transaction_diskblock *tdp;
-      u64 new_timestamp = get_timestamp();
+      u64 new_timestamp = get_tsc();
       u64 blocknum = bno;
 
       if (!htable_initialized) {
@@ -1081,7 +1071,7 @@ class mfs_logical_log: public mfs_logged_object
         operation->print();
       }
 
-      u64 get_tsc()
+      u64 get_timestamp()
       {
         return operation->timestamp;
       }

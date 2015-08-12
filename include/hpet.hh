@@ -1,6 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#include "types.h"
+#include "cpuid.hh"
+#include "amd64.h"
 
 class hpet
 {
@@ -19,3 +22,13 @@ private:
 };
 
 extern class hpet *the_hpet;
+
+static inline u64 get_tsc()
+{
+  if (cpuid::features().rdtscp)
+    return rdtscp();
+
+  // If rdtscp is not supported, use the (more expensive) combination
+  // cpuid + rdtsc as an alternative.
+  return rdtsc_serialized();
+}
