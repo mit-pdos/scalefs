@@ -582,39 +582,52 @@ mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
   delete op;
 }
 
+int
+mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc)
+{
+  // Synchronize the oplog loggers.
+  auto guard = mfs_log->wait_synchronize(max_tsc);
+
+  if (!mfs_log->operation_vec.size())
+    return 0;
+
+  for (auto it = mfs_log->operation_vec.begin();
+       it != mfs_log->operation_vec.end(); ) {
+
+    add_op_to_journal(*it);
+    it = mfs_log->operation_vec.erase(it);
+  }
+
+  return 0;
+}
+
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void
 mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 {
-  mfs_operation_vec ops;
-
+  std::vector<mnum_tsc> pending_stack;
   mfs_logical_log *mfs_log;
-  assert(metadata_log_htab->lookup(mnode_mnum, &mfs_log));
+  int ret;
 
-  // This lock prevents concurrent fsync()s from trampling over each other
-  // while trying to flush operations from the same mfs_log.
-  auto l = mfs_log->lock.guard();
+  pending_stack.push_back({mnode_mnum, max_tsc});
 
-  {
-    // Synchronize the oplog loggers.
-    auto guard = mfs_log->wait_synchronize(max_tsc);
+  while (pending_stack.size()) {
+    mnum_tsc mt = pending_stack.back();
+    mnode_mnum = mt.mnum;
+    max_tsc = mt.tsc;
 
-    if (!mfs_log->operation_vec.size())
-      return;
+    assert(metadata_log_htab->lookup(mnode_mnum, &mfs_log));
 
-    // Just copy mfs_log->operation_vec to ops vector. This is a temporary
-    // piece of code until we implement dependency tracking for the new
-    // scheme of logging metadata operations.
-    ops.reserve(mfs_log->operation_vec.size());
-    for (auto &op : mfs_log->operation_vec)
-      ops.push_back(op);
+    mfs_log->lock.acquire();
+    ret = process_ops_from_oplog(mfs_log, max_tsc);
+    mfs_log->lock.release();
 
-    mfs_log->operation_vec.clear();
+    if (!ret)
+      pending_stack.pop_back();
   }
 
-  for (auto &op : ops)
-    add_op_to_journal(op);
+  assert(!pending_stack.size());
 }
 
 void
