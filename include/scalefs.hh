@@ -512,6 +512,7 @@ class mfs_interface
     void process_metadata_log_and_flush();
     void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
     void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
+    void add_op_to_journal(mfs_operation *op, transaction *tr = nullptr);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);

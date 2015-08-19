@@ -570,6 +570,18 @@ evict_caches(mdev*, const char *buf, u32 n)
   return n;
 }
 
+void
+mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
+{
+  if (!tr)
+    tr = new transaction(op->timestamp);
+
+  auto journal_lock = fs_journal->prepare_for_commit();
+  op->apply(tr);
+  add_to_journal_locked(tr);
+  delete op;
+}
+
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void
@@ -611,11 +623,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
   auto it = ops.end();
   do {
     it--;
-    transaction *tr = new transaction((*it)->timestamp);
-    auto journal_lock = fs_journal->prepare_for_commit();
-    (*it)->apply(tr);
-    add_to_journal_locked(tr);
-    delete (*it);
+    add_op_to_journal(*it);
   } while (it != ops.begin());
 }
 
