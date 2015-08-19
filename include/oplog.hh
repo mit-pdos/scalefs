@@ -6,6 +6,7 @@
 #include "percpu.hh"
 #include "hpet.hh"
 #include "cpuid.hh"
+#include "sleeplock.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -49,7 +50,7 @@ namespace oplog {
   class logged_object
   {
   public:
-    constexpr logged_object() : sync_lock_("logged_object") { }
+    constexpr logged_object() : sync_lock_() { }
 
     // logged_object is meant to be subclassed, so it needs a virtual
     // destructor.
@@ -134,7 +135,7 @@ namespace oplog {
     // object, and return the per-object lock.  The caller may keep
     // this lock live for as long as it needs to prevent modifications
     // to the object's synchronized value.
-    lock_guard<spinlock> synchronize()
+    lock_guard<sleeplock> synchronize()
     {
       auto guard = sync_lock_.guard();
 
@@ -223,7 +224,7 @@ namespace oplog {
     bitset<NCPU> cpus_;
 
     // This lock serializes log flushes and protects clearing cpus_.
-    spinlock sync_lock_;
+    sleeplock sync_lock_;
   };
 
   template<typename Logger>
@@ -519,7 +520,7 @@ namespace oplog {
     // The same as logged_object::synchronize except that we might have to wait
     // for cores which have in-flight operations that need to be logged before
     // synchronization.
-    lock_guard<spinlock> wait_synchronize(u64 wait_tsc) {
+    lock_guard<sleeplock> wait_synchronize(u64 wait_tsc) {
       auto guard = sync_lock_.guard();
 
       for (size_t i = 0; i < NCPU; ++i) {
