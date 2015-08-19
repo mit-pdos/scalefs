@@ -168,7 +168,7 @@ mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
     // continue where we had left off.
     char name[DIRSIZ];
     strcpy(name, "..");
-    if (type == mnode::types::dir && dirlookup(iget(1, mnum), name))
+    if (type == mnode::types::dir && dirlookup(iget(1, inum), name))
         return inum;
   }
 
