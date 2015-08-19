@@ -525,6 +525,7 @@ class mfs_interface
                                 std::vector<rename_metadata> &rename_stack);
     void find_rename_op_counterpart(std::vector<rename_metadata> &rename_stack,
                                     std::vector<mnum_tsc> &pending_stack);
+    void apply_rename_pair(std::vector<rename_metadata> &rename_stack);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);

@@ -571,6 +571,87 @@ evict_caches(mdev*, const char *buf, u32 n)
 }
 
 void
+mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
+{
+  // The top two operations on the rename stack form a pair.
+
+  rename_metadata rm_1 = rename_stack.back(); rename_stack.pop_back();
+  rename_metadata rm_2 = rename_stack.back(); rename_stack.pop_back();
+
+  // Verify that the two rename sub-ops are part of the same higher-level
+  // rename operation. Since timestamps are globally unique across all
+  // metadata operations, it is sufficient to compare the timestamps.
+  assert(rm_1.timestamp == rm_2.timestamp);
+
+  // Lock ordering rule:
+  // -------------------
+  // Acquire the source directory's mfs_log->lock first, and then the
+  // destination directory's mfs_log->lock. These locks are acquired
+  // (and held) together only for the duration of the rename operation.
+
+  u64 src_mnum = rm_1.src_parent_mnum;
+  u64 dst_mnum = rm_1.dst_parent_mnum;
+
+  mfs_logical_log *mfs_log_src, *mfs_log_dst;
+  assert(metadata_log_htab->lookup(src_mnum, &mfs_log_src));
+  mfs_log_src->lock.acquire();
+
+  if (dst_mnum != src_mnum) {
+    assert(metadata_log_htab->lookup(dst_mnum, &mfs_log_dst));
+    mfs_log_dst->lock.acquire();
+  }
+
+  // Acquire the oplog's sync_lock_ as well, since we will be manipulating
+  // the operation vectors as well as their operations.
+  {
+    auto src_guard = mfs_log_src->wait_synchronize(rm_1.timestamp);
+    auto dst_guard = mfs_log_dst->wait_synchronize(rm_1.timestamp);
+
+    // After acquiring all the locks, check whether we still have work to do.
+    // Note that a concurrent fsync() on the other directory might have
+    // flushed out both the rename sub-operations!
+    mfs_operation_rename_link *link_op = nullptr;
+    mfs_operation_rename_unlink *unlink_op = nullptr;
+    transaction *tr = nullptr;
+
+    if (!mfs_log_src->operation_vec.size() ||
+        !mfs_log_dst->operation_vec.size())
+      goto unlock;
+
+    link_op =   dynamic_cast<mfs_operation_rename_link*>(
+                                    mfs_log_dst->operation_vec.front());
+    unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(
+                                    mfs_log_src->operation_vec.front());
+
+    if (!(link_op && unlink_op &&
+          link_op->timestamp == unlink_op->timestamp &&
+          link_op->timestamp == rm_1.timestamp))
+      goto unlock;
+
+    // Make sure that both parts of the rename operation are applied within
+    // the same transaction, to preserve atomicity.
+    tr = new transaction(link_op->timestamp);
+    add_op_to_journal(link_op, tr);
+    add_op_to_journal(unlink_op, tr);
+
+    // Now we need to delete these two sub-operations from their oplogs.
+    // Luckily, we know that as of this moment, both these rename sub-
+    // operations are at the beginning of their oplogs (because we have
+    // already applied their predecessor operations).
+    mfs_log_src->operation_vec.erase(mfs_log_src->operation_vec.begin());
+    mfs_log_dst->operation_vec.erase(mfs_log_dst->operation_vec.begin());
+
+  unlock:
+    ; // release the locks held by src_guard and dst_guard
+  }
+
+  if (dst_mnum != src_mnum)
+    mfs_log_dst->lock.release();
+
+  mfs_log_src->lock.release();
+}
+
+void
 mfs_interface::find_rename_op_counterpart(
                                    std::vector<rename_metadata> &rename_stack,
                                    std::vector<mnum_tsc> &pending_stack)
@@ -600,6 +681,7 @@ mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
 // Return values:
 // 0 - All done (processed operations upto max_tsc in the given mfs_log)
 // 1 - Encountered a new rename sub-operation
+// 2 - Got a counterpart for a rename sub-operation, which completes the pair
 int
 mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
                                       std::vector<rename_metadata> &rename_stack)
@@ -618,6 +700,13 @@ mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
 
     if (rename_link_op || rename_unlink_op) {
 
+      // Check if this is the counterpart of the latest rename sub-operation
+      // that we know of.
+
+      u64 rename_timestamp = 0;
+      if (rename_stack.size())
+        rename_timestamp = rename_stack.back().timestamp;
+
       if (rename_link_op) {
         rename_stack.push_back({rename_link_op->src_parent_mnum,
                                 rename_link_op->dst_parent_mnum,
@@ -630,6 +719,8 @@ mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
                                 false});
       }
 
+      if (rename_timestamp && (*it)->timestamp == rename_timestamp)
+        return 2;
       return 1;
     }
 
@@ -676,12 +767,23 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
       find_rename_op_counterpart(rename_stack, pending_stack);
       break;
 
+    // 2 - Got a counterpart for a rename sub-operation, which completes the
+    //     pair. So acquire the necessary locks and apply both parts of the
+    //     rename atomically using a single transaction.
+    case 2:
+      apply_rename_pair(rename_stack);
+      // Since the rename sub-operations got paired up and were applied, we
+      // don't have to process the other directory any further for this fsync
+      // call. So pop it off the pending stack.
+      pending_stack.pop_back();
+      break;
+
     default:
       panic("Got invalid return code from process_ops_from_oplog()");
     }
   }
 
-  assert(!pending_stack.size());
+  assert(!rename_stack.size() && !pending_stack.size());
 }
 
 void
