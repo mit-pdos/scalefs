@@ -68,6 +68,7 @@ UPROGS_BIN= \
 	fsync \
 	disktest \
 	fsynctest \
+	renamefsync \
 	synctest \
 	dd \
 
