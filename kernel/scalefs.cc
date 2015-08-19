@@ -607,24 +607,14 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
     // piece of code until we implement dependency tracking for the new
     // scheme of logging metadata operations.
     ops.reserve(mfs_log->operation_vec.size());
-    auto it = mfs_log->operation_vec.end();
-    do {
-      it--;
-      ops.push_back(*it);
-    } while (it != mfs_log->operation_vec.begin());
+    for (auto &op : mfs_log->operation_vec)
+      ops.push_back(op);
+
     mfs_log->operation_vec.clear();
   }
 
-  if (!ops.size())
-    return;
-
-  // At this point, all dependent operations have been applied and added to
-  // the journal's transaction_log. So it is safe to apply and add this set now.
-  auto it = ops.end();
-  do {
-    it--;
-    add_op_to_journal(*it);
-  } while (it != ops.begin());
+  for (auto &op : ops)
+    add_op_to_journal(op);
 }
 
 void
