@@ -434,6 +434,12 @@ class mfs_interface
     };
 
     struct mnum_tsc { u64 mnum; u64 tsc; };
+    struct rename_metadata {
+      u64 src_parent_mnum;
+      u64 dst_parent_mnum;
+      u64 timestamp;
+      bool link;
+    };
 
     // Keeps track of free and allocated blocks on the disk. Transactions that
     // modify the block free bitmap on the disk go through a list of free_bit
@@ -515,7 +521,10 @@ class mfs_interface
     void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
     void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
     void add_op_to_journal(mfs_operation *op, transaction *tr = nullptr);
-    int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc);
+    int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
+                                std::vector<rename_metadata> &rename_stack);
+    void find_rename_op_counterpart(std::vector<rename_metadata> &rename_stack,
+                                    std::vector<mnum_tsc> &pending_stack);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);

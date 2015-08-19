@@ -571,6 +571,21 @@ evict_caches(mdev*, const char *buf, u32 n)
 }
 
 void
+mfs_interface::find_rename_op_counterpart(
+                                   std::vector<rename_metadata> &rename_stack,
+                                   std::vector<mnum_tsc> &pending_stack)
+{
+  rename_metadata rm = rename_stack.back();
+
+  // If we have the link part of the rename, go find the unlink part, and
+  // vice-versa.
+  if (rm.link)
+    pending_stack.push_back({rm.src_parent_mnum, rm.timestamp});
+  else
+    pending_stack.push_back({rm.dst_parent_mnum, rm.timestamp});
+}
+
+void
 mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
 {
   if (!tr)
@@ -582,8 +597,12 @@ mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
   delete op;
 }
 
+// Return values:
+// 0 - All done (processed operations upto max_tsc in the given mfs_log)
+// 1 - Encountered a new rename sub-operation
 int
-mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc)
+mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
+                                      std::vector<rename_metadata> &rename_stack)
 {
   // Synchronize the oplog loggers.
   auto guard = mfs_log->wait_synchronize(max_tsc);
@@ -593,6 +612,26 @@ mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc)
 
   for (auto it = mfs_log->operation_vec.begin();
        it != mfs_log->operation_vec.end(); ) {
+
+    auto rename_link_op = dynamic_cast<mfs_operation_rename_link*>(*it);
+    auto rename_unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(*it);
+
+    if (rename_link_op || rename_unlink_op) {
+
+      if (rename_link_op) {
+        rename_stack.push_back({rename_link_op->src_parent_mnum,
+                                rename_link_op->dst_parent_mnum,
+                                rename_link_op->timestamp,
+                                true});
+      } else if (rename_unlink_op) {
+        rename_stack.push_back({rename_unlink_op->src_parent_mnum,
+                                rename_unlink_op->dst_parent_mnum,
+                                rename_unlink_op->timestamp,
+                                false});
+      }
+
+      return 1;
+    }
 
     add_op_to_journal(*it);
     it = mfs_log->operation_vec.erase(it);
@@ -606,6 +645,7 @@ mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc)
 void
 mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 {
+  std::vector<rename_metadata> rename_stack;
   std::vector<mnum_tsc> pending_stack;
   mfs_logical_log *mfs_log;
   int ret;
@@ -620,11 +660,25 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
     assert(metadata_log_htab->lookup(mnode_mnum, &mfs_log));
 
     mfs_log->lock.acquire();
-    ret = process_ops_from_oplog(mfs_log, max_tsc);
+    ret = process_ops_from_oplog(mfs_log, max_tsc, rename_stack);
     mfs_log->lock.release();
 
-    if (!ret)
+    switch (ret) {
+
+    // 0 - All done (processed operations upto max_tsc in the given mfs_log)
+    case 0:
       pending_stack.pop_back();
+      break;
+
+    // 1 - Encountered a new rename sub-operation. So go find its counterpart
+    //     and add it to the pending stack.
+    case 1:
+      find_rename_op_counterpart(rename_stack, pending_stack);
+      break;
+
+    default:
+      panic("Got invalid return code from process_ops_from_oplog()");
+    }
   }
 
   assert(!pending_stack.size());
