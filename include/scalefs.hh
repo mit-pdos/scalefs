@@ -433,7 +433,12 @@ class mfs_interface
       jrnl_commit,        // Commit transaction block
     };
 
-    struct mnum_tsc { u64 mnum; u64 tsc; };
+    struct pending_metadata {
+      u64 mnum;
+      u64 max_tsc;
+      int count;
+    };
+
     struct rename_metadata {
       u64 src_parent_mnum;
       u64 dst_parent_mnum;
@@ -520,8 +525,8 @@ class mfs_interface
     void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
     void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
     void add_op_to_journal(mfs_operation *op, transaction *tr = nullptr);
-    int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
-                                std::vector<mnum_tsc> &pending_stack,
+    int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
+                                std::vector<pending_metadata> &pending_stack,
                                 std::vector<rename_metadata> &rename_stack);
     void apply_rename_pair(std::vector<rename_metadata> &rename_stack);
     void mfs_create(mfs_operation_create *op, transaction *tr);
