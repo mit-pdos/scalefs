@@ -331,7 +331,7 @@ mfs_interface::process_metadata_log()
   else
     sync_tsc = rdtsc_serialized();
   {
-    auto guard = metadata_log->wait_synchronize(sync_tsc);
+    auto guard = metadata_log->synchronize_upto_tsc(sync_tsc);
     for (auto it = metadata_log->operation_vec.begin(); it !=
       metadata_log->operation_vec.end(); it++)
       ops.push_back(*it);
@@ -604,8 +604,8 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
   // Acquire the oplog's sync_lock_ as well, since we will be manipulating
   // the operation vectors as well as their operations.
   {
-    auto src_guard = mfs_log_src->wait_synchronize(rm_1.timestamp);
-    auto dst_guard = mfs_log_dst->wait_synchronize(rm_1.timestamp);
+    auto src_guard = mfs_log_src->synchronize_upto_tsc(rm_1.timestamp);
+    auto dst_guard = mfs_log_dst->synchronize_upto_tsc(rm_1.timestamp);
 
     // After acquiring all the locks, check whether we still have work to do.
     // Note that a concurrent fsync() on the other directory might have
@@ -687,7 +687,7 @@ mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
                                       std::vector<rename_metadata> &rename_stack)
 {
   // Synchronize the oplog loggers.
-  auto guard = mfs_log->wait_synchronize(max_tsc);
+  auto guard = mfs_log->synchronize_upto_tsc(max_tsc);
 
   if (!mfs_log->operation_vec.size())
     return 0;

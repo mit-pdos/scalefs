@@ -415,7 +415,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       // Strictly speaking, it is important to invoke metadata_op_start() on
       // the destination directory first, because the rename operation has
       // to be processed in that order: perform the link, and then the unlink.
-      // Maintaining that order here helps oplog's wait_synchronize() to
+      // Maintaining that order here helps oplog's synchronize_upto_tsc() to
       // capture the rename operation in a consistent manner, irrespective
       // of when fsync() is invoked. (We don't want to end up in a situation
       // where it sees the rename_unlink but fails to notice the rename_link!).

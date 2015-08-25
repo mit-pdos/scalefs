@@ -520,7 +520,10 @@ namespace oplog {
     // The same as logged_object::synchronize except that we might have to wait
     // for cores which have in-flight operations that need to be logged before
     // synchronization.
-    lock_guard<sleeplock> wait_synchronize(u64 wait_tsc) {
+    //
+    // synchronize_upto_tsc(): Applies all logged operations whose timestamps
+    // are less than or equal to 'max_tsc'.
+    lock_guard<sleeplock> synchronize_upto_tsc(u64 max_tsc) {
       auto guard = sync_lock_.guard();
 
       for (size_t i = 0; i < NCPU; ++i) {
@@ -538,8 +541,8 @@ namespace oplog {
         // updated, which is the last thing an operation does before exiting. We
         // need to wait for an operation that is executing to be logged in order
         // to know where the linearization point of the operation lies with
-        // respect to wait_tsc.
-        if (end_tsc < start_tsc && start_tsc <= wait_tsc)
+        // respect to max_tsc.
+        if (end_tsc < start_tsc && start_tsc <= max_tsc)
           while (!r_end.need_retry());
       }
 
@@ -552,7 +555,7 @@ namespace oplog {
           auto cur_obj = way->obj_.load(std::memory_order_relaxed);
           assert(cur_obj == this);
           // Flush only those operations whose linearization points have
-          // timestamps <= wait_tsc. Operations that occurred later do not need
+          // timestamps <= max_tsc. Operations that occurred later do not need
           // to take affect yet.
           flush_logger(&way->logger_);
           cpus_.atomic_reset(cpu);
@@ -566,7 +569,7 @@ namespace oplog {
 
       // Tell the logged object that it has a consistent set of
       // loggers and should do any final flushing.
-      flush_finish_max_timestamp(wait_tsc);
+      flush_finish_max_timestamp(max_tsc);
 
       return std::move(guard);
     }
