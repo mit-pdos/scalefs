@@ -652,21 +652,6 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
 }
 
 void
-mfs_interface::find_rename_op_counterpart(
-                                   std::vector<rename_metadata> &rename_stack,
-                                   std::vector<mnum_tsc> &pending_stack)
-{
-  rename_metadata rm = rename_stack.back();
-
-  // If we have the link part of the rename, go find the unlink part, and
-  // vice-versa.
-  if (rm.link)
-    pending_stack.push_back({rm.src_parent_mnum, rm.timestamp});
-  else
-    pending_stack.push_back({rm.dst_parent_mnum, rm.timestamp});
-}
-
-void
 mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
 {
   if (!tr)
@@ -680,10 +665,12 @@ mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
 
 // Return values:
 // 0 - All done (processed operations upto max_tsc in the given mfs_log)
-// 1 - Encountered a new rename sub-operation
+// 1 - Encountered a new rename sub-operation and added its counterpart to the
+//     pending stack as a dependency.
 // 2 - Got a counterpart for a rename sub-operation, which completes the pair
 int
 mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
+                                      std::vector<mnum_tsc> &pending_stack,
                                       std::vector<rename_metadata> &rename_stack)
 {
   // Synchronize the oplog loggers.
@@ -710,13 +697,19 @@ mfs_interface::process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc,
       if (rename_link_op) {
         rename_stack.push_back({rename_link_op->src_parent_mnum,
                                 rename_link_op->dst_parent_mnum,
-                                rename_link_op->timestamp,
-                                true});
+                                rename_link_op->timestamp});
+        // We have the link part of the rename, so add the unlink part as a
+        // dependency.
+        pending_stack.push_back({rename_link_op->src_parent_mnum,
+                                 rename_link_op->timestamp});
       } else if (rename_unlink_op) {
         rename_stack.push_back({rename_unlink_op->src_parent_mnum,
                                 rename_unlink_op->dst_parent_mnum,
-                                rename_unlink_op->timestamp,
-                                false});
+                                rename_unlink_op->timestamp});
+        // We have the unlink part of the rename, so add the link part as a
+        // dependency.
+        pending_stack.push_back({rename_unlink_op->dst_parent_mnum,
+                                 rename_unlink_op->timestamp});
       }
 
       if (rename_timestamp && (*it)->timestamp == rename_timestamp)
@@ -751,7 +744,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
     assert(metadata_log_htab->lookup(mnode_mnum, &mfs_log));
 
     mfs_log->lock.acquire();
-    ret = process_ops_from_oplog(mfs_log, max_tsc, rename_stack);
+    ret = process_ops_from_oplog(mfs_log, max_tsc, pending_stack, rename_stack);
     mfs_log->lock.release();
 
     switch (ret) {
@@ -761,11 +754,10 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
       pending_stack.pop_back();
       break;
 
-    // 1 - Encountered a new rename sub-operation. So go find its counterpart
-    //     and add it to the pending stack.
+    // 1 - Encountered a new rename sub-operation and added its counterpart
+    //     to the pending stack as a dependency.
     case 1:
-      find_rename_op_counterpart(rename_stack, pending_stack);
-      break;
+      continue;
 
     // 2 - Got a counterpart for a rename sub-operation, which completes the
     //     pair. So acquire the necessary locks and apply both parts of the
