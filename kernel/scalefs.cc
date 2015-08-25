@@ -218,7 +218,8 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
 {
   sref<inode> mdir_i = get_inode(mdir_mnum, "create_directory_entry");
 
-  u64 dirent_inum = create_file_dir_if_new(dirent_mnum, mdir_mnum, type, tr);
+  u64 dirent_inum = 0;
+  assert(inum_lookup(dirent_mnum, &dirent_inum));
 
   // Check if the directory entry already exists.
   sref<inode> i = dirlookup(mdir_i, name);
@@ -667,13 +668,16 @@ mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
 //
 // Gathers operations from mfs_log with timestamps upto and including 'max_tsc'
 // and then processes the first 'count' number of those operations. If count is
-// -1, it processes all of them.
+// -1, it processes all of them, but if count is 1, it is treated as a special
+// case instruction to process only the 'create' operation of the mnode.
 //
 // Return values:
 // 0 - All done (processed operations upto max_tsc in the given mfs_log)
-// 1 - Encountered a new rename sub-operation and added its counterpart to the
+// 1 - Encountered a link operation and added the mnode being linked to the
+//     pending stack, as a dependency.
+// 2 - Encountered a new rename sub-operation and added its counterpart to the
 //     pending stack as a dependency.
-// 2 - Got a counterpart for a rename sub-operation, which completes the pair
+// 3 - Got a counterpart for a rename sub-operation, which completes the pair
 int
 mfs_interface::process_ops_from_oplog(
                            mfs_logical_log *mfs_log, u64 max_tsc, int count,
@@ -686,10 +690,36 @@ mfs_interface::process_ops_from_oplog(
   if (!mfs_log->operation_vec.size())
     return 0;
 
+  // count == 1 is a special case instruction to process only the 'create'
+  // operation of the mnode.
+  bool process_create = (count == 1) ? true : false;
+
+  if (count < 0)
+    count = mfs_log->operation_vec.size();
+
   // If count == -1, we process all the operations in the mfs_log (upto
   // and including max_tsc).
   for (auto it = mfs_log->operation_vec.begin();
        it != mfs_log->operation_vec.end() && count; count--) {
+
+    if (process_create) {
+      assert(count == 1);
+      auto create_op = dynamic_cast<mfs_operation_create*>(*it);
+      if (create_op) {
+        add_op_to_journal(*it);
+        mfs_log->operation_vec.erase(it);
+      }
+      return 0;
+    }
+
+    auto link_op = dynamic_cast<mfs_operation_link*>(*it);
+
+    u64 mnode_inum = 0;
+    if (link_op && !inum_lookup(link_op->mnode_mnum, &mnode_inum)) {
+      // Add the create operation of the mnode being linked as a dependency.
+      pending_stack.push_back({link_op->mnode_mnum, link_op->timestamp, 1});
+      return 1;
+    }
 
     auto rename_link_op = dynamic_cast<mfs_operation_rename_link*>(*it);
     auto rename_unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(*it);
@@ -722,8 +752,8 @@ mfs_interface::process_ops_from_oplog(
       }
 
       if (rename_timestamp && (*it)->timestamp == rename_timestamp)
-        return 2;
-      return 1;
+        return 3;
+      return 2;
     }
 
     add_op_to_journal(*it);
@@ -762,15 +792,20 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
       pending_stack.pop_back();
       break;
 
-    // 1 - Encountered a new rename sub-operation and added its counterpart
-    //     to the pending stack as a dependency.
+    // 1 - Encountered a link operation and added the mnode being linked to the
+    //     pending stack, as a dependency.
     case 1:
       continue;
 
-    // 2 - Got a counterpart for a rename sub-operation, which completes the
+    // 2 - Encountered a new rename sub-operation and added its counterpart
+    //     to the pending stack as a dependency.
+    case 2:
+      continue;
+
+    // 3 - Got a counterpart for a rename sub-operation, which completes the
     //     pair. So acquire the necessary locks and apply both parts of the
     //     rename atomically using a single transaction.
-    case 2:
+    case 3:
       apply_rename_pair(rename_stack);
       // Since the rename sub-operations got paired up and were applied, we
       // don't have to process the other directory any further for this fsync
