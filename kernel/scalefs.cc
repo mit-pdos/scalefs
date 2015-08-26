@@ -879,6 +879,21 @@ mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
   scoped_gc_epoch e;
   create_directory_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
                          op->mnode_type, tr);
+
+  if (op->mnode_type == mnode::types::dir &&
+      op->dst_parent_mnum != op->src_parent_mnum) {
+
+    u64 mnode_inum, src_parent_inum, dst_parent_inum;
+    assert(inum_lookup(op->mnode_mnum, &mnode_inum));
+    assert(inum_lookup(op->src_parent_mnum, &src_parent_inum));
+    assert(inum_lookup(op->dst_parent_mnum, &dst_parent_inum));
+
+    sref<inode> i = iget(1, mnode_inum);
+    ilock(i, 1);
+    dirunlink(i, "..", src_parent_inum, false, tr);
+    dirlink(i, "..", dst_parent_inum, false, tr);
+    iunlock(i);
+  }
 }
 
 // Rename Unlink operation
