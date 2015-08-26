@@ -632,7 +632,10 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
     // Make sure that both parts of the rename operation are applied within
     // the same transaction, to preserve atomicity.
     tr = new transaction(link_op->timestamp);
-    add_op_to_journal(link_op, tr);
+
+    // Set 'skip_add' to true, to avoid adding the transaction to the journal
+    // before it is fully formed.
+    add_op_to_journal(link_op, tr, true);
     add_op_to_journal(unlink_op, tr);
 
     // Now we need to delete these two sub-operations from their oplogs.
@@ -653,14 +656,18 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
 }
 
 void
-mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr)
+mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr,
+                                 bool skip_add)
 {
   if (!tr)
     tr = new transaction(op->timestamp);
 
   auto journal_lock = fs_journal->prepare_for_commit();
   op->apply(tr);
-  add_to_journal_locked(tr);
+
+  if (!skip_add)
+    add_to_journal_locked(tr);
+
   delete op;
 }
 
