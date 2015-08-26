@@ -20,7 +20,7 @@
 #include <type_traits>
 
 // allocate in power-of-two sizes up to 2^KMMAX (PGSIZE)
-#define KMMAX 12
+#define KMMAX PGSHIFT
 
 struct header {
   struct header *next;
