@@ -192,33 +192,43 @@ was not the destination already). This can be trivially achieved using the
 information captured in the rename operation logged in the oplog.
 
 From the destination directory (Y), go recursively up the directory hierarchy
-in memory, until we reach a directory which is dirty and has some sub-directory
-being moved away from it. That is the point of the cut!!! (If we don't find
-such a directory going up, it means that fsync was invoked exactly at the
-point of the cut!).
+in memory, until we reach a directory which is dirty and had some sub-directory
+either moved away from it or into it. That is the point of the cut!!! (If we
+don't find such a directory going up, it means that fsync was invoked exactly
+at the point of the cut!).
 
 (We go up the tree from the destination directory, looking for the cut,
 rather than going down the tree from the source directory, because the former
 requires less work in most cases.)
 
-Once the cut is found, flush the rename operation forming the cut (step 1)
-and then flush out the changes in the directory being fsynced (step 2). **
+Once the cut is found, flush the rename operation forming the cut ** (step 1)
+and then flush out the changes in the directory being fsynced (step 2). ***
 
 This guarantees that we will never form an (orphaned) loop on the disk, no
 matter where fsync is invoked and which directories are involved in renames.
 
-(**) Actually, the "cut" being flushed, itself can be the step 2 of another
-directory sub-tree, and hence, if we are not careful, this could trick us
-into causing a loop in a different sub-tree while trying to avoid loops in
-the given sub-tree! So, augment the algorithm so that it recursively runs
-the algorithm from the beginning, at every such cut that we intend to flush
-(as if fsync was invoked at that point), thereby ensuring that we get to
-the very first (related) cut in the filesystem tree, and then flush out all
-the rename operations accumulated thus far under the recursion, strictly in
-the "step 1 followed by step 2" order. That way, it won't matter if a given
-step 1 happens to be the step 2 of a different sequence of directory renames
-elsewhere, because we are guaranteed to get to the very bottom of that whole
-chain of renames and flush them out in the correct order.
+(**) Note the specificity in the statement: we must flush the logged operations
+     upto and including the directory rename operation that performed the cut,
+     and nothing more (i.e., none of the subsequent modifications to either
+     the source or the destination directories!). Thus, this is only a partial
+     flush of the source or destination directory where the rename occurred.
+     (If we do a full flush, scenarios like example 4 below will end up in a
+      loop on the disk immediately. So we are trying to be very careful and
+      precise about the algorithm here).
+
+(***) Actually, the "cut" being flushed, itself can be the step 2 of another
+      directory sub-tree, and hence, if we are not careful, this could trick
+      us into causing a loop in a different sub-tree while trying to avoid
+      loops in the given sub-tree! So, augment the algorithm so that it
+      recursively runs the algorithm from the beginning, at every such cut
+      that we intend to flush (as if fsync was invoked at that point), thereby
+      ensuring that we get to the very first (related) cut in the filesystem
+      tree, and then flush out all the rename operations accumulated thus far
+      under the recursion, strictly in the "step 1 followed by step 2" order.
+      That way, it won't matter if a given step 1 happens to be the step 2 of
+      a different sequence of directory renames elsewhere, because we are
+      guaranteed to get to the very bottom of that whole chain of renames and
+      flush them out in the correct order.
 
 
 (Semi-formal) Proof of correctness for this algorithm:
@@ -391,4 +401,23 @@ Step 2: mv /A/B       /D/E/F/B
 Then fsync /D/E/F. Verify that it doesn't cause the orphaned loop
 C->D->E->F->B->C.
 
+Example 4:
+==========
+
+A-P are directories. /A/B/C/D/E/F/G/H/I/J and /A/B/C/D/E/F/G/H/K/L/M/N/O/P
+exist on the disk. (Note that H has 2 sub-trees).
+
+Perform the following directory renames:
+
+Step 1: mv /A/B/C/D/E/F/G/H/K/L/M    /A/B/M
+Step 2: mv /A/B/C/D/E/F/G/H          /A/B/M/N/O/P/H
+Step 3: mv /A/B/C                    /A/B/M/N/O/P/H/I/J/C
+
+Then,
+a. fsync /A/B/M/N/O/P/H/I/J  (this is the complicated case).
+   Verify that it doesn't cause the orphaned loop C->D->E->F->G->H->I->J->C
+   or the orphaned loop K->L->M->N->O->P->H->K
+
+b. Alternatively, as a different (simpler) exercise, fsync /A/B/M/N/O/P instead.
+   Verify that it doesn't cause the orphaned loop K->L->M->N->O->P->H->K
 
