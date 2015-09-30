@@ -202,10 +202,23 @@ rather than going down the tree from the source directory, because the former
 requires less work in most cases.)
 
 Once the cut is found, flush the rename operation forming the cut (step 1)
-and then flush out the changes in the directory being fsynced (step 2).
+and then flush out the changes in the directory being fsynced (step 2). **
 
 This guarantees that we will never form an (orphaned) loop on the disk, no
 matter where fsync is invoked and which directories are involved in renames.
+
+(**) Actually, the "cut" being flushed, itself can be the step 2 of another
+directory sub-tree, and hence, if we are not careful, this could trick us
+into causing a loop in a different sub-tree while trying to avoid loops in
+the given sub-tree! So, augment the algorithm so that it recursively runs
+the algorithm from the beginning, at every such cut that we intend to flush
+(as if fsync was invoked at that point), thereby ensuring that we get to
+the very first (related) cut in the filesystem tree, and then flush out all
+the rename operations accumulated thus far under the recursion, strictly in
+the "step 1 followed by step 2" order. That way, it won't matter if a given
+step 1 happens to be the step 2 of a different sequence of directory renames
+elsewhere, because we are guaranteed to get to the very bottom of that whole
+chain of renames and flush them out in the correct order.
 
 
 (Semi-formal) Proof of correctness for this algorithm:
@@ -305,6 +318,32 @@ than all the cuts, in case there are more), in order to avoid loops.
 
 (Further, it is not hard to show that a loop always implies an orphaned loop.
 Thus, our algorithm prevents orphaned loops as well).
+
+
+Now that we have proved our algorithm for the simple case, let's try to prove
+that it works in more complicated situations as well.
+
+Lemma 3: Flushing the cut referred to in Lemma 2 will not cause loops anywhere
+in the filesystem tree.
+
+Our algorithm has been augmented to deal with situations where the cut that
+we found (G->H), if flushed (i.e., H moved to a different directory), will be
+the loop-causing link (equivalent to L->B) in a different part of the filesystem
+tree. The key idea behind our solution is to recursively run our algorithm
+from the beginning, at the cut that we found (G), until we reach the very first
+(related) cut, and only then start flushing the renames (accumulated via
+recursion) to disk (which will naturally flush them out in the right order).
+
+Proving this is rather simple: Suppose that flushing the cut that we found,
+causes a loop somewhere else in the filesystem tree. This implies that, that
+particular loop has its own, different point of cut further up the tree, which
+has not yet been flushed (which is why it results in a loop). But our algorithm
+recursively finds all the related cuts, searching all the way upto the root
+if necessary, and doesn't start flushing any rename operation until the
+recursion stops -- which implies that there are no more (related) cuts to
+be found. Thus, our assumption that there is yet another related cut to be
+found, must be wrong. This proves Lemma 3 by contradiction.
+
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
