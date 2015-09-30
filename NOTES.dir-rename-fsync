@@ -1,0 +1,355 @@
+
+Challenges with directory renames and fsync:
+============================================
+
+One of the general design goals for our fsync system call is to keep the amount
+of dirty data written out to disk minimalistic; that is, we strive to flush out
+only the dirty data that is associated with the file or directory being fsynced,
+and nothing else, as much as possible.
+
+However, there are situations where we will need to track dependencies between
+directories and flush the dirty data associated with those dependent inodes as
+well, in order to keep the on-disk filesystem structures consistent and to
+preserve certain filesystem invariants.
+
+Some of the important scenarios that come under this category are situations
+where fsync() and rename() are involved. For example, when file renames are
+involved, we explicitly track dependencies when fsyncing their parent
+directories, to ensure that no combination of rename() and fsync() will ever
+unintentionally delete files (or otherwise make them unreachable) on the disk.
+
+One particularly challenging case involves fsync and directory renames. If we
+aren't careful here, we can end up creating orphaned loops within the filesystem
+directory hierarchy on the disk, breaking the filesystem's invariants!
+
+It is straight-forward to avoid creating orphaned loops at the rename() system
+call by inserting appropriate validity checks. However, there is a different,
+rather subtle scenario, where the directory renames proceed successfully in
+memory (maintaining the "no cycles" invariant in the in-memory directory
+hierarchy), but a subsequent "minimalistic" fsync() can end up creating
+orphaned loops on the disk as shown below.
+
+
+Initial state on the disk:
+--------------------------
+
+A, B, C and D are directories.
+
+          root (/)
+           /
+          /
+         A
+          \
+           \
+            B
+           /
+          /
+         C
+          \
+           \
+            D
+
+The above directory tree is already on the disk. Now, we perform the following
+directory renames:
+
+Step 1: mv /A/B/C  /C
+Step 2: mv /A/B    /C/D/B
+
+Both these renames are valid, and they rearrange the directory tree in memory
+as shown below.
+
+             root (/)                       root (/)
+              / \                            / \
+             /   \                          /   \
+Step 1 =>   A     C        Step 2 =>       A     C
+             \     \                              \
+              \     \                              \
+               B     D                              D
+                                                   /
+                                                  /
+                                                 B
+
+Everything is good so far in memory and none of these changes have been written
+to the disk yet. Now the user invokes fsync() on /C/D.
+
+If fsync() strives to flush out the absolute minimum dirty data (corresponding
+to the changes made only to directory D), then we'll end up with an orphaned
+loop on the disk (even though the directory hierarchy in memory is just fine!)
+as shown below:
+
+          root (/)
+           |
+           |
+           v
+           A
+
+      +----> C ----+
+      |            |
+      B            |
+      ^            |
+      |            v
+      + ---------- D
+
+The trouble is that the "minimal flush" doesn't quite capture enough of the
+recent structural changes to the directory hierarchy - in particular, directory
+B still thinks that C is its sub-directory, when in reality C has been made an
+ancestor of B! That creates the loop. Also, since C was reachable only via B
+(/A/B/C) in the original hierarchy, and we happened to erase the crucial A->B
+link in the process of moving B into C, we lose access to C from the root (/).
+This causes the loop to get disconnected and turn into an orphaned loop!
+
+
+Now, let's try to analyze how we managed to get ourselves entangled this way.
+
+Looking closer, the moves can be described pictorially like this:
+
+          root (/)
+           /
+          /
+         A
+          \
+           \
+            B  (Ancestor)
+           /
+         ^^^^^ <---- CUT
+          /
+         C
+          \
+           \
+            D  (Descendant)
+
+
+We can generalize this figure to:
+
+
+          root (/)
+           /
+          /
+         A
+          \
+           \
+            B  (Ancestor)
+           /
+           .
+           .
+           .
+         ^^^^^ <---- CUT
+           .
+           .
+           .
+          /
+         X
+          \
+           \
+            Y  (Descendant)
+           /
+          /
+         Z
+
+We can see that this represents the following two deliberate actions:
+
+1. Pick an ancestor and a descendant, and perform a cut somewhere in between
+   them. Move the bottom portion of the cut away and attach it elsewhere,
+   such that the ancestor we chose earlier is no longer an ancestor of the
+   chosen descendant, in the resultant tree.
+
+   Thus, after this step, any directory (*) in the upper portion of the cut
+   can be moved into any directory in the lower portion of the cut.
+
+   (*) More precisely, any directory that is not a new ancestor of the
+       bottom portion of the cut, after that portion has been attached
+       somewhere.
+
+2. Move the originally chosen ancestor into the originally chosen descendant.
+
+Note that the rename system call will allow step 2 to proceed in memory,
+only because it happens after the cut operation. Otherwise, it would
+immediately violate the filesystem's "no cycles" invariant.
+
+The directory hierarchy in memory is fine so far. But we can trick the
+filesystem into causing a loop on the disk if we manage to make fsync skip
+step 1 and flush only the changes made in step 2. In other words, invoke
+fsync() on either the descendant (Y), or on the ancestor's parent (A),
+because those are the only 2 directories (source and destination) that
+were dirtied in step 2.
+
+
+Proposed solution:
+------------------
+
+Considering the above analysis, the solution to this problem is quite clear:
+don't let fsync skip step 1 (i.e., flushing the cut) under any circumstance.
+In other words, irrespective of which directory the fsync() is invoked on,
+first go find the cut and flush it out, and only then flush the directory
+being fsynced.
+
+So how do we find the cut? Here is the algorithm:
+
+Given a directory to be fsynced (say A), check if either a sub-directory was
+moved away from it or some directory was moved into it. Then find the
+destination (parent directory) (Y) for that rename (if the given directory
+was not the destination already). This can be trivially achieved using the
+information captured in the rename operation logged in the oplog.
+
+From the destination directory (Y), go recursively up the directory hierarchy
+in memory, until we reach a directory which is dirty and has some sub-directory
+being moved away from it. That is the point of the cut!!! (If we don't find
+such a directory going up, it means that fsync was invoked exactly at the
+point of the cut!).
+
+(We go up the tree from the destination directory, looking for the cut,
+rather than going down the tree from the source directory, because the former
+requires less work in most cases.)
+
+Once the cut is found, flush the rename operation forming the cut (step 1)
+and then flush out the changes in the directory being fsynced (step 2).
+
+This guarantees that we will never form an (orphaned) loop on the disk, no
+matter where fsync is invoked and which directories are involved in renames.
+
+
+(Semi-formal) Proof of correctness for this algorithm:
+------------------------------------------------------
+
+Theorem: The above algorithm prevents (orphaned) loops from getting formed
+in the filesystem hierarchy on the disk due to fsync.
+
+(Assumption: The rename system call does not allow loops to be formed in
+the directory hierarchy in memory.)
+
+Proof: We prove this by contradiction.
+
+Let us assume (for contradiction) that a loop is formed on the disk due to
+fsync. So there must be some specific (single) directory move which introduces
+the loop: that is, there was no loop on the disk before that rename, but
+there is a loop immediately after executing that rename on the disk.
+
+                    root
+                     |
+                     v
+                     A
+                     |
+                     v
+           +-------> B
+           |         |
+           |         v
+           |         C
+           |         |
+           |         v
+    Loop   |         .
+           |         .
+           |         .
+           |         v
+           |         K
+           |         |
+           |         v
+           +-------- L
+
+Let's identify that loop-causing directory rename as the operation which does:
+
+  mv (B, L/B). (This adds the link from L to B above, forming the loop).
+
+
+Since this link was flushed to disk (causing the loop), it follows that fsync
+should have been invoked on either L or the original parent of B, i.e., A.
+(Incidentally this also causes the loop to get disconnected from A, making it
+an orphaned loop).
+
+
+Lemma 1: There is at least one cut in the directory chain extending from B to
+         L, in memory.
+
+Proof of Lemma 1: If the directory chain from B to L was uncut (in memory),
+then moving B into L would form a loop in memory itself! But by the assumption
+above, we know that the rename system call would prevent this. Hence, there is
+at least one cut between B and L, which makes the rename of B into L valid
+(in memory).
+
+
+Lemma 2: Our fsync algorithm will find the cut (at least one of the cuts) and
+         flush it out before flushing anything else.
+
+Proof of Lemma 2: Our algorithm first trivially identifies the destination
+of the rename, namely L, and then goes recursively up the in-memory directory
+tree from L, until it finds a directory which is dirty and had another directory
+recently moved into it. So, it goes searching upwards from L, potentially all
+the way upto the root. But since there is only one way to go to the root from
+L, it has to pass through the chain between L and B, and we already established
+in Lemma 1 that there is at least one cut between L and B. Thus, it is certain
+that our algorithm will find that cut. (In the degenerate case, B has a direct
+link to L in the original tree, in which case, B->L is itself the point of the
+cut, and thus fsync would have been invoked directly on the cut itself, thus
+trivially proving Lemma 2).
+
+Now that Lemma 2 is proved, let G->H be the first point of cut that our
+algorithm encounters.
+
+Our algorithm specifies that we flush the cut to disk first, before anything
+else. This means that H will be moved away from G into some other directory,
+such that G will no longer be an ancestor of H.
+
+Hence, after this flush, B is no longer an ancestor of L on the disk (because
+of the cut which has been made persistent on the disk).
+
+Thus, before we add the L->B link on the disk (which was supposed to form the
+"loop"), we have already broken the chain in the other direction on the disk
+(extending from B to L).
+
+Therefore, adding the L->B link does not cause a loop on the disk! This
+contradicts our assumption above that L->B is the link which causes the loop.
+Hence, our higher-level assumption that fsync causes a loop on the disk must
+be wrong. Hence proved!!! :-)
+
+Note: It is easy to see that we just need to find *a* cut and flush it, (rather
+than all the cuts, in case there are more), in order to avoid loops.
+
+(Further, it is not hard to show that a loop always implies an orphaned loop.
+Thus, our algorithm prevents orphaned loops as well).
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Below are a few sample scenarios on which this algorithm has been simulated
+just to make sure that it works:
+
+Example 1:
+==========
+
+A-D are directories. /A/B/C/D exists on the disk.
+
+Perform the following directory renames:
+
+Step 1: mv /A/B/C  /C
+Step 2: mv /A      /C/A
+Step 3: mv /C/A/B  /C/D/B
+
+Then fsync /C/D. Verify that it doesn't cause the orphaned loop C->D->B->C.
+
+Example 2:
+==========
+
+A-J are directories. /A/B/C/D/E/F/G/H/I/J exists on the disk.
+
+Perform the following directory renames:
+
+Step 1: mv /A/B/C/D/E/F/G  /G
+Step 2: mv /A/B/C          /G/C
+Step 3: mv /G/C/D/E/F      /G/H/I/J/F
+
+Then fsync /G/H/I/J. Verify that it doesn't cause the orphaned loop
+G->H->I->J->F->G.
+
+Example 3:
+==========
+
+A-F are directories. /A/B/C/D/E/F exists on the disk.
+
+Perform the following directory renames:
+
+Step 1: mv /A/B/C/D   /D
+Step 2: mv /A/B       /D/E/F/B
+
+Then fsync /D/E/F. Verify that it doesn't cause the orphaned loop
+C->D->E->F->B->C.
+
+
