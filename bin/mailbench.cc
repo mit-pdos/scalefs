@@ -98,7 +98,7 @@ xwaitpid(int pid, const char *cmd)
 }
 
 static void
-do_mua(int cpu, string spooldir, string msgpath, size_t batch_size)
+do_mua(int cpu, string spooldir, string msgpath, size_t batch_size, bool verbose)
 {
   std::vector<const char*> argv{"./mail-enqueue"};
 #if defined(XV6_USER)
@@ -186,6 +186,10 @@ do_mua(int cpu, string spooldir, string msgpath, size_t batch_size)
         close(respipe[0]);
       }
       xwaitpid(pid, argv[0]);
+
+      if (verbose)
+        printf("Process %d delivered new message.\n", pid);
+
       pid = 0;
     }
   }
@@ -230,6 +234,7 @@ usage(const char *argv0)
   fprintf(stderr, "     N      Spool in batches of size N\n");
   fprintf(stderr, "     inf    Spool in unbounded batches\n");
   fprintf(stderr, "  -p        Use delivery process pooling\n");
+  fprintf(stderr, "  -v        Verbose\n");
   exit(2);
 }
 
@@ -238,9 +243,10 @@ main(int argc, char **argv)
 {
   const char *alt_str = "none";
   size_t batch_size = 0;
+  bool verbose = false;
   bool pool = false;
   int opt;
-  while ((opt = getopt(argc, argv, "a:b:p")) != -1) {
+  while ((opt = getopt(argc, argv, "a:b:pv")) != -1) {
     switch (opt) {
     case 'a':
       alt_str = optarg;
@@ -253,6 +259,9 @@ main(int argc, char **argv)
       break;
     case 'p':
       pool = true;
+      break;
+    case 'v':
+      verbose = true;
       break;
     default:
       usage(argv[0]);
@@ -317,7 +326,7 @@ main(int argc, char **argv)
   std::thread *threads = new std::thread[nthreads];
   for (int i = 0; i < nthreads; ++i)
     threads[i] = std::thread(do_mua, i, basedir + "/spool", basedir + "/msg",
-                             batch_size);
+                             batch_size, verbose);
 
   // Wait
   timer.join();
