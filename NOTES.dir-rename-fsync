@@ -401,8 +401,9 @@ Step 2: mv /A/B       /D/E/F/B
 Then fsync /D/E/F. Verify that it doesn't cause the orphaned loop
 C->D->E->F->B->C.
 
-Example 4:
-==========
+
+Example 4: Preventing loops in one sub-tree can cause a loop in another
+=======================================================================
 
 A-P are directories. /A/B/C/D/E/F/G/H/I/J and /A/B/C/D/E/F/G/H/K/L/M/N/O/P
 exist on the disk. (Note that H has 2 sub-trees).
@@ -420,4 +421,34 @@ a. fsync /A/B/M/N/O/P/H/I/J  (this is the complicated case).
 
 b. Alternatively, as a different (simpler) exercise, fsync /A/B/M/N/O/P instead.
    Verify that it doesn't cause the orphaned loop K->L->M->N->O->P->H->K
+
+
+Example 5: Flushing dependent renames in timestamp order is not always safe
+===========================================================================
+
+A-H are directories. /A/B/C/D/E/F/G/H exists on the disk.
+
+Perform the following directory renames:
+
+Step 1: mv /A/B/C/D/E   /A/E          (i.e., move E from D to A)
+Step 2: mv /A/B/C       /A/E/F/G/H/C  (i.e., move C from B to H)
+Step 3: mv /A/E/F/G     /G            (i.e., move G from F to /)
+
+Then fsync /G/H. Verify that it doesn't cause the loop H->C->D->E->F->G->H.
+
+Here is the tricky part:
+
+a. Either Step 1 or Step 3 can make Step 2 valid. That is, both of them can
+   serve as the "cut" (even though Step 3 occurred after Step 2).
+
+b. In order to track down dependencies for Step 2, if we go up the final
+   in-memory tree starting from /G/H and go up to the root, then we will only
+   find root as the dirty directory (thus pointing at Step 3); in particular,
+   we will never be able to find Step 1, because directory A is no longer an
+   ancestor of G.
+
+   Now, if we order these 2 steps in timestamp order, we get (Step 2, Step 3),
+   but flushing them out in that order will cause a loop on the disk right after
+   Step 2! So the correct order to flush them is actually (Step 3, Step 2), even
+   though this is not the timestamp order!
 
