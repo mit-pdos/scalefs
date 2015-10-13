@@ -434,7 +434,8 @@ Step 1: mv /A/B/C/D/E   /A/E          (i.e., move E from D to A)
 Step 2: mv /A/B/C       /A/E/F/G/H/C  (i.e., move C from B to H)
 Step 3: mv /A/E/F/G     /G            (i.e., move G from F to /)
 
-Then fsync /G/H. Verify that it doesn't cause the loop H->C->D->E->F->G->H.
+Then fsync /G/H. Verify that it doesn't cause the orphaned loop
+H->C->D->E->F->G->H.
 
 Here is the tricky part:
 
@@ -451,4 +452,35 @@ b. In order to track down dependencies for Step 2, if we go up the final
    but flushing them out in that order will cause a loop on the disk right after
    Step 2! So the correct order to flush them is actually (Step 3, Step 2), even
    though this is not the timestamp order!
+
+
+Example 6: Ancestor-Descendant relationships are not rigid
+==========================================================
+
+A-H are directories. /A/B/C/D/E/F/G/H exists on the disk.
+
+Perform the following directory renames:
+
+[ Initially C is an ancestor of H ]
+
+Step 1: mv /A/B/C/D/E   /E
+Step 2: mv /E/F/G       /G
+Step 3: mv /A/B/C       /G/H/C       [ Now C is a descendant of H ]
+Step 4: mv /G/H/C       /C
+Step 5: mv /G           /C/D/G       [ Now C is an ancestor of H again ]
+Step 6: mv /A/B         /C/D/G/H/B
+
+Then fsync /C/D/G/H. Verify that it doesn't cause the orphaned loop
+C->D->G->H->C.
+
+An fsync algorithm that tries to keep track of ancestor-descendant relationships
+across directories can get really complicated in such scenarios and can be
+very hard to get right.
+
+Also, note that H is dirty and 2 of its transactions are: rename C into H, and
+rename C out of H (and into root). We can't really absorb them because they
+rename C from and to different directories overall (B and root). Avoiding loops
+in this scenario needs accurate tracking of the dependent renames and precise
+control over the partial flushes at each dependent dirty directory (root, D and
+H).
 
