@@ -240,125 +240,94 @@ matter where fsync is invoked and which directories are involved in renames.
 (Semi-formal) Proof of correctness for this algorithm:
 ------------------------------------------------------
 
+Our fsync loop-avoidance algorithm can be summarized as follows:
+
+Given a directory D to be fsynced:
+
+Step 1: Build a list of its ancestors as seen in the in-memory filesystem tree,
+        and flush out the links forming the path from root to D, one after
+        another, starting from the root. After this completes, the path from
+        root to D on the disk will be exactly the same as the path from root to
+        D in memory. In other words, D will have the same ancestors on the
+        disk as it has in memory.
+
+Step 2: Then, flush the changes to D onto the disk.
+
 Theorem: The above algorithm prevents (orphaned) loops from getting formed
 in the filesystem hierarchy on the disk due to fsync.
 
 (Assumption: The rename system call does not allow loops to be formed in
 the directory hierarchy in memory.)
 
-Proof: We prove this by contradiction.
+Proof:
 
-Let us assume (for contradiction) that a loop is formed on the disk due to
-fsync. So there must be some specific (single) directory move which introduces
-the loop: that is, there was no loop on the disk before that rename, but
-there is a loop immediately after executing that rename on the disk.
+There are only 2 cases to consider here: either Step 1 causes the loop
+or Step 2 causes the loop. We first show that Step 2 doesn't cause a loop
+and then use it to prove that Step 1 also doesn't cause a loop; which implies
+that the fsync algorithm as a whole doesn't cause loops on the disk.
 
-                    root
-                     |
-                     v
-                     A
-                     |
-                     v
-           +-------> B
-           |         |
-           |         v
-           |         C
-           |         |
-           |         v
-    Loop   |         .
-           |         .
-           |         .
-           |         v
-           |         K
-           |         |
-           |         v
-           +-------- L
+Lemma 1: Step 2 in the fsync algorithm doesn't cause a loop on the disk.
 
-Let's identify that loop-causing directory rename as the operation which does:
+Consider a dirty directory D to be fsynced. The interesting case is when D's
+modifications include one or more rename operations that move other directories
+into D. Let's consider one such rename operation, which moves some directory E
+into D.
 
-  mv (B, L/B). (This adds the link from L to B above, forming the loop).
+                         root
+                           |
+                           .
+                           .
+                           |
+                           v
+                           D
+                           :
+                           :
+                           v
+                           E
 
+So, fsync will have to add the link to E within D, on the disk. We know that
+the only way to cause a cycle in the filesystem tree is to move (rename)
+directories such that an ancestor gets moved into a descendant. Thus, for
+fsync to cause a loop on the disk by moving E into D, E must be an ancestor
+of D on the disk, just before this step.
 
-Since this link was flushed to disk (causing the loop), it follows that fsync
-should have been invoked on either L or the original parent of B, i.e., A.
-(Incidentally this also causes the loop to get disconnected from A, making it
-an orphaned loop).
+We know that Step 1 in our fsync algorithm ensures that the ancestors of D on
+the disk are exactly the same as the ancestors of D in memory, before moving
+anything (E) into D. This implies that, for fsync to cause a loop, E must be
+an ancestor of D in memory too! But that in turn implies that there must be a
+loop in the in-memory filesystem hierarchy! This contradicts our assumption
+above that the rename system call does not allow loops to be formed in memory.
 
-
-Lemma 1: There is at least one cut in the directory chain extending from B to
-         L, in memory.
-
-Proof of Lemma 1: If the directory chain from B to L was uncut (in memory),
-then moving B into L would form a loop in memory itself! But by the assumption
-above, we know that the rename system call would prevent this. Hence, there is
-at least one cut between B and L, which makes the rename of B into L valid
-(in memory).
+Hence, it follows that if there are no loops in memory, fsync will not introduce
+any loops on the disk, because it will propagate the same set of ancestors (of
+the directory being fsynced) to disk, before flushing the changes associated
+with that directory. Hence proved (Lemma 1).
 
 
-Lemma 2: Our fsync algorithm will find the cut (at least one of the cuts) and
-         flush it out before flushing anything else.
+Lemma 2: Step 1 in the fsync algorithm doesn't cause a loop on the disk.
 
-Proof of Lemma 2: Our algorithm first trivially identifies the destination
-of the rename, namely L, and then goes recursively up the in-memory directory
-tree from L, until it finds a directory which is dirty and had another directory
-recently moved into it. So, it goes searching upwards from L, potentially all
-the way upto the root. But since there is only one way to go to the root from
-L, it has to pass through the chain between L and B, and we already established
-in Lemma 1 that there is at least one cut between L and B. Thus, it is certain
-that our algorithm will find that cut. (In the degenerate case, B has a direct
-link to L in the original tree, in which case, B->L is itself the point of the
-cut, and thus fsync would have been invoked directly on the cut itself, thus
-trivially proving Lemma 2).
+Interestingly, Step 1 applied at D can be described as the sequence of Step 1
+and Step 2 applied at D's parent (with the small modification that changes to
+D's parent are flushed in Step 2 in timestamp order only upto and including the
+operation that adds the link to D within D's parent, and none of the subsequent
+changes).
 
-Now that Lemma 2 is proved, let G->H be the first point of cut that our
-algorithm encounters.
+Taking this further, we can view Step 1 at D's parent as being Step 1 and
+Step 2 applied at D's grandparent, and so on. This recursion extends all the way
+upto the root, where Step 1 is unnecessary because the root directory already
+exists on the disk. In other words, Step 2 at the root doesn't require Step 1
+as a prerequisite.
 
-Our algorithm specifies that we flush the cut to disk first, before anything
-else. This means that H will be moved away from G into some other directory,
-such that G will no longer be an ancestor of H.
+So, in effect, the fsync algorithm is nothing but a sequence of Step 2's applied
+on each directory on the path from root to D. (Note that we have eliminated
+Step 1 from the equation by showing how it can be decomposed into Step 2).
+And we already know from Lemma 1 that Step 2 doesn't cause a loop. Hence, it
+follows that Step 1 also doesn't cause loops, because it is just a whole bunch
+of Step 2's run one after another. Hence proved (Lemma 2).
 
-Hence, after this flush, B is no longer an ancestor of L on the disk (because
-of the cut which has been made persistent on the disk).
-
-Thus, before we add the L->B link on the disk (which was supposed to form the
-"loop"), we have already broken the chain in the other direction on the disk
-(extending from B to L).
-
-Therefore, adding the L->B link does not cause a loop on the disk! This
-contradicts our assumption above that L->B is the link which causes the loop.
-Hence, our higher-level assumption that fsync causes a loop on the disk must
-be wrong. Hence proved!!! :-)
-
-Note: It is easy to see that we just need to find *a* cut and flush it, (rather
-than all the cuts, in case there are more), in order to avoid loops.
-
-(Further, it is not hard to show that a loop always implies an orphaned loop.
-Thus, our algorithm prevents orphaned loops as well).
-
-
-Now that we have proved our algorithm for the simple case, let's try to prove
-that it works in more complicated situations as well.
-
-Lemma 3: Flushing the cut referred to in Lemma 2 will not cause loops anywhere
-in the filesystem tree.
-
-Our algorithm has been augmented to deal with situations where the cut that
-we found (G->H), if flushed (i.e., H moved to a different directory), will be
-the loop-causing link (equivalent to L->B) in a different part of the filesystem
-tree. The key idea behind our solution is to recursively run our algorithm
-from the beginning, at the cut that we found (G), until we reach the very first
-(related) cut, and only then start flushing the renames (accumulated via
-recursion) to disk (which will naturally flush them out in the right order).
-
-Proving this is rather simple: Suppose that flushing the cut that we found,
-causes a loop somewhere else in the filesystem tree. This implies that, that
-particular loop has its own, different point of cut further up the tree, which
-has not yet been flushed (which is why it results in a loop). But our algorithm
-recursively finds all the related cuts, searching all the way upto the root
-if necessary, and doesn't start flushing any rename operation until the
-recursion stops -- which implies that there are no more (related) cuts to
-be found. Thus, our assumption that there is yet another related cut to be
-found, must be wrong. This proves Lemma 3 by contradiction.
+Since our fsync algorithm only consists of Step 1 and Step 2, and we have proved
+that neither of them causes a loop (using Lemmas 1 and 2), it follows that the
+fsync algorithm as a whole doesn't cause loops on the disk. Hence proved!
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
