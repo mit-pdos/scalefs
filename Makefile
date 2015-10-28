@@ -263,32 +263,30 @@ mscan.out: $(MTRACESRC)/mtrace-tools/mscan $(MTRACEOUT)
 mscan.sorted: mscan.out $(MTRACESRC)/mtrace-tools/sersec-sort
 	$(MTRACESRC)/mtrace-tools/sersec-sort < $< > $@
 
-rsync: $(KERN)
-	rsync -avP $(KERN) amsterdam.csail.mit.edu:/tftpboot/$(HW)/kernel.xv6
+PRXYCMD = 'ProxyCommand=ssh login.csail.mit.edu nc %h %p'
+JARVIS  = alarm@jarvis.pdos.csail.mit.edu
 
-ifneq ($(HW),tom)
-IPMIOPTS = -A MD5 -U ADMIN
-endif
+scp:    $(KERN)
+	scp -o $(PRXYCMD) $(KERN) $(JARVIS):/srv/atftp/kernel.xv6
+
 reboot-xv6: setup-xv6
-	ssh amsterdam.csail.mit.edu \
-	ipmitool -I lanplus $(IPMIOPTS) -H $(HW)adm.csail.mit.edu -f/home/am6/mpdev/.ipmipassword power reset
+	ssh -o $(PRXYCMD) $(JARVIS) sudo ipmi $(HW) power reset
 
 setup-xv6:
-	ssh amsterdam.csail.mit.edu \
-	sed -i .bak "'s/^default /#&/;/^# *default xv6/s/^# *//'" /tftpboot/$(HW)/pxelinux.cfg
+	ssh -o $(PRXYCMD) $(JARVIS) \
+	sed -i.bak "'s/^default /#&/;/^# *default xv6/s/^# *//'" /srv/atftp/$(HW)/pxelinux.cfg
 
 reboot-linux: setup-linux
-	ssh amsterdam.csail.mit.edu \
-	ipmitool -I lanplus $(IPMIOPTS) -H $(HW)adm.csail.mit.edu -f/home/am6/mpdev/.ipmipassword power reset
+	ssh -o $(PRXYCMD) $(JARVIS) sudo ipmi $(HW) power reset
 
 setup-linux:
-	ssh amsterdam.csail.mit.edu \
-	sed -i .bak "'s/^default /#&/;/^# *default localboot/s/^# *//'" /tftpboot/$(HW)/pxelinux.cfg
+	ssh -o $(PRXYCMD) $(JARVIS) \
+	sed -i.bak "'s/^default /#&/;/^# *default localboot/s/^# *//'" /srv/atftp/$(HW)/pxelinux.cfg
 
 bench:
 	/bin/echo -ne "xv6\\nbench\\nexit\\n" | nc $(HW).csail.mit.edu 23
 
-clean: 
+clean:
 	rm -fr $(O)
 	cd tools/zlib-1.2.8/; make clean; cd ../../;
 
