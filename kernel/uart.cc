@@ -1,5 +1,6 @@
 // Intel 8250 serial port (UART).
 // http://en.wikibooks.org/wiki/Serial_Programming/8250_UART_Programming
+// http://wiki.osdev.org/Serial_Ports
 
 #include "types.h"
 #include "kernel.hh"
@@ -120,18 +121,29 @@ inituart(void)
     com = conf[i].com;
     irq_com = conf[i].irq;
 
+    // Disable all interrupts
+    outb(com+1, 0);
+
+#if 0 // Not necessary, apparently.
     // Turn off the FIFO
     outb(com+COM_OUT_FIFO_CTL, 0);
+#endif
+
     // 19200 baud
     outb(com+COM_LINE_CTL, COM_LINE_DLAB);    // Unlock divisor
     outb(com+COM_DIVISOR_LSB, 115200/baud);
     outb(com+COM_DIVISOR_MSB, 0);
     // 8 bits, one stop bit, no parity
     outb(com+COM_LINE_CTL, COM_LINE_LEN_8); // Lock divisor, 8 data bits.
-    outb(com+COM_INT_EN, COM_INT_RECEIVE); // Enable receive interrupts.
+
+    // Enable FIFO, clear them, with 14-byte threshold
+    outb(com+COM_OUT_FIFO_CTL, 0xC7);
+
     // Data terminal ready
-    outb(com+COM_MODEM_CTL, 0x0);
-    
+    outb(com+COM_MODEM_CTL, 0x0B); // IRQs enabled, RTS/DSR set
+
+    outb(com+COM_INT_EN, COM_INT_RECEIVE); // Enable receive interrupts.
+
     // If status is 0xFF, no serial port.
     if(inb(com+COM_LINE_STATUS) != 0xFF)
       break;
