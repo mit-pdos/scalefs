@@ -22,12 +22,12 @@ One particularly challenging case involves fsync and directory renames. If we
 aren't careful here, we can end up creating orphaned loops within the filesystem
 directory hierarchy on the disk, breaking the filesystem's invariants!
 
-It is straight-forward to avoid creating orphaned loops at the rename() system
-call by inserting appropriate validity checks. However, there is a different,
-rather subtle scenario, where the directory renames proceed successfully in
-memory (maintaining the "no cycles" invariant in the in-memory directory
-hierarchy), but a subsequent "minimalistic" fsync() can end up creating
-orphaned loops on the disk as shown below.
+It is straight-forward to avoid creating orphaned loops while executing the
+rename() system call (in memory) by performing appropriate validity checks.
+However, there is a different, rather subtle scenario, where the directory
+renames proceed successfully in memory (maintaining the "no cycles" invariant
+in the in-memory directory hierarchy), but a subsequent "minimalistic" fsync
+can end up creating orphaned loops on the disk as shown below.
 
 
 Initial state on the disk:
@@ -70,9 +70,9 @@ Step 1 =>   A     C        Step 2 =>       A     C
                                                  B
 
 Everything is good so far in memory and none of these changes have been written
-to the disk yet. Now the user invokes fsync() on /C/D.
+to the disk yet. Now the user invokes fsync on /C/D.
 
-If fsync() strives to flush out the absolute minimum dirty data (corresponding
+If fsync strives to flush out the absolute minimum dirty data (corresponding
 to the changes made only to directory D), then we'll end up with an orphaned
 loop on the disk (even though the directory hierarchy in memory is just fine!)
 as shown below:
@@ -94,9 +94,10 @@ The trouble is that the "minimal flush" doesn't quite capture enough of the
 recent structural changes to the directory hierarchy - in particular, directory
 B still thinks that C is its sub-directory, when in reality C has been made an
 ancestor of B! That creates the loop. Also, since C was reachable only via B
-(/A/B/C) in the original hierarchy, and we happened to erase the crucial A->B
-link in the process of moving B into C, we lose access to C from the root (/).
-This causes the loop to get disconnected and turn into an orphaned loop!
+(/A/B/C) in the original hierarchy on the disk, and we happened to erase the
+crucial A->B link in the process of moving B into C, we lose access to C from
+the root (/). This causes the loop to get disconnected from the rest of the
+tree and thus turn into an orphaned loop!
 
 
 Now, let's try to analyze how we managed to get ourselves entangled this way.
@@ -158,20 +159,20 @@ We can see that this represents the following two deliberate actions:
 
    (*) More precisely, any directory that is not a new ancestor of the
        bottom portion of the cut, after that portion has been attached
-       somewhere.
+       elsewhere.
 
 2. Move the originally chosen ancestor into the originally chosen descendant.
 
 Note that the rename system call will allow step 2 to proceed in memory,
-only because it happens after the cut operation. Otherwise, it would
+only because it happens after the cut operation (step 1). Otherwise, it would
 immediately violate the filesystem's "no cycles" invariant.
 
 The directory hierarchy in memory is fine so far. But we can trick the
 filesystem into causing a loop on the disk if we manage to make fsync skip
-step 1 and flush only the changes made in step 2. In other words, invoke
-fsync() on either the descendant (Y), or on the ancestor's parent (A),
-because those are the only 2 directories (source and destination) that
-were dirtied in step 2.
+step 1 and flush only the changes made in step 2; that is, by invoking fsync
+on either the descendant (Y), or on the ancestor's parent (A), because those
+are the only 2 directories (source and destination) that were dirtied in
+step 2.
 
 
 Proposed solution:
@@ -179,155 +180,237 @@ Proposed solution:
 
 Considering the above analysis, the solution to this problem is quite clear:
 don't let fsync skip step 1 (i.e., flushing the cut) under any circumstance.
-In other words, irrespective of which directory the fsync() is invoked on,
-first go find the cut and flush it out, and only then flush the directory
-being fsynced.
+In other words, irrespective of where (on which directory) the fsync is
+invoked, first go find the cut and flush it out, and only then flush the
+directory being fsynced. But it turns out that this can get a bit tricky and
+is easier said than done because we will have to deal with a variety of corner
+cases.
 
-But here is another, simpler way to look at this: given a directory D to be
-fsynced, consider the set of directories on the path going from the root to D,
-in the in-memory filesystem hierarchy (i.e., the ancestors of D). We just need
-to ensure that flushing out changes to D will not trick us into moving one of
-D's ancestor's into D. So, if we flush out the in-memory path from root to D
-to the disk before flushing out the changes to D itself, we can rest assured
-that none of the (new) ancestors of D will be moved into D during that latter
-flush. This is the core idea behind our fsync algorithm, which is described
-below in detail.
+An alternative approach is to ensure that before flushing a directory rename
+operation, the set of ancestors of the destination directory (i.e., its
+absolute path) on the disk is exactly the same as that in memory. That way,
+flushing the rename will not cause a loop on the disk, because the rename
+didn't cause a loop in memory with the same ancestors (and we know that the
+only way to cause a loop is to move an ancestor into a descendant). This is
+the core idea behind our fsync loop-avoidance algorithm.
 
-Given a directory to be fsynced (say A), check if either a sub-directory was
-moved away from it or some directory was moved into it. Then find the
-destination (parent directory) (Y) for that rename (if the given directory
-was not the destination already). This can be trivially achieved using the
-information captured in the rename operation logged in the oplog.
+[ Also, it is not that hard to see that these two approaches are actually
+equivalent : i.e., flushing the ancestors of the destination directory
+automatically implies flushing the "cut" as well, because the cut (if it
+exists) is certainly somewhere within the path going from the destination
+directory upto the root. ]
 
-From the destination directory (Y), go recursively up the directory hierarchy
-in memory, all the way upto the root, and note down all directories on that
-path that are dirty. Then, starting from the root, do the following for each
-dirty directory in our list:
+At this juncture, there is an important design aspect to be considered, which
+poses some constraints on our fsync algorithm. ScaleFS mainly consists of 3
+parts:
 
-o If the dirty directory being considered is E and its sub-directory (along
-  the path from root to Y) is F, then:
+          MemFS  ---->  Oplog Layer / Fsync  --->  DiskFS
 
-  o If F's move into E is yet to be flushed, flush all E's changes (in
-     timestamp order) upto and including the operation that adds F into E on
-     the disk. And nothing more! That is, if E has more operations to be
-     flushed after this point, skip them. (**)
-
-     If any of these operations are directory renames that move a sub-directory
-     out of E, then run this whole fsync algorithm from the beginning
-     recursively at the destination directory for that rename. (***)
-
-     Once F is made persistent as E's child on the disk, go to the next
-     iteration of this loop.
-
-Repeat this until the path from root to Y is made persistent on the disk.
-Then, flush all the operations modifying directory Y (including renames).
-
-This guarantees that we will never form an (orphaned) loop on the disk, no
-matter where fsync is invoked and which directories are involved in renames.
-
-(**)  If we do a full flush of every dirty directory from root to D, scenarios
-      like example 4 below will end up in a loop on the disk immediately.
-      Hence, we need to have precise control over how much we flush at each
-      stage.
-
-(***) If we are not careful, flushing a directory rename that moves a
-      sub-directory away from E, can cause a loop in a different sub-tree,
-      while we are busy trying to avoid loops in the given sub-tree! That's why
-      it is important to re-run the entire loop-avoidance algorithm for that
-      directory-rename recursively.
+At the time of fsync, looking up the current (in-memory) ancestors of a
+directory amounts to adding a dependency between the Oplog layer and MemFS
+in the reverse direction, which implies a tight coupling between the two.
+But we had originally designed them to be well-separated, with a controlled
+flow from MemFS to Oplog, and we would like to keep them that way. To achieve
+this, we capture the ancestors of the destination directory at the time of
+executing the rename operation in memory (MemFS) and log them to Oplog, along
+with the rename operation. With this extra metadata in Oplog, we can avoid
+consulting MemFS at the time of flushing the rename operation to disk during
+an fsync.
 
 
-(Semi-formal) Proof of correctness for this algorithm:
-------------------------------------------------------
+Now that we have given the high-level overview of the fsync loop-avoidance
+algorithm, we give its pseudocode below, to make its definition precise enough
+that we can write a proof of its correctness later on.
 
-Our fsync loop-avoidance algorithm can be summarized as follows:
 
-Given a directory D to be fsynced:
+----------------------------- MemFS stage --------------------------------
 
-Step 1: Build a list of its ancestors as seen in the in-memory filesystem tree,
-        and flush out the links forming the path from root to D, one after
-        another, starting from the root. After this completes, the path from
-        root to D on the disk will be exactly the same as the path from root to
-        D in memory. In other words, D will have the same ancestors on the
-        disk as it has in memory.
+mfs_dir_rename(path old_path, path new_path)
+{
+  acquire(&dir_rename_lock); // Global lock to prevent concurrent dir renames.
 
-Step 2: Then, flush the changes to D onto the disk.
+  src_dir = nameiparent(old_path);
+  dst_dir = nameiparent(new_path);
+  move_dir = namei(old_path);
 
-Theorem: The above algorithm prevents (orphaned) loops from getting formed
-in the filesystem hierarchy on the disk due to fsync.
+  // Check if it is safe to perform this rename. In particular, make sure that
+  // it won't cause a loop in the filesystem hierarchy in memory.
+  if (!rename_valid(move_dir, src_dir, dst_dir))
+    return;
+
+  // Add a rename barrier (with a common timestamp) to all the ancestors of
+  // the destination directory. We can capture a consistent snapshot of its
+  // ancestors because the lock above prevents concurrent modifications to the
+  // directory tree.
+  ts = get_current_timestamp();
+  dir = dst_dir;
+  while (true) {
+    dir->add_to_oplog(rename_barrier(dir, dir->parent, ts));
+    if (dir == root)
+      break;
+    dir = dir->parent;
+  }
+
+  perform_dir_rename(move_dir, src_dir, dst_dir);
+
+  dst_dir->add_to_oplog(rename_op(move_dir, src_dir, dst_dir));
+
+  release(&dir_rename_lock);
+}
+
+----------------- Fsync stage (Oplog -> DiskFS transition) ---------------
+
+fsync(dir E)
+{
+  dir_fsync_upto_op(E, get_last_op(E));
+}
+
+dir_fsync_upto_op(dir E, op f)
+{
+  if (get_first_op(E)->timestamp > f->timestamp)
+    return; // We have already flushed upto and beyond the specified operation.
+
+  for each oplog operation 'op' in E (in timestamp order) {
+    switch(op.type) {
+    case rename_barrier:
+      flush_rename_barrier(op);
+      break;
+    case dir_rename:
+      flush_dir_rename(op);
+      break;
+    default: flush(op);
+    }
+
+    if (op == f)
+      return;
+  }
+}
+
+flush_rename_barrier(op f)
+{
+  dst_dir = get_dst_dir(f);
+
+  // Before flushing the specified rename barrier, recursively flush the
+  // corresponding rename barriers in our ancestors all the way upto the
+  // root.
+
+  if (dst_dir != root) {
+    // Find the destination directory's parent at the time of executing
+    // the rename operation (in MemFS), using the info in the oplog. This
+    // may not be its current parent in memory.
+    dst_parent = get_dst_parent(f);
+    parent_barrier = find_rename_barrier(dst_parent, f);
+
+    if (parent_barrier)
+      dir_fsync_upto_op(dst_parent, parent_barrier);
+  }
+
+  flush(f);
+}
+
+find_rename_barrier(dir D, op f)
+{
+  if (get_first_op(D)->timestamp > f->timestamp)
+    return; // The specified rename barrier has been flushed already.
+
+  for each oplog operation 'op' in D (in timestamp order) {
+    if (op->timestamp == f->timestamp)
+      return op;
+  }
+
+  return NULL;
+}
+
+flush_dir_rename(op f)
+{
+  // By now all the rename barriers associated with this directory rename
+  // operation have been flushed; and that in turn has propagated the state
+  // changes of the ancestors (of the destination directory) to the disk.
+  // So now it is finally safe to flush the rename operation and this is
+  // guaranteed to not cause loops on the disk.
+
+  flush(f);
+}
+
+---------------------------------------------------------------------------
+
+
+(Semi-formal) Proof of correctness for this fsync loop-avoidance algorithm:
+---------------------------------------------------------------------------
+
+Theorem: The fsync loop-avoidance algorithm described above prevents (orphaned)
+loops from getting formed in the filesystem hierarchy on the disk.
 
 (Assumption: The rename system call does not allow loops to be formed in
-the directory hierarchy in memory.)
+the directory hierarchy in memory (MemFS).)
 
 Proof:
 
-There are only 2 cases to consider here: either Step 1 causes the loop
-or Step 2 causes the loop. We first show that Step 2 doesn't cause a loop
-and then use it to prove that Step 1 also doesn't cause a loop; which implies
-that the fsync algorithm as a whole doesn't cause loops on the disk.
+A couple of quick observations from the pseudocode above:
 
-Lemma 1: Step 2 in the fsync algorithm doesn't cause a loop on the disk.
+* dir_fsync_upto_op() makes it clear that the changes to a given directory
+  (i.e., its operations) are always flushed in timestamp order.
 
-Consider a dirty directory D to be fsynced. The interesting case is when D's
-modifications include one or more rename operations that move other directories
-into D. Let's consider one such rename operation, which moves some directory E
-into D.
+* A rename barrier accompanies each directory rename operation, and spans all
+  the ancestors of the destination directory (see mfs_dir_rename()). This is
+  our way of capturing the ancestors of the destination directory in the Oplog,
+  as seen at the time of performing the rename (in MemFS).
 
-                         root
-                           |
-                           .
-                           .
-                           |
-                           v
-                           D
-                           :
-                           :
-                           v
-                           E
+* A rename barrier at a given directory is flushed only after flushing all the
+  corresponding rename barriers at all its ancestors. (Note that these
+  "ancestors" correspond to how things were at the time of performing the
+  rename in memory, and not necessarily at the time of fsync).
 
-So, fsync will have to add the link to E within D, on the disk. We know that
-the only way to cause a cycle in the filesystem tree is to move (rename)
-directories such that an ancestor gets moved into a descendant. Thus, for
-fsync to cause a loop on the disk by moving E into D, E must be an ancestor
-of D on the disk, just before this step.
-
-We know that Step 1 in our fsync algorithm ensures that the ancestors of D on
-the disk are exactly the same as the ancestors of D in memory, before moving
-anything (E) into D. This implies that, for fsync to cause a loop, E must be
-an ancestor of D in memory too! But that in turn implies that there must be a
-loop in the in-memory filesystem hierarchy! This contradicts our assumption
-above that the rename system call does not allow loops to be formed in memory.
-
-Hence, it follows that if there are no loops in memory, fsync will not introduce
-any loops on the disk, because it will propagate the same set of ancestors (of
-the directory being fsynced) to disk, before flushing the changes associated
-with that directory. Hence proved (Lemma 1).
+* A rename barrier preceeds the rename operation logged in the destination
+  directory. Thus, it follows that before the rename operation is flushed, the
+  act of (recursively) flushing the rename barriers makes sure that the states
+  of each of the ancestors of the destination directory on the disk, are at
+  least as up-to-date as their state at the time of performing the rename
+  operation in memory (MemFS).
 
 
-Lemma 2: Step 1 in the fsync algorithm doesn't cause a loop on the disk.
+If the last directory rename is immediately followed by an fsync on the
+destination directory, it is easy to see that the above fsync algorithm
+replicates the in-memory absolute path of the destination directory on to
+the disk, before flushing the rename operation itself. As discussed before,
+this clearly avoids forming loops on the disk (because there are no loops in
+memory, and the destination directory has the same set of ancestors both in
+memory and on the disk).
 
-Interestingly, Step 1 applied at D can be described as the sequence of Step 1
-and Step 2 applied at D's parent (with the small modification that changes to
-D's parent are flushed in Step 2 in timestamp order only upto and including the
-operation that adds the link to D within D's parent, and none of the subsequent
-changes).
+However, there could be many other fsync calls (and perhaps additional
+renames too) before running this particular fsync, and hence, it is possible
+that we won't be able to recreate the ancestors on the disk exactly as they
+were in memory at the time of the rename. So can we still be certain that
+the above algorithm won't cause loops on the disk?
 
-Taking this further, we can view Step 1 at D's parent as being Step 1 and
-Step 2 applied at D's grandparent, and so on. This recursion extends all the way
-upto the root, where Step 1 is unnecessary because the root directory already
-exists on the disk. In other words, Step 2 at the root doesn't require Step 1
-as a prerequisite.
+It turns out that the answer is yes! To see why, note that the state of the
+ancestors on the disk is at least as recent as their state at the time of
+the rename operation in memory, due to the rename barriers. That is, if a
+rename operation moved directory C into directory E, then, the act of
+flushing the rename barriers ensures that E's ancestors on disk exclude C.
+(Alternatively, flushing the rename barriers also indirectly flushes the "cut"
+as outlined above, whose sole purpose is to ensure that C is no longer an
+ancestor of E on the disk, in order to make it safe to move C into E as part
+of the rename).
 
-So, in effect, the fsync algorithm is nothing but a sequence of Step 2's applied
-on each directory on the path from root to D. (Note that we have eliminated
-Step 1 from the equation by showing how it can be decomposed into Step 2).
-And we already know from Lemma 1 that Step 2 doesn't cause a loop. Hence, it
-follows that Step 1 also doesn't cause loops, because it is just a whole bunch
-of Step 2's run one after another. Hence proved (Lemma 2).
+However, due to intervening fsyncs, the state of E's ancestors on the disk
+could reflect changes that occurred after the rename operation in memory.
+Furthermore, let alone the state of E's ancestors, these fsyncs could have
+caused the very *set* of E's current ancestors on the disk to be completely
+different than its set of ancestors at the time of performing the rename in
+memory! So how can we be sure that C is not once again an ancestor of E on
+the disk just before we intend to flush the rename of C into E? (because
+that's the only way to force a rename to cause a loop).
 
-Since our fsync algorithm only consists of Step 1 and Step 2, and we have proved
-that neither of them causes a loop (using Lemmas 1 and 2), it follows that the
-fsync algorithm as a whole doesn't cause loops on the disk. Hence proved!
+We can rest assured that that is impossible, because, for that to happen, C
+must be moved away from E in the first place, and that operation can only
+follow the rename of C into E, with respect to time. And since we always flush
+all the changes to a directory in timestamp order, it follows that none of the
+additional state changes that were flushed by the other fsyncs could have
+caused C to become an ancestor of E once again; at least not yet... not until
+C is moved into E on the disk first. Hence, it follows that this algorithm
+can guarantee that no loops are ever formed on the disk, irrespective of the
+order of renames and fsyncs. Hence proved.
 
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
