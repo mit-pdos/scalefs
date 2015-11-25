@@ -155,6 +155,7 @@ public:
 
   sref<mnode> get(u64 mnum);
   mlinkref alloc(u8 type, u64 parent_mnum = 0);
+  spinlock dir_rename_lock __mpalign__;
 };
 
 

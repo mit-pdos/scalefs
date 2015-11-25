@@ -386,6 +386,22 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       return 0;
     }
 
+    scoped_acquire lk;
+
+    if (mfold->type() == mnode::types::dir) {
+      lk = root_fs->dir_rename_lock.guard(); // Filesystem-wide lock.
+
+      // Loop avoidance: Abort if the source is an ancestor of the destination.
+      sref<mnode> md = mdnew;
+      while (1) {
+        if (mfold == md)
+          return -1;
+        if (md->mnum_ == root_mnum)
+          break;
+        md = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
+      }
+    }
+
     // Strictly speaking, it is important to invoke metadata_op_start() on
     // the destination directory first, because the rename operation has
     // to be processed in that order: perform the link, and then the unlink.
