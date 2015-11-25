@@ -487,10 +487,11 @@ sys_unlink(userptr_str path)
     }
 
     /*
-     * We killed the directory, so we must succeed at removing it from
-     * the parent.  The only way to remove a directory name is to unlink
-     * it (we do not support directory rename), and the only way to unlink
-     * a directory is to kill it, as we did above.
+     * Since both ->kill() and ->replace_from() acquire the hash bucket
+     * locks (and ->replace_from() verifies that the directory is still
+     * alive before proceeding), we don't race with directory renames.
+     * So, since we were able to kill the directory successfully, we must
+     * also succeed at removing it from the parent.
      */
     assert(md->as_dir()->remove(name, mf, &tsc));
     if (is_root_fs) {
