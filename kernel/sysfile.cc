@@ -363,35 +363,20 @@ sys_rename(userptr_str old_path, userptr_str new_path)
   if (!mdnew)
     return -1;
 
+  if (oldname == "." || oldname == ".." || newname == "." || newname == "..")
+    return -1;
+
   if (mdold == mdnew && oldname == newname)
     return 0;
 
   for (;;) {
     sref<mnode> mfold = mdold->as_dir()->lookup(oldname);
-    if (!mfold || mfold->type() == mnode::types::dir) {
-      /*
-       * Renaming directories not currently supported.
-       * Would require checking for loops.  This can be
-       * complicated by concurrent renames of the same
-       * source directory when one of the renames has
-       * already added a new name for the directory,
-       * but not removed the previous name yet.  Would
-       * also require changing ".." in the subdirectory,
-       * dealing with a possible rmdir / rename race, and
-       * checking for "." and "..".
-       */
+    if (!mfold)
       return -1;
-    }
 
     sref<mnode> mfroadblock = mdnew->as_dir()->lookup(newname);
-    if (mfroadblock && mfroadblock->type() == mnode::types::dir) {
-      /*
-       * POSIX says rename should replace a directory only with another
-       * directory, and we currently don't support directory rename (see
-       * above).
-       */
-      return -1;
-    }
+    if (mfroadblock && mfroadblock->type() != mfold->type())
+        return -1;
 
     if (mfroadblock == mfold) {
       /*
