@@ -196,12 +196,16 @@ public:
   }
 
   bool replace_from(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
-                    mdir* src, const strbuf<DIRSIZ>& srcname, sref<mnode> msrc,
-                    u64 *tsc = NULL) {
+                    sref<mnode> srcparent, const strbuf<DIRSIZ>& srcname,
+                    sref<mnode> msrc, u64 *tsc = NULL) {
+
     u64 dstmnum = mdst ? mdst->mnum_ : 0;
+
     if (!map_.replace_from(dstname, mdst ? &dstmnum : nullptr,
-                           &src->map_, srcname, msrc->mnum_, tsc))
+                           &srcparent->as_dir()->map_, srcname, msrc->mnum_,
+                           tsc))
       return false;
+
     if (mdst)
       mdst->nlink_.dec();
 
