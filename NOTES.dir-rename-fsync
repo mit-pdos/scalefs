@@ -404,7 +404,7 @@ that's the only way to force a rename to cause a loop).
 
 We can rest assured that that is impossible, because, for that to happen, C
 must be moved away from E in the first place, and that operation can only
-follow the rename of C into E, with respect to time. And since we always flush
+follow the rename of C into E, in chronological order. And since we always flush
 all the changes to a directory in timestamp order, it follows that none of the
 additional state changes that were flushed by the other fsyncs could have
 caused C to become an ancestor of E once again; at least not yet... not until
