@@ -209,6 +209,9 @@ public:
     if (mdst)
       mdst->nlink_.dec();
 
+    srcparent->dirty(true); // source directory (parent)
+    dirty(true); // destination directory (parent)
+
     if (msrc)
       msrc->dirty(true);
     if (mdst)
