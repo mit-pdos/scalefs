@@ -133,6 +133,7 @@ public:
      * A special API used by rename.  Atomically performs the following
      * steps, returning false if any of the checks fail:
      *
+     *  - checks that this hash table has not been killed (by unlink)
      *  - if vpdst!=nullptr, checks this[kdst]==*vpdst
      *  - if vpdst==nullptr, checks this[kdst] is not set
      *  - checks src[ksrc]==vsrc
@@ -152,6 +153,13 @@ public:
       ldst = bdst->lock.guard();
       lsrc = bsrc->lock.guard();
     }
+
+    /*
+     * Abort the rename if the destination directory's hash table has been
+     * killed by a concurrent unlink.
+     */
+    if (killed())
+      return false;
 
     auto srci = bsrc->chain.before_begin();
     auto srcend = bsrc->chain.end();
