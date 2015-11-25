@@ -375,9 +375,18 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       return -1;
 
     sref<mnode> mfroadblock = mdnew->as_dir()->lookup(newname);
-    if (mfroadblock && mfroadblock->type() == mnode::types::dir)
-      if (mfold->type() != mnode::types::dir)
-        return -1; // Only directories can be renamed to directories.
+    if (mfroadblock) {
+
+      // Directories can be renamed to directories; and non-directories can
+      // be renamed to non-directories. No other combinations are allowed.
+      if (mfroadblock->type() == mnode::types::dir &&
+          mfold->type() != mnode::types::dir)
+        return -1;
+
+      if (mfroadblock->type() != mnode::types::dir &&
+          mfold->type() == mnode::types::dir)
+        return -1;
+    }
 
     if (mfroadblock == mfold) {
       /*
