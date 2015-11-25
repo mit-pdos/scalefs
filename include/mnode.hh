@@ -212,16 +212,6 @@ public:
     return true;
   }
 
-  bool replace_common_mnode(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
-                    mdir* src, const strbuf<DIRSIZ>& srcname, u64 *tsc = NULL) {
-    if (!map_.replace_common_mnode(dstname, &mdst->mnum_, &src->map_, srcname, tsc))
-      return false;
-    mdst->nlink_.dec();
-    mdst->dirty(true);
-
-    return true;
-  }
-
   bool exists(const strbuf<DIRSIZ>& name) const {
     if (name == ".")
       return true;
