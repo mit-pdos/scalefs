@@ -414,7 +414,9 @@ sys_rename(userptr_str old_path, userptr_str new_path)
     rootfs_interface->metadata_op_start(mdold->mnum_, myid(), tsc_val);
 
     if (mdnew->as_dir()->replace_from(newname, mfroadblock,
-          mdold, oldname, mfold, &tsc)) {
+          mdold, oldname, mfold,
+          (mfold->type() == mnode::types::dir) ? mfold->as_dir() : nullptr,
+          &tsc)) {
 
       mfs_operation *op_rename_link, *op_rename_unlink;
 

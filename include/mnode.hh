@@ -197,23 +197,33 @@ public:
 
   bool replace_from(const strbuf<DIRSIZ>& dstname, sref<mnode> mdst,
                     sref<mnode> srcparent, const strbuf<DIRSIZ>& srcname,
-                    sref<mnode> msrc, u64 *tsc = NULL) {
+                    sref<mnode> msrc, mdir* subdir, u64 *tsc = NULL) {
 
     u64 dstmnum = mdst ? mdst->mnum_ : 0;
 
+    if (subdir)
+      mnode::nlink_.inc();
+
     if (!map_.replace_from(dstname, mdst ? &dstmnum : nullptr,
                            &srcparent->as_dir()->map_, srcname, msrc->mnum_,
-                           nullptr, 0, 0, tsc))
+                           subdir ? &subdir->map_ : nullptr,
+                           strbuf<DIRSIZ>(".."), mnode::mnum_, tsc)) {
+      if (subdir)
+        mnode::nlink_.dec();
       return false;
+    }
 
     if (mdst)
       mdst->nlink_.dec();
+
+    if (subdir)
+      srcparent->nlink_.dec();
 
     srcparent->dirty(true); // source directory (parent)
     dirty(true); // destination directory (parent)
 
     if (msrc)
-      msrc->dirty(true);
+      msrc->dirty(true); // Same as the subdir being moved, during dir rename.
     if (mdst)
       mdst->dirty(true);
 
