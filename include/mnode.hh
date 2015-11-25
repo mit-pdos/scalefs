@@ -203,7 +203,7 @@ public:
 
     if (!map_.replace_from(dstname, mdst ? &dstmnum : nullptr,
                            &srcparent->as_dir()->map_, srcname, msrc->mnum_,
-                           tsc))
+                           nullptr, 0, 0, tsc))
       return false;
 
     if (mdst)

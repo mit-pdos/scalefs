@@ -125,40 +125,59 @@ public:
     }
   }
 
-  bool replace_from(const K& kdst, const V* vpdst,
-                    chainhash* src, const K& ksrc,
-                    const V& vsrc, u64 *tsc = NULL)
+  bool replace_from(const K& kdst, const V* vpdst, chainhash* src,
+                    const K& ksrc, const V& vsrc, chainhash *subdir,
+                    const K& ksubdir, const V& vsubdir, u64 *tsc = NULL)
   {
     /*
      * A special API used by rename.  Atomically performs the following
      * steps, returning false if any of the checks fail:
      *
+     *  For file renames:
      *  - checks that this hash table has not been killed (by unlink)
      *  - if vpdst!=nullptr, checks this[kdst]==*vpdst
      *  - if vpdst==nullptr, checks this[kdst] is not set
      *  - checks src[ksrc]==vsrc
      *  - removes src[ksrc]
      *  - sets this[kdst] = vsrc
+     *
+     * For directory renames (i.e., subdir != nullptr), in addition to the
+     * above:
+     *  - checks that subdir's hash table has not been killed (by unlink)
+     *  - sets subdir[ksubdir] = vsubdir
+     *  - TODO: Also deal with the directory that was replaced from the
+     *          destination directory by subdir.
      */
     bucket* bdst = &buckets_[hash(kdst) % nbuckets_];
     bucket* bsrc = &src->buckets_[hash(ksrc) % src->nbuckets_];
+    bucket* bsubdir = subdir ?
+                     (&subdir->buckets_[hash(ksubdir) % subdir->nbuckets_]) :
+                     nullptr;
 
-    scoped_acquire lsrc, ldst;
-    if (bsrc == bdst) {
-      lsrc = bsrc->lock.guard();
-    } else if (bsrc < bdst) {
-      lsrc = bsrc->lock.guard();
-      ldst = bdst->lock.guard();
-    } else {
-      ldst = bdst->lock.guard();
-      lsrc = bsrc->lock.guard();
-    }
+    // Acquire the locks for the source, destination and the subdir directory
+    // hash tables in the order of increasing bucket addresses.
+    scoped_acquire lk[3];
+    std::vector<bucket*> buckets;
+
+    if (bsubdir != nullptr && bsubdir != bsrc && bsubdir != bdst)
+      buckets.push_back(bsubdir);
+    if (bsrc != bdst)
+      buckets.push_back(bsrc);
+    buckets.push_back(bdst);
+    std::sort(buckets.begin(), buckets.end());
+
+    int i = 0;
+    for (auto &b : buckets)
+      lk[i++] = b->lock.guard();
 
     /*
      * Abort the rename if the destination directory's hash table has been
      * killed by a concurrent unlink.
      */
     if (killed())
+      return false;
+
+    if (subdir && subdir->killed())
       return false;
 
     auto srci = bsrc->chain.before_begin();
@@ -181,10 +200,20 @@ public:
       if (i.key == kdst) {
         if (vpdst == nullptr || i.val != *vpdst)
           return false;
-        auto w = i.seq.write_begin(); 
+        auto w = i.seq.write_begin();
         i.val = vsrc;
         bsrc->chain.erase_after(srcprev);
         gc_delayed(&*srci);
+
+        if (bsubdir != nullptr) {
+          for (item& isubdir : bsubdir->chain) {
+            if (isubdir.key == ksubdir) {
+              auto wsubdir = isubdir.seq.write_begin();
+              isubdir.val = vsubdir;
+            }
+          }
+        }
+
         if (tsc)
           *tsc = get_tsc();
         return true;
@@ -197,6 +226,16 @@ public:
     bsrc->chain.erase_after(srcprev);
     gc_delayed(&*srci);
     bdst->chain.push_front(new item(kdst, vsrc));
+
+    if (bsubdir != nullptr) {
+      for (item& isubdir : bsubdir->chain) {
+        if (isubdir.key == ksubdir) {
+          auto wsubdir = isubdir.seq.write_begin();
+          isubdir.val = vsubdir;
+        }
+      }
+    }
+
     if (tsc)
       *tsc = get_tsc();
     return true;
