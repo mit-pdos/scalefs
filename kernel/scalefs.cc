@@ -671,31 +671,47 @@ mfs_interface::add_op_to_journal(mfs_operation *op, transaction *tr,
   delete op;
 }
 
+// Return values from process_ops_from_oplog():
+// -------------------------------------------
+enum {
+  // All done (processed operations upto max_tsc in the given mfs_log)
+  RET_DONE = 0,
+
+  // Encountered a link operation and added the mnode being linked to the
+  // pending stack, as a dependency.
+  RET_LINK,
+
+  // Encountered a rename barrier and added its parent mnode to the pending
+  // stack as a dependency.
+  RET_RENAME_BARRIER,
+
+  // Encountered a new rename sub-operation and added its counterpart to the
+  // pending stack as a dependency.
+  RET_RENAME_SUBOP,
+
+  // Got a counterpart for a rename sub-operation, which completes the pair.
+  RET_RENAME_PAIR,
+};
+
 // process_ops_from_oplog():
 //
 // Gathers operations from mfs_log with timestamps upto and including 'max_tsc'
 // and then processes the first 'count' number of those operations. If count is
 // -1, it processes all of them, but if count is 1, it is treated as a special
 // case instruction to process only the 'create' operation of the mnode.
-//
-// Return values:
-// 0 - All done (processed operations upto max_tsc in the given mfs_log)
-// 1 - Encountered a link operation and added the mnode being linked to the
-//     pending stack, as a dependency.
-// 2 - Encountered a new rename sub-operation and added its counterpart to the
-//     pending stack as a dependency.
-// 3 - Got a counterpart for a rename sub-operation, which completes the pair
+// The return values are described above.
 int
 mfs_interface::process_ops_from_oplog(
-                           mfs_logical_log *mfs_log, u64 max_tsc, int count,
-                           std::vector<pending_metadata> &pending_stack,
-                           std::vector<rename_metadata> &rename_stack)
+                    mfs_logical_log *mfs_log, u64 max_tsc, int count,
+                    std::vector<pending_metadata> &pending_stack,
+                    std::vector<rename_metadata> &rename_stack,
+                    std::vector<rename_barrier_metadata> &rename_barrier_stack)
 {
   // Synchronize the oplog loggers.
   auto guard = mfs_log->synchronize_upto_tsc(max_tsc);
 
   if (!mfs_log->operation_vec.size())
-    return 0;
+    return RET_DONE;
 
   // count == 1 is a special case instruction to process only the 'create'
   // operation of the mnode.
@@ -716,7 +732,7 @@ mfs_interface::process_ops_from_oplog(
         add_op_to_journal(*it);
         mfs_log->operation_vec.erase(it);
       }
-      return 0;
+      return RET_DONE;
     }
 
     auto link_op = dynamic_cast<mfs_operation_link*>(*it);
@@ -725,7 +741,34 @@ mfs_interface::process_ops_from_oplog(
     if (link_op && !inum_lookup(link_op->mnode_mnum, &mnode_inum)) {
       // Add the create operation of the mnode being linked as a dependency.
       pending_stack.push_back({link_op->mnode_mnum, link_op->timestamp, 1});
-      return 1;
+      return RET_LINK;
+    }
+
+    auto rename_barrier_op = dynamic_cast<mfs_operation_rename_barrier*>(*it);
+
+    if (rename_barrier_op) {
+      if (rename_barrier_op->mnode_mnum == root_mnum) {
+        // Nothing to be done.
+        it = mfs_log->operation_vec.erase(it);
+        continue;
+      }
+
+      auto mnum = rename_barrier_op->mnode_mnum;
+      auto parent_mnum = rename_barrier_op->parent_mnum;
+      auto timestamp = rename_barrier_op->timestamp;
+
+      if (rename_barrier_stack.size() &&
+          mnum == rename_barrier_stack.back().mnode_mnum &&
+          timestamp == rename_barrier_stack.back().timestamp) {
+        // Already processed.
+        rename_barrier_stack.pop_back();
+        it = mfs_log->operation_vec.erase(it);
+        continue;
+      }
+
+      rename_barrier_stack.push_back({mnum, timestamp});
+      pending_stack.push_back({parent_mnum, timestamp, -1});
+      return RET_RENAME_BARRIER;
     }
 
     auto rename_link_op = dynamic_cast<mfs_operation_rename_link*>(*it);
@@ -759,15 +802,15 @@ mfs_interface::process_ops_from_oplog(
       }
 
       if (rename_timestamp && (*it)->timestamp == rename_timestamp)
-        return 3;
-      return 2;
+        return RET_RENAME_PAIR;
+      return RET_RENAME_SUBOP;
     }
 
     add_op_to_journal(*it);
     it = mfs_log->operation_vec.erase(it);
   }
 
-  return 0;
+  return RET_DONE;
 }
 
 // Applies metadata operations logged in the logical journal. Called on
@@ -777,6 +820,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 {
   std::vector<pending_metadata> pending_stack;
   std::vector<rename_metadata> rename_stack;
+  std::vector<rename_barrier_metadata> rename_barrier_stack;
   mfs_logical_log *mfs_log;
   int ret;
 
@@ -789,30 +833,23 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 
     mfs_log->lock.acquire();
     ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, pending_stack,
-                                 rename_stack);
+                                 rename_stack, rename_barrier_stack);
     mfs_log->lock.release();
 
     switch (ret) {
 
-    // 0 - All done (processed operations upto max_tsc in the given mfs_log)
-    case 0:
+    case RET_DONE:
       pending_stack.pop_back();
       break;
 
-    // 1 - Encountered a link operation and added the mnode being linked to the
-    //     pending stack, as a dependency.
-    case 1:
+    case RET_LINK:
+    case RET_RENAME_BARRIER:
+    case RET_RENAME_SUBOP:
       continue;
 
-    // 2 - Encountered a new rename sub-operation and added its counterpart
-    //     to the pending stack as a dependency.
-    case 2:
-      continue;
-
-    // 3 - Got a counterpart for a rename sub-operation, which completes the
-    //     pair. So acquire the necessary locks and apply both parts of the
-    //     rename atomically using a single transaction.
-    case 3:
+    // Now that we got the complete rename pair, acquire the necessary locks
+    // and apply both parts of the rename atomically using a single transaction.
+    case RET_RENAME_PAIR:
       apply_rename_pair(rename_stack);
       // Since the rename sub-operations got paired up and were applied, we
       // don't have to process the other directory any further for this fsync
@@ -825,7 +862,8 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
     }
   }
 
-  assert(!rename_stack.size() && !pending_stack.size());
+  assert(!pending_stack.size() && !rename_stack.size() &&
+         !rename_barrier_stack.size());
 }
 
 void

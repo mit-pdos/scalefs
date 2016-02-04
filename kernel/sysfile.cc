@@ -428,6 +428,27 @@ sys_rename(userptr_str old_path, userptr_str new_path)
           (mfold->type() == mnode::types::dir) ? mfold->as_dir() : nullptr,
           &tsc)) {
 
+      if (mfold->type() == mnode::types::dir) {
+
+        // Add rename barriers to the destination directory and all its
+        // in-memory ancestors, with the same timestamp.
+        mfs_operation *op_rename_barrier;
+        sref<mnode> mdparent, md = mdnew;
+        while (1) {
+          mdparent = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
+          op_rename_barrier = new mfs_operation_rename_barrier(rootfs_interface,
+                                  tsc, md->mnum_, mdparent->mnum_, mfold->type());
+
+          rootfs_interface->metadata_op_start(md->mnum_, myid(), tsc_val);
+          rootfs_interface->add_to_metadata_log(md->mnum_, op_rename_barrier);
+          rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+
+          if (md->mnum_ == root_mnum)
+            break;
+          md = mdparent;
+        }
+      }
+
       mfs_operation *op_rename_link, *op_rename_unlink;
 
       op_rename_link = new mfs_operation_rename_link(rootfs_interface, tsc,

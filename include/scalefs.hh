@@ -17,6 +17,7 @@ class mfs_operation_unlink;
 class mfs_operation_delete;
 class mfs_operation_rename_link;
 class mfs_operation_rename_unlink;
+class mfs_operation_rename_barrier;
 class mfs_logical_log;
 typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
@@ -445,6 +446,11 @@ class mfs_interface
       u64 timestamp;
     };
 
+    struct rename_barrier_metadata {
+      u64 mnode_mnum;
+      u64 timestamp;
+    };
+
     // Keeps track of free and allocated blocks on the disk. Transactions that
     // modify the block free bitmap on the disk go through a list of free_bit
     // structs in memory first.
@@ -527,8 +533,9 @@ class mfs_interface
     void add_op_to_journal(mfs_operation *op, transaction *tr = nullptr,
                            bool skip_add = false);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
-                                std::vector<pending_metadata> &pending_stack,
-                                std::vector<rename_metadata> &rename_stack);
+                  std::vector<pending_metadata> &pending_stack,
+                  std::vector<rename_metadata> &rename_stack,
+                  std::vector<rename_barrier_metadata> &rename_barrier_stack);
     void apply_rename_pair(std::vector<rename_metadata> &rename_stack);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
@@ -865,6 +872,39 @@ class mfs_operation_rename_unlink: public mfs_operation
     short mnode_type;      // type of the mnode
     char *name;            // source name
     char *newname;         // destination name
+};
+
+// Rename barriers are used only for directory renames, in order to avoid
+// forming orphaned loops on the disk due to rename and fsync.
+class mfs_operation_rename_barrier: public mfs_operation
+{
+  friend mfs_interface;
+  public:
+    NEW_DELETE_OPS(mfs_operation_rename_barrier);
+
+    mfs_operation_rename_barrier(mfs_interface *p, u64 t, u64 mnum,
+                                u64 parent, u8 m_type)
+      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(parent),
+        mnode_type(m_type)
+    {}
+
+    void apply(transaction *tr) override {}
+
+    void print()
+    {
+      cprintf("RENAME BARRIER\n");
+      cprintf("Op Type : Rename Barrier\n");
+      cprintf("Timestamp: %ld\n", timestamp);
+      cprintf("Mnode Num: %ld\n", mnode_mnum);
+      cprintf("Parent Mnode Num: %ld\n", parent_mnum);
+      cprintf("Mnode type: %d\n", mnode_type);
+    }
+
+  private:
+    u64 mnode_mnum;        // mnode number of this directory
+    u64 parent_mnum;       // mnode number of the parent of this directory at
+                           // the time of performing the directory rename
+    short mnode_type;      // type of the mnode
 };
 
 // The "logical" log of metadata operations. These operations are applied on an fsync
