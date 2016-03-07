@@ -519,7 +519,9 @@ class mfs_interface
 
     // Metadata functions
     void alloc_mnode_lock(u64 mnum);
+    void free_mnode_lock(u64 mnum);
     void alloc_metadata_log(u64 mnum);
+    void free_metadata_log(u64 mnum);
     void metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val);
     void metadata_op_end(u64 mnum, size_t cpu, u64 tsc_val);
     void add_to_metadata_log(u64 mnum, mfs_operation *op);

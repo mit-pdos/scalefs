@@ -127,6 +127,9 @@ mnode::onzero()
   rootfs_interface->add_to_metadata_log(MFS_DELETE_MNUM, op);
   rootfs_interface->metadata_op_end(MFS_DELETE_MNUM, myid(), get_tsc());
 
+  rootfs_interface->free_metadata_log(mnum_);
+  rootfs_interface->free_mnode_lock(mnum_);
+
   mnode_cache.cleanup(weakref_);
   kstats::inc(&kstats::mnode_free);
   delete this;

@@ -31,9 +31,27 @@ mfs_interface::alloc_mnode_lock(u64 mnum)
 }
 
 void
+mfs_interface::free_mnode_lock(u64 mnum)
+{
+  sleeplock *mnode_lock;
+  mnum_to_lock->lookup(mnum, &mnode_lock);
+  mnum_to_lock->remove(mnum);
+  delete mnode_lock;
+}
+
+void
 mfs_interface::alloc_metadata_log(u64 mnum)
 {
   metadata_log_htab->insert(mnum, new mfs_logical_log());
+}
+
+void
+mfs_interface::free_metadata_log(u64 mnum)
+{
+  mfs_logical_log *mfs_log;
+  metadata_log_htab->lookup(mnum, &mfs_log);
+  metadata_log_htab->remove(mnum);
+  delete mfs_log;
 }
 
 void
