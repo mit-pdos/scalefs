@@ -86,7 +86,7 @@ int main(int argc, char **argv)
 	use_fork = 0;
 	sync_when = SYNC_UNLINK;
 
-	while ((ch = getopt(argc, argv, "n:s:c:p:f:y:")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:c:pfy:")) != -1) {
 		switch (ch) {
 			case 'n':
 				num_files = atoi(optarg);
