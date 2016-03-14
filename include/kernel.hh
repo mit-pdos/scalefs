@@ -125,6 +125,7 @@ void            dir_remove_entry(sref<inode> dp, char *entry_name);
 void            balloc_on_disk(std::vector<u32>& blocks, transaction *trans);
 void            bfree_on_disk(std::vector<u32>& blocks, transaction *trans);
 void            get_superblock(struct superblock *sb);
+void            get_superblock_full(struct superblock *sb);
 
 // futex.cc
 typedef u64* futexkey_t;

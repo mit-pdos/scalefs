@@ -20,6 +20,7 @@ mfs_interface::mfs_interface()
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
+  next_reclaim_inode = 0;
   // XXX(rasha) Set up the physical journal file
 }
 
@@ -72,10 +73,8 @@ mfs_interface::free_metadata_log(u64 mnum)
 }
 
 void
-mfs_interface::free_inode(u64 mnum, transaction *tr)
+mfs_interface::free_inode(sref<inode> ip, transaction *tr)
 {
-  sref<inode> ip = get_inode(mnum, "free_inode");
-
   ilock(ip, 1);
   // Release the inode on the disk.
   ip->type = 0;
@@ -297,7 +296,7 @@ mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
       // It looks like userspace still has open file descriptors referring to
       // this mnode, so it is not safe to delete its on-disk inode just yet.
       // So mark it for deletion and postpone it until reboot.
-      // TODO: Implement the deferral.
+      defer_inode_reclaim(target->inum);
     } else {
       // The mnode is gone (which also implies that all its open file
       // descriptors have been closed as well). So it is safe to delete its
@@ -324,7 +323,7 @@ mfs_interface::delete_old_inode(u64 mfile_mnum, transaction *tr)
   inum_to_mnum->remove(ip->inum);
   free_metadata_log(mfile_mnum);
   free_mnode_lock(mfile_mnum);
-  free_inode(mfile_mnum, tr);
+  free_inode(ip, tr);
 }
 
 // Initializes the mdir the first time it is referred to. Populates directory
@@ -1624,6 +1623,26 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
   return s.get_used();
 }
 
+// FIXME: Write back the superblock using the same transaction in whose
+// context this function was invoked.
+void
+mfs_interface::defer_inode_reclaim(u32 inum)
+{
+  auto lock = inode_reclaim_lock.guard();
+
+  superblock sb;
+  get_superblock_full(&sb);
+
+  sb.reclaim_inodes[next_reclaim_inode++] = inum;
+
+  sref<buf> bp = buf::get(1, 1);
+  {
+    auto locked = bp->write();
+    memmove(locked->data, &sb, sizeof(sb));
+  }
+  bp->writeback();
+}
+
 void
 initfs()
 {
@@ -1638,6 +1657,47 @@ initfs()
   // because those transactions could include updates to the free
   // bitmap blocks too!
   rootfs_interface->initialize_free_bit_vector();
+
+  // If a file or directory is unlinked but userspace still holds open file
+  // descriptors to it at the time of fsync, its inode cannot be deleted from
+  // the disk. We postpone the deletion in such cases and reclaim those inodes
+  // here during reboot.
+  u64 inum;
+  superblock sb;
+
+  get_superblock_full(&sb);
+
+  {
+    auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
+
+    for (int i = 0; i < NRECLAIM_INODES; i++) {
+      if (!(inum = sb.reclaim_inodes[i]))
+        continue;
+
+      u64 tsc = get_tsc();
+      transaction *tr = new transaction(tsc);
+
+      sref<inode> ip = iget(1, inum);
+
+      ilock(ip, 1);
+      itrunc(ip, 0, tr);
+      iunlock(ip);
+
+      rootfs_interface->free_inode(ip, tr);
+      rootfs_interface->add_to_journal_locked(tr);
+      sb.reclaim_inodes[i] = 0;
+    }
+
+    rootfs_interface->flush_journal_locked();
+
+    // Reset the reclaim_inodes[] list in the on-disk superblock.
+    sref<buf> bp = buf::get(1, 1);
+    {
+      auto locked = bp->write();
+      memmove(locked->data, &sb, sizeof(sb));
+    }
+    bp->writeback();
+  }
 
   devsw[MAJ_BLKSTATS].pread = blkstatsread;
   devsw[MAJ_EVICTCACHES].write = evict_caches;

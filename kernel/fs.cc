@@ -69,6 +69,19 @@ void get_superblock(struct superblock *sb) {
   sb->nblocks = sb_root.nblocks;
 }
 
+void get_superblock_full(struct superblock *sb)
+{
+  if (!superblock_read) {
+    readsb(1, &sb_root);
+    superblock_read = true;
+  }
+  sb->size = sb_root.size;
+  sb->ninodes = sb_root.ninodes;
+  sb->nblocks = sb_root.nblocks;
+  for (int i = 0; i < NRECLAIM_INODES; i++)
+    sb->reclaim_inodes[i] = sb_root.reclaim_inodes[i];
+}
+
 // Zero a block, and log it in the transaction.
 static void
 bzero(int dev, int bno, transaction *trans = NULL)

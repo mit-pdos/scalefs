@@ -473,7 +473,7 @@ class mfs_interface
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
-    void free_inode(u64 mnode_mnum, transaction *tr);
+    void free_inode(sref<inode> ip, transaction *tr);
     // File functions
     u64 get_file_size(u64 mfile_mnum);
     void update_file_size(u64 mfile_mnum, u32 size, transaction *tr);
@@ -545,6 +545,7 @@ class mfs_interface
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
     void mfs_rename_link(mfs_operation_rename_link *op, transaction *tr);
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
+    void defer_inode_reclaim(u32 inum);
 
     // Block free bit vector functions
     void initialize_free_bit_vector();
@@ -582,7 +583,9 @@ class mfs_interface
     // to that mnode in the transaction log.
     linearhash<u64, mfs_op_idx> *prune_trans_log;
 
-    journal *fs_journal;            // The phsyical journal
+  public:
+    journal *fs_journal;            // The physical journal
+  private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
     sref<inode> sv6_journal;
 
@@ -595,6 +598,9 @@ class mfs_interface
     // Used to speed up block allocation and make it O(1).
     ilist<free_bit, &free_bit::link> free_bit_freelist;
     sleeplock freelist_lock; // Synchronizes access to free_bit_freelist.
+
+    sleeplock inode_reclaim_lock;
+    int next_reclaim_inode; // Protected by inode_reclaim_lock.
 };
 
 class mfs_operation
