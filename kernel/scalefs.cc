@@ -292,15 +292,20 @@ mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
   iunlock(i);
 
   if (!target->nlink()) {
-    // TODO: Arrange to delete the inode when it is safe.
+    u64 mnum;
+    sref<mnode> m = mnode_lookup(target->inum, &mnum);
+    if (m) {
+      // It looks like userspace still has open file descriptors referring to
+      // this mnode, so it is not safe to delete its on-disk inode just yet.
+      // So mark it for deletion and postpone it until reboot.
+      // TODO: Implement the deferral.
+    } else {
+      // The mnode is gone (which also implies that all its open file
+      // descriptors have been closed as well). So it is safe to delete its
+      // inode from the disk.
+      delete_old_inode(mnum, tr);
+    }
   }
-
-  // Even if the inode's link count drops to zero, we can't actually delete the
-  // inode and its file-contents at this point, because userspace might still
-  // have open files referring to this inode. We can delete it only after the
-  // link count drops to zero *and* all the open files referring to this
-  // inode have been closed. Hence, we postpone the delete until the mnode's
-  // refcount drops to zero (which satisfies both the above requirements).
 }
 
 // Deletes the inode and its file-contents from the disk.
