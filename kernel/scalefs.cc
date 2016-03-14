@@ -15,13 +15,31 @@
 
 mfs_interface::mfs_interface()
 {
-  inum_to_mnode = new chainhash<u64, sref<mnode>>(NINODES_PRIME);
+  inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
   alloc_metadata_log(MFS_DELETE_MNUM);
   // XXX(rasha) Set up the physical journal file
+}
+
+bool
+mfs_interface::inum_lookup(u64 mnum, u64 *inum)
+{
+  if (!mnum_to_inum)
+    panic("mnum_to_inum mapping does not exist yet");
+  if (mnum_to_inum->lookup(mnum, inum))
+    return true;
+  return false;
+}
+
+sref<mnode>
+mfs_interface::mnode_lookup(u64 inum, u64 *mnum)
+{
+  if (inum_to_mnum->lookup(inum, mnum))
+    return root_fs->mget(*mnum);
+  return sref<mnode>();
 }
 
 void
@@ -161,7 +179,7 @@ mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
   i = ialloc(1, type);
   iunlock(i);
 
-  inum_to_mnode->insert(i->inum, root_fs->mget(mnum));
+  inum_to_mnum->insert(i->inum, mnum);
   mnum_to_inum->insert(mnum, i->inum);
 
   return i;
@@ -273,13 +291,9 @@ mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
     dirunlink(i, name, target->inum, false, tr);
   iunlock(i);
 
-  // FIXME: The mfs delete transaction depends on hitting mnode::onzero()
-  // when its last open file descriptor gets closed. But inum_to_mnode holds
-  // an sref to the mnode, so it is unfortunate that we have to prematurely
-  // remove the mapping from inum_to_mnode, just to ensure that there is only
-  // one outstanding refcount to be dropped, at the time of the last close().
-  if (!target->nlink())
-    inum_to_mnode->remove(target->inum);
+  if (!target->nlink()) {
+    // TODO: Arrange to delete the inode when it is safe.
+  }
 
   // Even if the inode's link count drops to zero, we can't actually delete the
   // inode and its file-contents at this point, because userspace might still
@@ -299,8 +313,9 @@ mfs_interface::delete_old_inode(u64 mfile_mnum, transaction *tr)
   itrunc(ip, 0, tr);
   iunlock(ip);
 
-  free_inode(mfile_mnum, tr);
   mnum_to_inum->remove(mfile_mnum);
+  inum_to_mnum->remove(ip->inum);
+  free_inode(mfile_mnum, tr);
 }
 
 // Initializes the mdir the first time it is referred to. Populates directory
@@ -510,7 +525,8 @@ mfs_interface::sync_dirty_files()
   // with a callback) is more efficient than doing lookups for all inodes from
   // 0 through sb.ninodes in the hash-table.
 
-  inum_to_mnode->enumerate([](const u64 &inum, sref<mnode> &m)->bool {
+  inum_to_mnum->enumerate([](const u64 &inum, u64 &mnum)->bool {
+    sref<mnode> m = root_fs->mget(mnum);
     if (m && m->type() == mnode::types::file)
       m->as_file()->sync_file(false);
 
@@ -529,13 +545,12 @@ mfs_interface::evict_bufcache()
   get_superblock(&sb);
 
   for (u64 inum = 0; inum < sb.ninodes; inum++) {
-    sref<mnode> m;
+    u64 mnum;
+    sref<mnode> m = mnode_lookup(inum, &mnum);
 
-    if (inum_to_mnode->lookup(inum, &m) && m) {
-      if(m->type() == mnode::types::file) {
+    if (m && m->type() == mnode::types::file) {
         sref<inode> ip = get_inode(m->mnum_, "evict_bufcache");
         drop_bufcache(ip);
-      }
     }
   }
 }
@@ -550,16 +565,15 @@ mfs_interface::evict_pagecache()
   get_superblock(&sb);
 
   for (u64 inum = 0; inum < sb.ninodes; inum++) {
-    sref<mnode> m;
+    u64 mnum;
+    sref<mnode> m = mnode_lookup(inum, &mnum);
 
-    if (inum_to_mnode->lookup(inum, &m) && m) {
-      if (m->type() == mnode::types::file) {
+    if (m && m->type() == mnode::types::file) {
           // Skip uninitialized files, as they won't have any page-cache
           // pages yet. Moreover, file initialization itself consumes
           // some memory (for the radix array), which is undesirable here.
           if (m->is_initialized())
             m->as_file()->drop_pagecache();
-      }
     }
   }
 }
@@ -1378,21 +1392,11 @@ mfs_interface::clear_journal()
   fs_journal->update_offset(0);
 }
 
-bool
-mfs_interface::inum_lookup(u64 mnum, u64 *inum)
-{
-  if (!mnum_to_inum)
-    panic("mnum_to_inum mapping does not exist yet");
-  if (mnum_to_inum->lookup(mnum, inum))
-    return true;
-  return false;
-}
-
 sref<mnode>
 mfs_interface::mnode_alloc(u64 inum, u8 mtype)
 {
   auto m = root_fs->alloc(mtype);
-  inum_to_mnode->insert(inum, m.mn());
+  inum_to_mnum->insert(inum, m.mn()->mnum_);
   if (!mnum_to_inum)
     panic("mnum_to_inum mapping does not exist yet");
   mnum_to_inum->insert(m.mn()->mnum_, inum);
@@ -1402,8 +1406,9 @@ mfs_interface::mnode_alloc(u64 inum, u8 mtype)
 sref<mnode>
 mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent)
 {
-  sref<mnode> m;
-  if (inum_to_mnode->lookup(inum, &m))
+  u64 mnum;
+  sref<mnode> m = mnode_lookup(inum, &mnum);
+  if (m)
     return m;
 
   sref<inode> i = iget(1, inum);
@@ -1462,8 +1467,10 @@ sref<mnode>
 mfs_interface::load_root()
 {
   scoped_gc_epoch e;
-  sref<mnode> m;
-  if (inum_to_mnode->lookup(1, &m))
+  u64 mnum;
+  sref<mnode> m = mnode_lookup(1, &mnum);
+
+  if (m)
     return m;
 
   sref<inode> i = iget(1, 1);

@@ -32,6 +32,10 @@ mlinkref
 mfs::alloc(u8 type, u64 parent_mnum)
 {
   scoped_cli cli;
+
+  // Never reuse mnode numbers, because even after mnodes are deleted in MFS,
+  // their oplogs (indexed by mnode number) can still be around, waiting to
+  // be flushed.
   auto mnum = mnode::mnumber(type, myid(), (*next_mnum_)++).v_;
 
   sref<mnode> m;

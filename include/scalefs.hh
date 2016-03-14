@@ -494,6 +494,7 @@ class mfs_interface
     void delete_old_inode(u64 mfile_mnum, transaction *tr);
 
     bool inum_lookup(u64 mnum, u64 *inum);
+    sref<mnode> mnode_lookup(u64 inum, u64 *mnum);
 
     // Initializes the root directory. Called during boot.
     sref<mnode> load_root();
@@ -559,8 +560,8 @@ class mfs_interface
     sref<mnode> load_dir_entry(u64 inum, sref<mnode> parent);
     sref<mnode> mnode_alloc(u64 inum, u8 mtype);
     sref<inode> get_inode(u64 mnum, const char *str);
-    // Mapping from disk inode numbers to the corresponding mnodes
-    chainhash<u64, sref<mnode>> *inum_to_mnode;
+    // Mapping from disk inode numbers to the corresponding mnode numbers
+    chainhash<u64, u64> *inum_to_mnum;
     // Mapping from in-memory mnode numbers to disk inode numbers
     chainhash<u64, u64> *mnum_to_inum;
     chainhash<u64, sleeplock*> *mnum_to_lock;
