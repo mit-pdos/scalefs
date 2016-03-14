@@ -161,7 +161,7 @@ mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
   i = ialloc(1, type);
   iunlock(i);
 
-  inum_to_mnode->insert(i->inum, root_fs->get(mnum));
+  inum_to_mnode->insert(i->inum, root_fs->mget(mnum));
   mnum_to_inum->insert(mnum, i->inum);
 
   return i;
@@ -222,7 +222,7 @@ mfs_interface::truncate_file(u64 mfile_mnum, u32 offset, transaction *tr)
   itrunc(ip, offset, tr);
   iunlock(ip);
 
-  sref<mnode> m = root_fs->get(mfile_mnum);
+  sref<mnode> m = root_fs->mget(mfile_mnum);
   if (m)
     m->as_file()->remove_pgtable_mappings(offset);
 }

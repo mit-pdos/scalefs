@@ -67,7 +67,7 @@ namex(sref<mnode> cwd, const char* path, bool nameiparent, strbuf<DIRSIZ>* name)
   sref<mnode> m;
 
   if (*path == '/')
-    m = root_fs->get(root_mnum);
+    m = root_fs->mget(root_mnum);
   else
     m = cwd;
 

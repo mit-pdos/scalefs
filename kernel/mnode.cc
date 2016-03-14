@@ -12,12 +12,12 @@ namespace {
 };
 
 sref<mnode>
-mfs::get(u64 mnum)
+mfs::mget(u64 mnum)
 {
   for (;;) {
     sref<mnode> m = mnode_cache.lookup(make_pair(this, mnum));
     if (m) {
-      // wait for the mnode to be loaded from disk
+      // Wait for the mnode to be ready.
       while (!m->valid_) {
         /* spin */
       }

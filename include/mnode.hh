@@ -153,7 +153,7 @@ private:
 public:
   NEW_DELETE_OPS(mfs);
 
-  sref<mnode> get(u64 mnum);
+  sref<mnode> mget(u64 mnum);
   mlinkref alloc(u8 type, u64 parent_mnum = 0);
   spinlock dir_rename_lock __mpalign__;
 };
@@ -239,7 +239,7 @@ public:
 
   sref<mnode> lookup(const strbuf<DIRSIZ>& name) const {
     if (name == ".")
-      return fs_->get(mnum_);
+      return fs_->mget(mnum_);
 
     u64 mprev = -1;
     for (;;) {
@@ -247,12 +247,12 @@ public:
       if (!map_.lookup(name, &mnum))
         return sref<mnode>();
 
-      sref<mnode> m = fs_->get(mnum);
+      sref<mnode> m = fs_->mget(mnum);
       if (m)
         return m;
 
       /*
-       * The mnode was GCed between the lookup and mnode::get().
+       * The mnode was GCed between the lookup and mfs::mget().
        * Retry the lookup.  Crash if we repeatedly can't find
        * the same mnode (to make such bugs easier to track down).
        */
@@ -351,7 +351,7 @@ mnode::as_dir()
   auto md = static_cast<mdir*>(this);
   if (!initialized_ && fs_ == root_fs) {
     initialized_ = true;
-    rootfs_interface->initialize_dir(root_fs->get(mnum_));
+    rootfs_interface->initialize_dir(root_fs->mget(mnum_));
   }
   return md;
 }
@@ -561,7 +561,7 @@ mnode::as_file()
   auto mf = static_cast<mfile*>(this);
   if (!initialized_ && fs_ == root_fs) {
     initialized_ = true;
-    rootfs_interface->initialize_file(root_fs->get(mnum_));
+    rootfs_interface->initialize_file(root_fs->mget(mnum_));
   }
   return mf;
 }
