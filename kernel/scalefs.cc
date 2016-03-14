@@ -20,7 +20,6 @@ mfs_interface::mfs_interface()
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
-  alloc_metadata_log(MFS_DELETE_MNUM);
   // XXX(rasha) Set up the physical journal file
 }
 
@@ -936,15 +935,6 @@ mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr)
   char str[DIRSIZ];
   strcpy(str, op->name);
   unlink_old_inode(op->parent_mnum, str, tr);
-}
-
-// Delete operation
-void
-mfs_interface::mfs_delete(mfs_operation_delete *op, transaction *tr)
-{
-  scoped_gc_epoch e;
-
-  delete_old_inode(op->mnode_mnum, tr);
 }
 
 // Rename Link operation

@@ -543,7 +543,6 @@ class mfs_interface
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
-    void mfs_delete(mfs_operation_delete *op, transaction *tr);
     void mfs_rename_link(mfs_operation_rename_link *op, transaction *tr);
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
 
@@ -739,42 +738,6 @@ class mfs_operation_unlink: public mfs_operation
     u64 mnode_mnum;   // mnode number of the file/directory to be unlinked
     u64 parent_mnum;  // mnode number of the parent directory
     char *name;       // name of the file/directory
-};
-
-
-// This operation is used to delete an inode and its file-contents, when its
-// last link has been removed and its last open file descriptor has been closed.
-// Called when the corresponding mnode's reference count drops to zero (which
-// indicates that both the above conditions are true).
-
-// Special, invalid mnode number, used to consolidate all delete operations
-// together in a common, dedicated (per-cpu) mfs_log instance.
-#define MFS_DELETE_MNUM 0
-
-class mfs_operation_delete: public mfs_operation
-{
-  friend mfs_interface;
-  public:
-    NEW_DELETE_OPS(mfs_operation_delete);
-
-    mfs_operation_delete(mfs_interface *p, u64 t, u64 mnum)
-      : mfs_operation(p, t), mnode_mnum(mnum) { }
-
-    void apply(transaction *tr) override
-    {
-      parent_mfs->mfs_delete(this, tr);
-    }
-
-    void print()
-    {
-      cprintf("DELETE\n");
-      cprintf("Op Type : Delete\n");
-      cprintf("Timestamp: %ld\n", timestamp);
-      cprintf("Mnode Num: %ld\n", mnode_mnum);
-    }
-
-  private:
-    u64 mnode_mnum;  // mnode number of the file/directory to be deleted
 };
 
 class mfs_operation_rename_link: public mfs_operation

@@ -108,28 +108,8 @@ mnode::is_dirty()
 void
 mnode::onzero()
 {
-  // The mnode's refcount dropping to zero is a reliable indication that it
-  // is now safe to delete the inode and its file-contents (i.e., the link
-  // count is zero and no process has this file open). So add the corresponding
-  // delete operation to the MFS log.
-
-  // TODO: If the kernel crashes at this point (i.e., after the last unlink
-  // operation has been logged/applied, but before the corresponding delete
-  // operation has been logged), then we won't be able to reclaim the blocks
-  // belonging to this file upon reboot.
-
-  // Always log all delete operations in a common, dedicated (per-cpu) mfs_log
-  // instance, using the special invalid mnode number MFS_DELETE_MNUM (which is
-  // guaranteed to never clash with any valid mnode number).
-
-  rootfs_interface->metadata_op_start(MFS_DELETE_MNUM, myid(), get_tsc());
-
   if (type() == types::file)
     this->as_file()->remove_pgtable_mappings(0);
-
-  mfs_operation *op = new mfs_operation_delete(rootfs_interface, get_tsc(), mnum_);
-  rootfs_interface->add_to_metadata_log(MFS_DELETE_MNUM, op);
-  rootfs_interface->metadata_op_end(MFS_DELETE_MNUM, myid(), get_tsc());
 
   rootfs_interface->free_metadata_log(mnum_);
   rootfs_interface->free_mnode_lock(mnum_);
