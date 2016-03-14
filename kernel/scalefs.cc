@@ -291,7 +291,7 @@ mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
   if (!target->nlink()) {
     u64 mnum;
     sref<mnode> m = mnode_lookup(target->inum, &mnum);
-    if (m) {
+    if (m && m->get_consistent() > 1) {
       // It looks like userspace still has open file descriptors referring to
       // this mnode, so it is not safe to delete its on-disk inode just yet.
       // So mark it for deletion and postpone it until reboot.
