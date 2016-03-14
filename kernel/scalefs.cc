@@ -20,7 +20,6 @@ mfs_interface::mfs_interface()
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
-  next_reclaim_inode = 0;
   // XXX(rasha) Set up the physical journal file
 }
 
@@ -1628,12 +1627,19 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
 void
 mfs_interface::defer_inode_reclaim(u32 inum)
 {
+  // FIXME: This is not scalable because of the global lock, and can hurt
+  // performance if this path is taken very often.
   auto lock = inode_reclaim_lock.guard();
 
   superblock sb;
   get_superblock_full(&sb);
 
-  sb.reclaim_inodes[next_reclaim_inode++] = inum;
+  if (sb.num_reclaim_inodes >= NRECLAIM_INODES) {
+    cprintf("WARNING: No space left to mark inodes for deferred deletion!\n");
+    return;
+  }
+
+  sb.reclaim_inodes[sb.num_reclaim_inodes++] = inum;
 
   sref<buf> bp = buf::get(1, 1);
   {
@@ -1670,7 +1676,7 @@ initfs()
   {
     auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
 
-    for (int i = 0; i < NRECLAIM_INODES; i++) {
+    for (int i = 0; i < sb.num_reclaim_inodes; i++) {
       if (!(inum = sb.reclaim_inodes[i]))
         continue;
 
@@ -1691,6 +1697,7 @@ initfs()
     rootfs_interface->flush_journal_locked();
 
     // Reset the reclaim_inodes[] list in the on-disk superblock.
+    sb.num_reclaim_inodes = 0;
     sref<buf> bp = buf::get(1, 1);
     {
       auto locked = bp->write();

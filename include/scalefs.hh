@@ -600,7 +600,6 @@ class mfs_interface
     sleeplock freelist_lock; // Synchronizes access to free_bit_freelist.
 
     sleeplock inode_reclaim_lock;
-    int next_reclaim_inode; // Protected by inode_reclaim_lock.
 };
 
 class mfs_operation

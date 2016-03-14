@@ -78,7 +78,8 @@ void get_superblock_full(struct superblock *sb)
   sb->size = sb_root.size;
   sb->ninodes = sb_root.ninodes;
   sb->nblocks = sb_root.nblocks;
-  for (int i = 0; i < NRECLAIM_INODES; i++)
+  sb->num_reclaim_inodes = sb_root.num_reclaim_inodes;
+  for (int i = 0; i < sb_root.num_reclaim_inodes; i++)
     sb->reclaim_inodes[i] = sb_root.reclaim_inodes[i];
 }
 
