@@ -111,9 +111,6 @@ mnode::onzero()
   if (type() == types::file)
     this->as_file()->remove_pgtable_mappings(0);
 
-  rootfs_interface->free_metadata_log(mnum_);
-  rootfs_interface->free_mnode_lock(mnum_);
-
   mnode_cache.cleanup(weakref_);
   kstats::inc(&kstats::mnode_free);
   delete this;

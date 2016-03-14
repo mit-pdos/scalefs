@@ -317,8 +317,13 @@ mfs_interface::delete_old_inode(u64 mfile_mnum, transaction *tr)
   itrunc(ip, 0, tr);
   iunlock(ip);
 
+  // TODO: Make sure to free up these data-structures even if we happen to
+  // absorb (cancel-out) the create/link and the unlink operations of this
+  // mnode.
   mnum_to_inum->remove(mfile_mnum);
   inum_to_mnum->remove(ip->inum);
+  free_metadata_log(mfile_mnum);
+  free_mnode_lock(mfile_mnum);
   free_inode(mfile_mnum, tr);
 }
 
