@@ -499,7 +499,7 @@ mfs_interface::sync_dirty_files()
 #if 0
   superblock sb;
 
-  get_superblock(&sb);
+  get_superblock(&sb, false);
 
   // Invoke sync_file() for every file mnode that we know of, by evaluating
   // every key-value pair in the hash-table. This scheme (of using enumerate()
@@ -523,7 +523,7 @@ mfs_interface::evict_bufcache()
 
   cprintf("evict_caches: dropping buffer-cache blocks\n");
 
-  get_superblock(&sb);
+  get_superblock(&sb, false);
 
   for (u64 inum = 0; inum < sb.ninodes; inum++) {
     u64 mnum;
@@ -543,7 +543,7 @@ mfs_interface::evict_pagecache()
 
   cprintf("evict_caches: dropping page-cache pages\n");
 
-  get_superblock(&sb);
+  get_superblock(&sb, false);
 
   for (u64 inum = 0; inum < sb.ninodes; inum++) {
     u64 mnum;
@@ -1458,7 +1458,7 @@ mfs_interface::initialize_free_bit_vector()
   u32 blocknum;
   superblock sb;
 
-  get_superblock(&sb);
+  get_superblock(&sb, false);
 
   // Allocate the memory for free_bit_vector in one shot, instead of doing it
   // piecemeal using .emplace_back() in a loop.
@@ -1516,7 +1516,7 @@ mfs_interface::alloc_block()
     return bno;
   }
 
-  get_superblock(&sb);
+  get_superblock(&sb, false);
   return sb.size; // out of blocks
 }
 
@@ -1604,7 +1604,7 @@ mfs_interface::defer_inode_reclaim(u32 inum)
   auto lock = inode_reclaim_lock.guard();
 
   superblock sb;
-  get_superblock_full(&sb);
+  get_superblock(&sb, true);
 
   if (sb.num_reclaim_inodes >= NRECLAIM_INODES) {
     cprintf("WARNING: No space left to mark inodes for deferred deletion!\n");
@@ -1643,7 +1643,7 @@ initfs()
   u64 inum;
   superblock sb;
 
-  get_superblock_full(&sb);
+  get_superblock(&sb, true);
 
   {
     auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();

@@ -6,20 +6,20 @@
 //
 // Disk layout is: superblock, inodes, block in-use bitmap, data blocks.
 //
-// This file contains the low-level file system manipulation 
+// This file contains the low-level file system manipulation
 // routines.  The (higher-level) system call implementations
 // are in sysfile.c.
 
 /*
  * inode cache will be RCU-managed:
- * 
+ *
  * - to evict, mark inode as a victim
  * - lookups that encounter a victim inode must return an error (-E_RETRY)
  * - E_RETRY rolls back to the beginning of syscall/pagefault and retries
  * - out-of-memory error should be treated like -E_RETRY
  * - once an inode is marked as victim, it can be gc_delayed()
  * - the do_gc() method should remove inode from the namespace & free it
- * 
+ *
  * - inodes have a refcount that lasts beyond a GC epoch
  * - to bump refcount, first bump, then check victim flag
  * - if victim flag is set, reduce the refcount and -E_RETRY
@@ -45,7 +45,6 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static sref<inode> the_root;
 static struct superblock sb_root;
-static bool superblock_read = false;
 
 #define IADDRSSZ (sizeof(u32)*NINDIRECT)
 #define BLOCKROUNDUP(off) (((off)%BSIZE) ? (off)/BSIZE+1 : (off)/BSIZE)
@@ -59,28 +58,18 @@ readsb(int dev, struct superblock *sb)
   memmove(sb, copy->data, sizeof(*sb));
 }
 
-void get_superblock(struct superblock *sb) {
-  if (!superblock_read) {
-    readsb(1, &sb_root);
-    superblock_read = true;
-  }
-  sb->size = sb_root.size;
-  sb->ninodes = sb_root.ninodes;
-  sb->nblocks = sb_root.nblocks;
-}
-
-void get_superblock_full(struct superblock *sb)
+void
+get_superblock(struct superblock *sb, bool get_reclaim_inodes)
 {
-  if (!superblock_read) {
-    readsb(1, &sb_root);
-    superblock_read = true;
-  }
   sb->size = sb_root.size;
   sb->ninodes = sb_root.ninodes;
   sb->nblocks = sb_root.nblocks;
-  sb->num_reclaim_inodes = sb_root.num_reclaim_inodes;
-  for (int i = 0; i < sb_root.num_reclaim_inodes; i++)
-    sb->reclaim_inodes[i] = sb_root.reclaim_inodes[i];
+
+  if (get_reclaim_inodes) {
+    sb->num_reclaim_inodes = sb_root.num_reclaim_inodes;
+    for (int i = 0; i < sb_root.num_reclaim_inodes; i++)
+      sb->reclaim_inodes[i] = sb_root.reclaim_inodes[i];
+  }
 }
 
 // Zero a block, and log it in the transaction.
@@ -108,9 +97,6 @@ bzero_writeback(int dev, int bno)
   bp->writeback_async();
 }
 
-//
-// Blocks
-//
 class out_of_blocks : public std::exception
 {
   virtual const char* what() const throw() override
@@ -139,11 +125,6 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
   sref<buf> bp;
   int b, bi;
   u32 blocknum;
-
-  if (!superblock_read) {
-    readsb(dev, &sb_root);
-    superblock_read = true;
-  }
 
   if (dev == 1) {
     b = rootfs_interface->alloc_block();
@@ -176,7 +157,7 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
     if(found)
       break;
   }
-  
+
   if(found)
     return b + bi;
 
@@ -190,11 +171,6 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
 static void
 balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 {
-  if (!superblock_read) {
-    readsb(1, &sb_root);
-    superblock_read = true;
-  }
-
   // Sort the blocks in ascending order, so that we update the bitmap blocks
   // on the disk one after another, without going back and forth.
   std::sort(blocks.begin(), blocks.end());
@@ -262,11 +238,6 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
     if (trans)
       trans->add_free_block(b);
     return;
-  }
-
-  if (!superblock_read) {
-    readsb(dev, &sb_root);
-    superblock_read = true;
   }
 
   {
@@ -337,7 +308,7 @@ bfree_on_disk(std::vector<u32>& blocks, transaction *trans)
 // the superblock.  The kernel keeps a cache of the in-use
 // on-disk structures to provide a place for synchronizing access
 // to inodes shared between multiple processes.
-// 
+//
 // ip->ref counts the number of pointer references to this cached
 // inode; references are typically kept in struct file and in proc->cwd.
 // When ip->ref falls to zero, the inode is no longer cached.
@@ -346,15 +317,15 @@ bfree_on_disk(std::vector<u32>& blocks, transaction *trans)
 // Processes are only allowed to read and write inode
 // metadata and contents when holding the inode's lock,
 // represented by the I_BUSY flag in the in-memory copy.
-// Because inode locks are held during disk accesses, 
+// Because inode locks are held during disk accesses,
 // they are implemented using a flag rather than with
 // spin locks.  Callers are responsible for locking
 // inodes before passing them to routines in this file; leaving
 // this responsibility with the caller makes it possible for them
 // to create arbitrarily-sized atomic operations.
 //
-// To give maximum control over locking to the callers, 
-// the routines in this file that return inode pointers 
+// To give maximum control over locking to the callers,
+// the routines in this file that return inode pointers
 // return pointers to *unlocked* inodes.  It is the callers'
 // responsibility to lock them before using them.  A non-zero
 // ip->ref keeps these unlocked inodes in the cache.
@@ -378,6 +349,8 @@ initinode(void)
     panic("initinode: insert the_root failed");
   the_root->init();
 
+  readsb(ROOTDEV, &sb_root); // Initialize sb_root by reading the superblock.
+
   if (VERBOSE) {
     struct superblock sb;
     u64 blocks;
@@ -396,11 +369,11 @@ template<size_t N>
 struct inode_cache : public balance_pool<inode_cache<N>>
 {
   inode_cache()
-    : balance_pool<inode_cache<N>> (N), 
+    : balance_pool<inode_cache<N>> (N),
       head_(0), length_(0), lock_("inode_cache", LOCKSTAT_FS)
   {
   }
-  
+
   int
   alloc()
   {
@@ -496,7 +469,7 @@ struct inode_cache_dir
   void
   add(u32 inum)
   {
-    // XXX(sbw) if cache->length_ == N should we call 
+    // XXX(sbw) if cache->length_ == N should we call
     // balancer_.balance()?
     cache_->add(inum);
   }
@@ -559,10 +532,6 @@ ialloc(u32 dev, short type)
   }
 
   // search through this core's inodes
-  if (!superblock_read) {
-    readsb(dev, &sb_root);
-    superblock_read = true;
-  }
 
 #if 0
   // TODO: Partitioning inodes by CPU number this way is great for scalability,
@@ -699,12 +668,12 @@ iget(u32 dev, u32 inum)
     }
     return ip;
   }
-  
+
   // Allocate fresh inode cache slot.
   ip = inode::alloc(dev, inum);
   if (ip == nullptr)
     panic("iget: should throw_bad_alloc()");
-  
+
   // Lock the inode
   ip->busy = true;
   ip->readbusy = 1;
@@ -804,7 +773,7 @@ inode::onzero(void)
   }
   if(!valid)
     panic("iput not valid");
-  
+
   busy = true;
   readbusy++;
 
@@ -822,8 +791,8 @@ inode::onzero(void)
   }*/
 
   release(&lock);
- 
-  inode* ip = this; 
+
+  inode* ip = this;
   ins->remove(make_pair(dev, inum), &ip);
   the_inode_cache.add(inum);
   gc_delayed(ip);
@@ -877,7 +846,7 @@ iunlock(sref<inode> ip)
 //
 // The contents (data) associated with each inode is stored
 // in a sequence of blocks on the disk.  The first NDIRECT blocks
-// are listed in ip->addrs[].  The next NINDIRECT blocks are 
+// are listed in ip->addrs[].  The next NINDIRECT blocks are
 // listed in the block ip->addrs[NDIRECT].  The next NINDIRECT^2
 // blocks are doubly-indirect from ip->addrs[NDIRECT+1].
 
@@ -1297,7 +1266,8 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
 }
 
 void
-update_size(sref<inode> ip, u32 size, transaction *trans) {
+update_size(sref<inode> ip, u32 size, transaction *trans)
+{
   auto w = ip->seq.write_begin();
   ip->size = size;
   iupdate(ip, trans);
@@ -1449,7 +1419,7 @@ dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec) {
       if (exists) {
         sref<inode> ip = iget(dp->dev, inum);
         if (ip->type == T_DIR)
-          dirunlink(dp, name.buf_, inum, true); 
+          dirunlink(dp, name.buf_, inum, true);
         else if (ip->type == T_FILE)
           dirunlink(dp, name.buf_, inum, false);
       }
@@ -1464,7 +1434,7 @@ dir_remove_entry(sref<inode> dp, char* entry_name) {
       if (strcmp(entry_name, name.buf_) == 0) {
         sref<inode> ip = iget(dp->dev, inum);
         if (ip->type == T_DIR)
-          dirunlink(dp, name.buf_, inum, true); 
+          dirunlink(dp, name.buf_, inum, true);
         else if (ip->type == T_FILE)
           dirunlink(dp, name.buf_, inum, false);
       }
@@ -1553,7 +1523,7 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
 // Update the pointer to the element following the copied one.
 // The returned path has no leading slashes,
 // so the caller can check *path=='\0' to see if the name is the last one.
-// 
+//
 // If copied into name, return 1.
 // If no name to remove, return 0.
 // If the name is longer than DIRSIZ, return -1;
