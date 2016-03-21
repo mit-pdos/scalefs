@@ -493,8 +493,8 @@ class mfs_interface
     void unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr);
     void delete_old_inode(u64 mfile_mnum, transaction *tr);
 
-    bool inum_lookup(u64 mnum, u64 *inum);
-    sref<mnode> mnode_lookup(u64 inum, u64 *mnum);
+    bool inum_lookup(u64 mnum, u64 *inumptr);
+    sref<mnode> mnode_lookup(u64 inum, u64 *mnumptr);
 
     // Initializes the root directory. Called during boot.
     sref<mnode> load_root();

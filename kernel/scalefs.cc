@@ -24,20 +24,16 @@ mfs_interface::mfs_interface()
 }
 
 bool
-mfs_interface::inum_lookup(u64 mnum, u64 *inum)
+mfs_interface::inum_lookup(u64 mnum, u64 *inumptr)
 {
-  if (!mnum_to_inum)
-    panic("mnum_to_inum mapping does not exist yet");
-  if (mnum_to_inum->lookup(mnum, inum))
-    return true;
-  return false;
+  return mnum_to_inum->lookup(mnum, inumptr);
 }
 
 sref<mnode>
-mfs_interface::mnode_lookup(u64 inum, u64 *mnum)
+mfs_interface::mnode_lookup(u64 inum, u64 *mnumptr)
 {
-  if (inum_to_mnum->lookup(inum, mnum))
-    return root_fs->mget(*mnum);
+  if (inum_to_mnum->lookup(inum, mnumptr))
+    return root_fs->mget(*mnumptr);
   return sref<mnode>();
 }
 
@@ -94,19 +90,11 @@ sref<inode>
 mfs_interface::get_inode(u64 mnum, const char *str)
 {
   u64 inum = 0;
-  sref<inode> i;
 
-  if (!mnum_to_inum)
-    panic("%s: mnum_to_inum mapping does not exist yet", str);
-
-  if (!mnum_to_inum->lookup(mnum, &inum))
+  if (!inum_lookup(mnum, &inum))
     panic("%s: Inode mapping for mnode# %ld does not exist", str, mnum);
 
-  i = iget(1, inum);
-  if(!i)
-    panic("%s: inode %ld does not exist", str, inum);
-
-  return i;
+  return iget(1, inum);
 }
 
 // Initializes the size of an mfile to the on-disk file size. This helps the
@@ -1395,8 +1383,6 @@ mfs_interface::mnode_alloc(u64 inum, u8 mtype)
 {
   auto m = root_fs->alloc(mtype);
   inum_to_mnum->insert(inum, m.mn()->mnum_);
-  if (!mnum_to_inum)
-    panic("mnum_to_inum mapping does not exist yet");
   mnum_to_inum->insert(m.mn()->mnum_, inum);
   return m.mn();
 }
