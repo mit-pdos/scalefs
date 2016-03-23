@@ -183,17 +183,18 @@ balloc_on_disk(std::vector<u32>& blocks, transaction *trans)
 }
 
 
-// Free a disk block, without zeroing it out.
+// Free a disk block. We never zero out blocks during free (we do that only
+// during allocation, if desired).
 //
 // This makes changes only to the in-memory free-bit-vector (maintained by
 // rootfs_interface), not the one on the disk.
 //
 // delayed_free = true indicates that the block should not be marked free in the
 // in-memory free-bit-vector just yet. This is delayed until the time that the
-// transaction is processed. This is needed when we do not want truncated blocks
-// to be available for use until the file fsync commits.
+// transaction is processed. We need this to ensure that the blocks freed in a
+// transaction are not available for reuse until that transaction commits.
 static void
-bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
+bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
 {
   u32 b = x;
 
@@ -207,39 +208,13 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
 }
 
 
-// When freeing metadata blocks, log the zeroing of metadata blocks to the
-// journal.
+// TODO: Old code; can be discarded if we don't implement any meaningful
+// distinction/optimization between freeing metadata and data blocks.
 #define bfree_metadata(dev, x, trans, delayed_free) \
-                                bfree(dev, x, trans, delayed_free, false)
+                                bfree(dev, x, trans, delayed_free)
 
-// When freeing data blocks, directly writeback the zeroed out datablocks
-// to the disk.
 #define bfree_datablock(dev, x, trans, delayed_free) \
-                                bfree(dev, x, trans, delayed_free, true)
-
-
-// Free a disk block after zeroing it out.
-//
-// zero_writeback = true indicates that the zeroed out block should be
-// immediately written back to the disk, without logging it in the transaction.
-// This is used when freeing data blocks of a file, to avoid wasting precious
-// space in the journal.
-static void
-bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false,
-      bool zero_writeback = false)
-{
-
-
-#if 0
-  u32 b = x;
-  if (zero_writeback)
-    bzero_writeback(dev, b);
-  else
-    bzero(dev, b, trans);
-#endif
-
-  bfree_nozero(dev, x, trans, delayed_free);
-}
+                                bfree(dev, x, trans, delayed_free)
 
 // Mark blocks as free in the disk bitmap.
 void
@@ -817,7 +792,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
       addr = balloc(ip->dev, trans, zero_on_alloc);
       if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
         cprintf("bmap: race1\n");
-        bfree_nozero(ip->dev, addr, trans);
+        bfree(ip->dev, addr, trans);
         goto retry0;
       }
     }
@@ -832,7 +807,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
         addr = balloc(ip->dev, trans, true);
         if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
           cprintf("bmap: race2\n");
-          bfree_nozero(ip->dev, addr, trans);
+          bfree(ip->dev, addr, trans);
           goto retry1;
         }
       }
@@ -853,7 +828,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
       addr = balloc(ip->dev, trans, zero_on_alloc);
       if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
         cprintf("bmap: race4\n");
-        bfree_nozero(ip->dev, addr, trans);
+        bfree(ip->dev, addr, trans);
         goto retry2;
       }
       if (trans) {
@@ -878,7 +853,7 @@ retry3:
     addr = balloc(ip->dev, trans, true);
     if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
       cprintf("bmap: race5\n");
-      bfree_nozero(ip->dev, addr, trans);
+      bfree(ip->dev, addr, trans);
       goto retry3;
     }
   }
