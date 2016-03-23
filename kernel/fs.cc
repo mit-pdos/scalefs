@@ -73,26 +73,18 @@ get_superblock(struct superblock *sb, bool get_reclaim_inodes)
 }
 
 // Zero the in-memory buffer-cache block corresponding to a disk block.
+// If @writeback == true, immediately write back the zeroed block to disk
+// (this is useful when clearing the journal's disk blocks).
 static void
-bzero(int dev, int bno)
-{
-  sref<buf> bp = buf::get(dev, bno, true);
-  auto locked = bp->write();
-  memset(locked->data, 0, BSIZE);
-}
-
-// Zero a block and immediately writeback to disk.
-// Used to zero out journal blocks, as well as data-blocks that are about to
-// be freed.
-static void
-bzero_writeback(int dev, int bno)
+bzero(int dev, int bno, bool writeback = false)
 {
   sref<buf> bp = buf::get(dev, bno, true);
   {
     auto locked = bp->write();
     memset(locked->data, 0, BSIZE);
   }
-  bp->writeback_async();
+  if (writeback)
+    bp->writeback_async();
 }
 
 class out_of_blocks : public std::exception
@@ -912,7 +904,7 @@ zero_fill(sref<inode> ip, u32 offset)
   if (bno < NDIRECT) {
   for (int i = 0; i < bno; i++)
     if (ip->addrs[i])
-      bzero_writeback(ip->dev, ip->addrs[i]);
+      bzero(ip->dev, ip->addrs[i], true);
   }
   bno -= NDIRECT;
 
@@ -923,7 +915,7 @@ zero_fill(sref<inode> ip, u32 offset)
       u32* a = (u32*)copy->data;
       for(int i = 0; i < bno; i++)
         if(a[i])
-          bzero_writeback(ip->dev, a[i]);
+          bzero(ip->dev, a[i], true);
     }
   }
   bno -= NINDIRECT;
@@ -942,7 +934,7 @@ zero_fill(sref<inode> ip, u32 offset)
           u32 end2 = (i < end1-1) ? NINDIRECT : bno%NINDIRECT;
           for(int j = 0; j < end2; j++)
             if(a2[j])
-              bzero_writeback(ip->dev, a2[j]);
+              bzero(ip->dev, a2[j], true);
         }
       }
     }
