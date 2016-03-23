@@ -115,16 +115,12 @@ throw_out_of_blocks()
 #endif
 }
 
-// Allocate a disk block.
-// For the root device this makes changes only to the bitmap in memory
-// (maintained by rootfs_interface), not the one on the disk.
+// Allocate a disk block. This makes changes only to the in-memory
+// free-bit-vector (maintained by rootfs_interface), not the one on the disk.
 static u32
 balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
 {
-  bool found = false;
-  sref<buf> bp;
-  int b, bi;
-  u32 blocknum;
+  int b;
 
   if (dev == 1) {
     b = rootfs_interface->alloc_block();
@@ -136,30 +132,7 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
         bzero(dev, b, trans);
       return b;
     }
-    throw_out_of_blocks();
   }
-
-  for(b = 0; b < sb_root.size; b += BPB){
-    blocknum = BBLOCK(b, sb_root.ninodes);
-    bp = buf::get(dev, blocknum);
-    auto locked = bp->write();
-
-    for(bi = 0; bi < BPB && bi < (sb_root.size - b); bi++){
-      int m = 1 << (bi % 8);
-      if((locked->data[bi/8] & m) == 0){  // Is block free?
-        locked->data[bi/8] |= m;  // Mark block in use on disk.
-        found = true;
-        if (trans)
-          bp->add_to_transaction(trans);
-        break;
-      }
-    }
-    if(found)
-      break;
-  }
-
-  if(found)
-    return b + bi;
 
   throw_out_of_blocks();
   // Unreachable
@@ -218,8 +191,8 @@ balloc_on_disk(std::vector<u32>& blocks, transaction *trans)
 
 // Free a disk block, without zeroing it out.
 //
-// For the root device this makes changes only to the in-memory free-bit-vector
-// (maintained by rootfs_interface), not the one on the disk.
+// This makes changes only to the in-memory free-bit-vector (maintained by
+// rootfs_interface), not the one on the disk.
 //
 // delayed_free = true indicates that the block should not be marked free in the
 // in-memory free-bit-vector just yet. This is delayed until the time that the
@@ -229,8 +202,6 @@ static void
 bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
 {
   u32 b = x;
-  sref<buf> bp;
-  u32 blocknum;
 
   if (dev == 1) {
     if (!delayed_free)
@@ -238,20 +209,6 @@ bfree_nozero(int dev, u64 x, transaction *trans = NULL, bool delayed_free = fals
     if (trans)
       trans->add_free_block(b);
     return;
-  }
-
-  {
-    blocknum = BBLOCK(b, sb_root.ninodes);
-    bp = buf::get(dev, blocknum);
-    auto locked = bp->write();
-
-    int bi = b % BPB;
-    int m = 1 << (bi % 8);
-    if((locked->data[bi/8] & m) == 0)
-      panic("freeing free block");
-    locked->data[bi/8] &= ~m;  // Mark block free on disk.
-    if (trans)
-      bp->add_to_transaction(trans);
   }
 }
 
