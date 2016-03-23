@@ -72,15 +72,13 @@ get_superblock(struct superblock *sb, bool get_reclaim_inodes)
   }
 }
 
-// Zero a block, and log it in the transaction.
+// Zero the in-memory buffer-cache block corresponding to a disk block.
 static void
-bzero(int dev, int bno, transaction *trans = NULL)
+bzero(int dev, int bno)
 {
   sref<buf> bp = buf::get(dev, bno, true);
   auto locked = bp->write();
   memset(locked->data, 0, BSIZE);
-  if (trans)
-    bp->add_to_transaction(trans);
 }
 
 // Zero a block and immediately writeback to disk.
@@ -129,7 +127,7 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
         trans->add_allocated_block(b);
 
       if (zero_on_alloc)
-        bzero(dev, b, trans);
+        bzero(dev, b);
       return b;
     }
   }
