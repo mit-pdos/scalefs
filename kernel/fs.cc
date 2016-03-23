@@ -139,7 +139,7 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
   return 0;
 }
 
-// Mark blocks as allocated or freed in the disk bitmap.
+// Mark blocks as allocated or freed in the on-disk bitmap.
 // Allocate if @alloc == true, free otherwise.
 static void
 balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
@@ -150,7 +150,7 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 
   // Aggregate all updates to the same free bitmap block and write it out
   // just once, using a single transaction_diskblock.
-  for (auto bno = blocks.begin(); bno != blocks.end(); ++bno) {
+  for (auto bno = blocks.begin(); bno != blocks.end(); ) {
     u32 blocknum = BBLOCK(*bno, sb_root.ninodes);
     sref<buf> bp = buf::get(1, blocknum);
     auto locked = bp->write();
@@ -174,19 +174,15 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
     } while (++bno && bno != blocks.end() && *bno <= max_bno);
 
     bp->add_to_transaction(trans);
-
-    // Retry the last update, in case we crossed over to the next bitmap block.
-    --bno;
   }
 }
 
-// Mark blocks as allocated in the disk bitmap.
+// Mark blocks as allocated in the on-disk bitmap.
 void
 balloc_on_disk(std::vector<u32>& blocks, transaction *trans)
 {
   balloc_free_on_disk(blocks, trans, true);
 }
-
 
 
 // Free a disk block, without zeroing it out.
