@@ -122,9 +122,10 @@ void            dir_init(sref<inode> dp);
 void            dir_flush(sref<inode> dp, transaction *trans = NULL);
 void            dir_remove_entries(sref<inode> dp, std::vector<char*> names_vec);
 void            dir_remove_entry(sref<inode> dp, char *entry_name);
-void            balloc_on_disk(std::vector<u32>& blocks, transaction *trans);
-void            bfree_on_disk(std::vector<u32>& blocks, transaction *trans);
 void            get_superblock(struct superblock *sb, bool get_reclaim_inodes);
+void		balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc);
+#define 	balloc_on_disk(blocks, trans)	balloc_free_on_disk(blocks, trans, true)
+#define 	bfree_on_disk(blocks, trans)	balloc_free_on_disk(blocks, trans, false)
 
 // futex.cc
 typedef u64* futexkey_t;

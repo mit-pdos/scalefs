@@ -129,9 +129,33 @@ balloc(u32 dev, transaction *trans = NULL, bool zero_on_alloc = false)
   return 0;
 }
 
+// Free a disk block. We never zero out blocks during free (we do that only
+// during allocation, if desired).
+//
+// This makes changes only to the in-memory free-bit-vector (maintained by
+// rootfs_interface), not the one on the disk.
+//
+// delayed_free = true indicates that the block should not be marked free in the
+// in-memory free-bit-vector just yet. This is delayed until the time that the
+// transaction is processed. We need this to ensure that the blocks freed in a
+// transaction are not available for reuse until that transaction commits.
+static void
+bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
+{
+  u32 b = x;
+
+  if (dev == 1) {
+    if (!delayed_free)
+      rootfs_interface->free_block(b);
+    if (trans)
+      trans->add_free_block(b);
+    return;
+  }
+}
+
 // Mark blocks as allocated or freed in the on-disk bitmap.
 // Allocate if @alloc == true, free otherwise.
-static void
+void
 balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 {
   // Sort the blocks in ascending order, so that we update the bitmap blocks
@@ -167,53 +191,6 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
   }
 }
 
-// Mark blocks as allocated in the on-disk bitmap.
-void
-balloc_on_disk(std::vector<u32>& blocks, transaction *trans)
-{
-  balloc_free_on_disk(blocks, trans, true);
-}
-
-
-// Free a disk block. We never zero out blocks during free (we do that only
-// during allocation, if desired).
-//
-// This makes changes only to the in-memory free-bit-vector (maintained by
-// rootfs_interface), not the one on the disk.
-//
-// delayed_free = true indicates that the block should not be marked free in the
-// in-memory free-bit-vector just yet. This is delayed until the time that the
-// transaction is processed. We need this to ensure that the blocks freed in a
-// transaction are not available for reuse until that transaction commits.
-static void
-bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
-{
-  u32 b = x;
-
-  if (dev == 1) {
-    if (!delayed_free)
-      rootfs_interface->free_block(b);
-    if (trans)
-      trans->add_free_block(b);
-    return;
-  }
-}
-
-
-// TODO: Old code; can be discarded if we don't implement any meaningful
-// distinction/optimization between freeing metadata and data blocks.
-#define bfree_metadata(dev, x, trans, delayed_free) \
-                                bfree(dev, x, trans, delayed_free)
-
-#define bfree_datablock(dev, x, trans, delayed_free) \
-                                bfree(dev, x, trans, delayed_free)
-
-// Mark blocks as free in the disk bitmap.
-void
-bfree_on_disk(std::vector<u32>& blocks, transaction *trans)
-{
-  balloc_free_on_disk(blocks, trans, false);
-}
 
 // Inodes.
 //
@@ -1003,7 +980,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
 
   for(int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
     if(ip->addrs[i]){
-      bfree_datablock(ip->dev, ip->addrs[i], trans, true);
+      bfree(ip->dev, ip->addrs[i], trans, true);
       ip->addrs[i] = 0;
     }
   }
@@ -1020,7 +997,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
       u32* a = (u32*)locked->data;
       for(int i = start; i < NINDIRECT; i++) {
         if(a[i]) {
-          bfree_datablock(ip->dev, a[i], trans, true);
+          bfree(ip->dev, a[i], trans, true);
           a[i] = 0;
         }
       }
@@ -1029,7 +1006,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
 
     if (start == 0) {
-      bfree_metadata(ip->dev, ip->addrs[NDIRECT], trans, true);
+      bfree(ip->dev, ip->addrs[NDIRECT], trans, true);
       ip->addrs[NDIRECT] = 0;
     }
     if (ip->iaddrs.load() != nullptr) {
@@ -1057,15 +1034,15 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
             if(!a2[j])
               continue;
 
-            bfree_datablock(ip->dev, a2[j], trans, true);
+            bfree(ip->dev, a2[j], trans, true);
             a2[j] = 0;
           }
           if (trans && start != 0)
             bp2->add_to_transaction(trans);
         }
 
-        if (start == 0) { 
-          bfree_metadata(ip->dev, a1[i], trans, true);
+        if (start == 0) {
+          bfree(ip->dev, a1[i], trans, true);
           a1[i] = 0;
         }
       }
@@ -1074,7 +1051,7 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
 
     if (bno == 0) {
-      bfree_metadata(ip->dev, ip->addrs[NDIRECT+1], trans, true);
+      bfree(ip->dev, ip->addrs[NDIRECT+1], trans, true);
       ip->addrs[NDIRECT+1] = 0;
     }
   }

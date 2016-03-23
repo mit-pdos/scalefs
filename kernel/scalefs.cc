@@ -960,8 +960,11 @@ void
 mfs_interface::pre_process_transaction(transaction *tr)
 {
   // Update the free bitmap on the disk.
-  balloc_on_disk(tr->allocated_block_list, tr);
-  bfree_on_disk(tr->free_block_list, tr);
+  if (!tr->allocated_block_list.empty())
+    balloc_on_disk(tr->allocated_block_list, tr);
+
+  if (!tr->free_block_list.empty())
+    bfree_on_disk(tr->free_block_list, tr);
 }
 
 void
