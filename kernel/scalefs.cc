@@ -8,7 +8,6 @@
 #include "kstream.hh"
 #include "major.h"
 
-#define min(a, b) ((a) < (b) ? (a) : (b))
 
 mfs_interface::mfs_interface()
 {
@@ -1469,7 +1468,7 @@ mfs_interface::initialize_free_bit_vector()
     bp = buf::get(1, blocknum);
     auto copy = bp->read();
 
-    nbits = min(BPB, sb.size - b);
+    nbits = std::min((u32)BPB, sb.size - b);
 
     for (bi = 0; bi < nbits; bi++) {
       int m = 1 << (bi % 8);

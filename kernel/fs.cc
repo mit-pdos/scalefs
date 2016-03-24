@@ -42,7 +42,6 @@
 #include "lb.hh"
 #include "scalefs.hh"
 
-#define min(a, b) ((a) < (b) ? (a) : (b))
 #define IADDRSSZ (sizeof(u32)*NINDIRECT)
 #define BLOCKROUNDUP(off) (((off)%BSIZE) ? (off)/BSIZE+1 : (off)/BSIZE)
 
@@ -1072,7 +1071,7 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
       // Read operations should never cause out-of-blocks conditions
       panic("readi: out of blocks");
     }
-    m = min(n - tot, BSIZE - off%BSIZE);
+    m = std::min(n - tot, BSIZE - off%BSIZE);
 
     auto copy = bp->read();
     memmove(dst, copy->data + off%BSIZE, m);
@@ -1107,7 +1106,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
   for (tot=0; tot<n; tot+=m, off+=m, src+=m) {
 
     bool skip_disk_read = false;
-    m = min(n - tot, BSIZE - off%BSIZE);
+    m = std::min(n - tot, BSIZE - off%BSIZE);
 
     try {
 
