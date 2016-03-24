@@ -542,7 +542,7 @@ iget(u32 dev, u32 inum)
     ip = sref<inode>::newref(iptr);
 
   if (ip) {
-    if (!ip->valid) {
+    if (!ip->valid.load()) {
       acquire(&ip->lock);
       while(!ip->valid)
         ip->cv.sleep(&ip->lock);
@@ -609,7 +609,7 @@ inode::init(void)
   // closed, even if that happens after unlink().
   inc();
 
-  valid = true;
+  valid.store(true);
 }
 
 void
