@@ -156,14 +156,10 @@ mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
   if (inum_lookup(mnum, &inum))
     return iget(1, inum);
 
-  sref<inode> i;
-  i = ialloc(1, type);
-  iunlock(i);
-
-  inum_to_mnum->insert(i->inum, mnum);
-  mnum_to_inum->insert(mnum, i->inum);
-
-  return i;
+  sref<inode> ip = ialloc(1, type);
+  inum_to_mnum->insert(ip->inum, mnum);
+  mnum_to_inum->insert(mnum, ip->inum);
+  return ip;
 }
 
 // Creates a new file [or directory] on the disk if an mnode (mfile) [or mdir]

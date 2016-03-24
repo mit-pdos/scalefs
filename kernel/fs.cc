@@ -195,35 +195,31 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 
 // Inodes.
 //
-// An inode is a single, unnamed file in the file system.
-// The inode disk structure holds metadata (the type, device numbers,
-// and data size) along with a list of blocks where the associated
-// data can be found.
+// An inode is a single, unnamed file in the file system. The inode disk
+// structure holds metadata (the type, device numbers, and data size) along
+// with a list of blocks where the associated data can be found.
 //
-// The inodes are laid out sequentially on disk immediately after
-// the superblock.  The kernel keeps a cache of the in-use
-// on-disk structures to provide a place for synchronizing access
-// to inodes shared between multiple processes.
+// The inodes are laid out sequentially on disk immediately after the
+// superblock.  The kernel keeps a cache of the in-use on-disk structures
+// to provide a place for synchronizing access to inodes shared between
+// multiple processes.
 //
-// ip->ref counts the number of pointer references to this cached
-// inode; references are typically kept in struct file and in proc->cwd.
-// When ip->ref falls to zero, the inode is no longer cached.
-// It is an error to use an inode without holding a reference to it.
+// ip->ref counts the number of pointer references to this cached inode;
+// references are typically kept in struct file and in proc->cwd. When ip->ref
+// falls to zero, the inode is no longer cached. It is an error to use an
+// inode without holding a reference to it.
 //
-// Processes are only allowed to read and write inode
-// metadata and contents when holding the inode's lock,
-// represented by the I_BUSY flag in the in-memory copy.
-// Because inode locks are held during disk accesses,
-// they are implemented using a flag rather than with
-// spin locks.  Callers are responsible for locking
-// inodes before passing them to routines in this file; leaving
-// this responsibility with the caller makes it possible for them
-// to create arbitrarily-sized atomic operations.
+// Processes are only allowed to read and write inode metadata and contents
+// when holding the inode's lock, represented by the I_BUSY flag in the
+// in-memory copy. Because inode locks are held during disk accesses, they
+// are implemented using a flag rather than with spin locks. Callers are
+// responsible for locking inodes before passing them to routines in this file;
+// leaving this responsibility with the caller makes it possible for them to
+// create arbitrarily-sized atomic operations.
 //
-// To give maximum control over locking to the callers,
-// the routines in this file that return inode pointers
-// return pointers to *unlocked* inodes.  It is the callers'
-// responsibility to lock them before using them.  A non-zero
+// To give maximum control over locking to the callers, the routines in this
+// file that return inode pointers return pointers to *unlocked* inodes. It is
+// the callers' responsibility to lock them before using them. A non-zero
 // ip->ref keeps these unlocked inodes in the cache.
 
 void
@@ -231,13 +227,13 @@ initinode(void)
 {
   scoped_gc_epoch e;
 
+  readsb(ROOTDEV, &sb_root); // Initialize sb_root by reading the superblock.
   ins = new chainhash<pair<u32, u32>, inode*>(NINODES_PRIME);
+
   the_root = inode::alloc(ROOTDEV, ROOTINO);
   if (!ins->insert(make_pair(the_root->dev, the_root->inum), the_root.get()))
-    panic("initinode: insert the_root failed");
+    panic("initinode: Failed to insert the root inode into the cache\n");
   the_root->init();
-
-  readsb(ROOTDEV, &sb_root); // Initialize sb_root by reading the superblock.
 }
 
 static sref<inode>
@@ -250,13 +246,14 @@ try_ialloc(u32 inum, u32 dev, short type)
   ilock(ip, 1);
   auto w = ip->seq.write_begin();
   ip->gen += 1;
-  if(ip->nlink() || ip->size || ip->addrs[0])
-    panic("ialloc not zeroed");
+  if (ip->nlink() || ip->size || ip->addrs[0])
+    panic("try_ialloc: inode not zeroed\n");
+  iunlock(ip);
   return ip;
 }
 
-// Note down the last inode allocated by each CPU, so that we can try
-// to allocate the subsequent inode number next.
+// Note down the last inode allocated by each CPU, so that we can try to
+// allocate the subsequent inode number next.
 DEFINE_PERCPU(int, last_inode);
 
 // Allocate a new inode with the given type on device dev.
@@ -274,7 +271,7 @@ ialloc(u32 dev, short type)
   // total number of inodes is limited). Fix that, and also use the last_inode[]
   // scheme.
   for (int k = myid()*IPB; k < sb_root.ninodes; k += (NCPU*IPB)) {
-    for(inum = k; inum < k+IPB && inum < sb_root.ninodes; inum++) {
+    for (inum = k; inum < k+IPB && inum < sb_root.ninodes; inum++) {
       if (inum == 0)
         continue;
       ip = try_ialloc(inum, dev, type);
@@ -399,7 +396,7 @@ iget(u32 dev, u32 inum)
   if (ip) {
     if (!ip->valid.load()) {
       acquire(&ip->lock);
-      while(!ip->valid)
+      while (!ip->valid)
         ip->cv.sleep(&ip->lock);
       release(&ip->lock);
     }
@@ -504,11 +501,10 @@ inode::onzero(void)
     panic("iput [%d]: nlink %u\n", inum, nlink());*/
 
   // inode is no longer used: truncate and free inode.
-  if(busy || readbusy) {
-    // race with iget
-    panic("iput busy");
-  }
-  if(!valid)
+  if (busy || readbusy)
+    panic("iput busy"); // race with iget
+
+  if (!valid)
     panic("iput not valid");
 
   busy = true;
@@ -542,22 +538,22 @@ inode::onzero(void)
 void
 ilock(sref<inode> ip, int writer)
 {
-  if(ip == 0)
+  if (ip == 0)
     panic("ilock");
 
   acquire(&ip->lock);
   if (writer) {
-    while(ip->busy || ip->readbusy)
+    while (ip->busy || ip->readbusy)
       ip->cv.sleep(&ip->lock);
     ip->busy = true;
   } else {
-    while(ip->busy)
+    while (ip->busy)
       ip->cv.sleep(&ip->lock);
   }
   ip->readbusy++;
   release(&ip->lock);
 
-  if(!ip->valid)
+  if (!ip->valid)
     panic("ilock");
 }
 
@@ -565,9 +561,9 @@ ilock(sref<inode> ip, int writer)
 void
 iunlock(sref<inode> ip)
 {
-  if(ip == 0)
+  if (ip == 0)
     panic("iunlock");
-  if(!ip->readbusy && !ip->busy)
+  if (!ip->readbusy && !ip->busy)
     panic("iunlock");
 
   acquire(&ip->lock);
@@ -596,9 +592,9 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   u32* ap;
   u32 addr;
 
-  if(bn < NDIRECT){
+  if (bn < NDIRECT) {
   retry0:
-    if((addr = ip->addrs[bn]) == 0) {
+    if ((addr = ip->addrs[bn]) == 0) {
       addr = balloc(ip->dev, trans, zero_on_alloc);
       if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
         cprintf("bmap: race1\n");
@@ -613,7 +609,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   if (bn < NINDIRECT) {
   retry1:
     if (ip->iaddrs == nullptr) {
-      if((addr = ip->addrs[NDIRECT]) == 0) {
+      if ((addr = ip->addrs[NDIRECT]) == 0) {
         addr = balloc(ip->dev, trans, true);
         if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
           cprintf("bmap: race2\n");
@@ -731,8 +727,8 @@ zero_fill(sref<inode> ip, u32 offset)
       sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
       auto copy = bp->read();
       u32* a = (u32*)copy->data;
-      for(int i = 0; i < bno; i++)
-        if(a[i])
+      for (int i = 0; i < bno; i++)
+        if (a[i])
           bzero(ip->dev, a[i], true);
     }
   }
@@ -744,14 +740,14 @@ zero_fill(sref<inode> ip, u32 offset)
       auto copy1 = bp1->read();
       u32* a1 = (u32*)copy1->data;
       u32 end1 = (bno%NINDIRECT) ? bno/NINDIRECT+1 : bno/NINDIRECT;
-      for(int i = 0; i < end1; i++) {
-        if(a1[i]) {
+      for (int i = 0; i < end1; i++) {
+        if (a1[i]) {
           sref<buf> bp2 = buf::get(ip->dev, a1[i]);
           auto copy2 = bp2->read();
           u32* a2 = (u32*)copy2->data;
           u32 end2 = (i < end1-1) ? NINDIRECT : bno%NINDIRECT;
-          for(int j = 0; j < end2; j++)
-            if(a2[j])
+          for (int j = 0; j < end2; j++)
+            if (a2[j])
               bzero(ip->dev, a2[j], true);
         }
       }
@@ -819,14 +815,14 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
   if (ip->size <= offset)
     return;
 
-  for(int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
-    if(ip->addrs[i]){
+  for (int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
+    if (ip->addrs[i]) {
       bfree(ip->dev, ip->addrs[i], trans, true);
       ip->addrs[i] = 0;
     }
   }
 
-  if(ip->addrs[NDIRECT]) {
+  if (ip->addrs[NDIRECT]) {
     int start = (offset >= NDIRECT*BSIZE) ?
       BLOCKROUNDUP(offset - NDIRECT*BSIZE) : 0;
     {
@@ -836,8 +832,8 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
         memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
 
       u32* a = (u32*)locked->data;
-      for(int i = start; i < NINDIRECT; i++) {
-        if(a[i]) {
+      for (int i = start; i < NINDIRECT; i++) {
+        if (a[i]) {
           bfree(ip->dev, a[i], trans, true);
           a[i] = 0;
         }
@@ -856,23 +852,23 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
     }
   }
 
-  if(ip->addrs[NDIRECT+1]){
+  if (ip->addrs[NDIRECT+1]) {
     int bno = (offset >= (NDIRECT+NINDIRECT)*BSIZE)?
       BLOCKROUNDUP(offset-(NDIRECT+NINDIRECT)*BSIZE): 0;
     {
       sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
       auto locked1 = bp1->write();
       u32* a1 = (u32*)locked1->data;
-      for(int i = bno/NINDIRECT; i < NINDIRECT; i++){
-        if(!a1[i])
+      for (int i = bno/NINDIRECT; i < NINDIRECT; i++) {
+        if (!a1[i])
           continue;
         int start = (i == bno/NINDIRECT)? bno%NINDIRECT : 0;
         {
           sref<buf> bp2 = buf::get(ip->dev, a1[i]);
           auto locked2 = bp2->write();
           u32* a2 = (u32*)locked2->data;
-          for(int j = start; j < NINDIRECT; j++){
-            if(!a2[j])
+          for (int j = start; j < NINDIRECT; j++) {
+            if (!a2[j])
               continue;
 
             bfree(ip->dev, a2[j], trans, true);
@@ -910,15 +906,15 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
   u32 tot, m;
   sref<buf> bp;
 
-  if(ip->type == T_DEV)
+  if (ip->type == T_DEV)
     return -1;
 
-  if(off > ip->size || off + n < off)
+  if (off > ip->size || off + n < off)
     return -1;
-  if(off + n > ip->size)
+  if (off + n > ip->size)
     n = ip->size - off;
 
-  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
+  for (tot=0; tot<n; tot+=m, off+=m, dst+=m) {
     try {
       bp = buf::get(ip->dev, bmap(ip, off/BSIZE, NULL, true));
     } catch (out_of_blocks& e) {
@@ -947,14 +943,14 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
   sref<buf> bp;
   u32 blocknum;
 
-  if(ip->type == T_DEV)
+  if (ip->type == T_DEV)
     return -1;
 
-  //if(off > ip->size || off + n < off)
-  if(off + n < off)
+  //if (off > ip->size || off + n < off)
+  if (off + n < off)
     return -1;
 
-  if(off + n > MAXFILE*BSIZE)
+  if (off + n > MAXFILE*BSIZE)
     n = MAXFILE*BSIZE - off;
 
   for (tot=0; tot<n; tot+=m, off+=m, src+=m) {
@@ -1199,12 +1195,12 @@ skipelem(const char **rpath, char *name)
   const char *s;
   int len;
 
-  while(*path == '/')
+  while (*path == '/')
     path++;
-  if(*path == 0)
+  if (*path == 0)
     return 0;
   s = path;
-  while(*path != '/' && *path != 0)
+  while (*path != '/' && *path != 0)
     path++;
   len = path - s;
   if (len > DIRSIZ) {
@@ -1216,7 +1212,7 @@ skipelem(const char **rpath, char *name)
     if (len < DIRSIZ)
       name[len] = 0;
   }
-  while(*path == '/')
+  while (*path == '/')
     path++;
   *rpath = path;
   return 1;
@@ -1234,12 +1230,12 @@ namex(sref<inode> cwd, const char *path, int nameiparent, char *name)
   sref<inode> next;
   int r;
 
-  if(*path == '/')
+  if (*path == '/')
     ip = the_root;
   else
     ip = cwd;
 
-  while((r = skipelem(&path, name)) == 1){
+  while ((r = skipelem(&path, name)) == 1) {
     // XXX Doing this here requires some annoying reasoning about all
     // of the callers of namei/nameiparent.  Also, since the abstract
     // scope is implicit, it might be wrong (or non-existent) and
@@ -1250,21 +1246,21 @@ namex(sref<inode> cwd, const char *path, int nameiparent, char *name)
     // the caller declare the variables?  Would it help for the caller
     // to pass in an abstract scope?
     mtreadavar("inode:%x.%x", ip->dev, ip->inum);
-    if(ip->type == 0)
+    if (ip->type == 0)
       panic("namex");
-    if(ip->type != T_DIR)
+    if (ip->type != T_DIR)
       return sref<inode>();
-    if(nameiparent && *path == '\0'){
+    if (nameiparent && *path == '\0') {
       // Stop one level early.
       return ip;
     }
 
-    if((next = dirlookup(ip, name)) == 0)
+    if ((next = dirlookup(ip, name)) == 0)
       return sref<inode>();
     ip = next;
   }
 
-  if(r == -1 || nameiparent)
+  if (r == -1 || nameiparent)
     return sref<inode>();
 
   return ip;
