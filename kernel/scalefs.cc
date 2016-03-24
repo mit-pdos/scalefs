@@ -10,9 +10,6 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-// A prime number larger than NINODES (defined in include/fs.h)
-#define NINODES_PRIME 1000003
-
 mfs_interface::mfs_interface()
 {
   inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);

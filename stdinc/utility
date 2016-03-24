@@ -60,6 +60,10 @@ namespace std {
     bool operator==(const pair<A, B> &other) const {
       return first == other.first && second == other.second;
     }
+
+    bool operator!=(const pair<A, B> &other) const {
+      return !(first == other.first && second == other.second);
+    }
   };
 
   template<class A, class B>

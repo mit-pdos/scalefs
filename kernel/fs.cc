@@ -43,11 +43,14 @@
 #include "scalefs.hh"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
-static sref<inode> the_root;
-static struct superblock sb_root;
-
 #define IADDRSSZ (sizeof(u32)*NINDIRECT)
 #define BLOCKROUNDUP(off) (((off)%BSIZE) ? (off)/BSIZE+1 : (off)/BSIZE)
+
+// A hash-table to cache in-memory inode data-structures.
+static chainhash<pair<u32, u32>, inode*> *ins;
+
+static sref<inode> the_root;
+static struct superblock sb_root;
 
 // Read the super block.
 static void
@@ -225,36 +228,18 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 // responsibility to lock them before using them.  A non-zero
 // ip->ref keeps these unlocked inodes in the cache.
 
-u64
-ino_hash(const pair<u32, u32> &p)
-{
-  return p.first ^ p.second;
-}
-
-static nstbl<pair<u32, u32>, inode*, ino_hash> *ins;
-
 void
 initinode(void)
 {
   scoped_gc_epoch e;
 
-  ins = new nstbl<pair<u32, u32>, inode*, ino_hash>();
+  ins = new chainhash<pair<u32, u32>, inode*>(NINODES_PRIME);
   the_root = inode::alloc(ROOTDEV, ROOTINO);
-  if (!ins->insert({the_root->dev, the_root->inum}, the_root.get()))
+  if (!ins->insert(make_pair(the_root->dev, the_root->inum), the_root.get()))
     panic("initinode: insert the_root failed");
   the_root->init();
 
   readsb(ROOTDEV, &sb_root); // Initialize sb_root by reading the superblock.
-
-  if (VERBOSE) {
-    struct superblock sb;
-    u64 blocks;
-
-    readsb(ROOTDEV, &sb);
-    blocks = sb.ninodes/IPB;
-    cprintf("initinode: %lu inode blocks (%lu / core)\n",
-            blocks, blocks/NCPU);
-  }
 }
 
 template<size_t N>
@@ -553,7 +538,10 @@ iget(u32 dev, u32 inum)
 
  retry:
   // Try for cached inode.
-  ip = sref<inode>::newref(ins->lookup(make_pair(dev, inum)));
+  inode *iptr = nullptr;
+  if (ins->lookup(make_pair(dev, inum), &iptr))
+    ip = sref<inode>::newref(iptr);
+
   if (ip) {
     if (!ip->valid) {
       acquire(&ip->lock);
@@ -573,7 +561,7 @@ iget(u32 dev, u32 inum)
   ip->busy = true;
   ip->readbusy = 1;
 
-  if (!ins->insert({ip->dev, ip->inum}, ip.get())) {
+  if (!ins->insert(make_pair(ip->dev, ip->inum), ip.get())) {
     iunlock(ip);
     // reference counting will clean up memory allocation.
     goto retry;
@@ -688,7 +676,7 @@ inode::onzero(void)
   release(&lock);
 
   inode* ip = this;
-  ins->remove(make_pair(dev, inum), &ip);
+  ins->remove(make_pair(dev, inum));
   the_inode_cache.add(inum);
   gc_delayed(ip);
   return;

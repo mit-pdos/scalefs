@@ -1,6 +1,14 @@
 
 // Unused code, but potentially useful (at least as a reference).
 
+u64
+ino_hash(const pair<u32, u32> &p)
+{
+  return p.first ^ p.second;
+}
+
+static nstbl<pair<u32, u32>, inode*, ino_hash> *ins;
+
 void
 dir_flush(sref<inode> dp, transaction *trans)
 {
