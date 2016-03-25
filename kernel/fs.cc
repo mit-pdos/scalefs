@@ -322,31 +322,19 @@ iupdate(sref<inode> ip, transaction *trans)
 {
   scoped_gc_epoch e;
 
-  sref<buf> bp;
-  {
-    bp = buf::get(ip->dev, IBLOCK(ip->inum));
-    auto locked = bp->write();
+  sref<buf> bp = buf::get(ip->dev, IBLOCK(ip->inum));
+  auto locked = bp->write();
 
-    dinode *dip = (struct dinode*)locked->data + ip->inum%IPB;
-    dip->type = ip->type;
-    dip->major = ip->major;
-    dip->minor = ip->minor;
-    dip->nlink = ip->nlink();
-    dip->size = ip->size;
-    dip->gen = ip->gen;
-    memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
-    if (trans)
-      bp->add_to_transaction(trans);
-  }
-
-  if (ip->addrs[NDIRECT] != 0) {
-    bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
-    auto locked = bp->write();
-    if (ip->iaddrs.load() != nullptr)
-      memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
-    if (trans)
-      bp->add_to_transaction(trans);
-  }
+  dinode *dip = (struct dinode*)locked->data + ip->inum%IPB;
+  dip->type = ip->type;
+  dip->major = ip->major;
+  dip->minor = ip->minor;
+  dip->nlink = ip->nlink();
+  dip->size = ip->size;
+  dip->gen = ip->gen;
+  memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
+  if (trans)
+    bp->add_to_transaction(trans);
 }
 
 // Find the inode with number inum on device dev
@@ -640,6 +628,7 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
       if (trans) {
         char charbuf[BSIZE];
         memmove(charbuf, (void*)ip->iaddrs.load(), IADDRSSZ);
+        // FIXME: Don't we also need to update the buffer-cache here?
         trans->add_block(ip->addrs[NDIRECT], charbuf);
       }
     }
