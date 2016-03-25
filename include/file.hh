@@ -8,7 +8,6 @@
 #include "eager_refcache.hh"
 #include "condvar.hh"
 #include "semaphore.hh"
-#include "seqlock.hh"
 #include "mfs.hh"
 #include "sleeplock.hh"
 #include <uk/unistd.h>
@@ -234,7 +233,6 @@ struct inode : public referenced, public rcu_freed
   short minor;
 
   // locks for the rest of the inode
-  seqcount<u64> seq;
   struct condvar cv;
   struct spinlock lock;
   char lockname[16];
@@ -244,7 +242,6 @@ struct inode : public referenced, public rcu_freed
   std::atomic<u32> dir_offset; // The offset at which we can add the next entry.
   std::atomic<bool> valid;
 
-  // protected by seq/lock:
   std::atomic<bool> busy;
   std::atomic<int> readbusy;
 

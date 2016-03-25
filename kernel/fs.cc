@@ -244,7 +244,6 @@ try_ialloc(u32 inum, u32 dev, short type)
     return sref<inode>();
 
   ilock(ip, 1);
-  auto w = ip->seq.write_begin();
   ip->gen += 1;
   if (ip->nlink() || ip->size || ip->addrs[0])
     panic("try_ialloc: inode not zeroed\n");
@@ -309,13 +308,18 @@ ialloc(u32 dev, short type)
   return sref<inode>();
 }
 
-// Copy inode, which has changed, from memory to disk.
+// Propagate the changes made to the in-memory inode metadata, to the disk.
+// As far as possible, don't invoke iupdate() on every little change to the
+// inode; batch the updates and call iupdate() once at the end, to avoid the
+// scalability bottleneck (and overhead) of repeated copies to the buffer-cache
+// under the buf's write-lock.
+//
+// The caller must hold ilock at least for read (but the caller will typically
+// need to hold it for write, in order to log the correct snapshot of the inode
+// to the transaction).
 void
 iupdate(sref<inode> ip, transaction *trans)
 {
-  // XXX call iupdate to flush in-memory inode state to
-  // buffer cache.  use seq value to detect updates.
-
   scoped_gc_epoch e;
 
   sref<buf> bp;
@@ -343,7 +347,6 @@ iupdate(sref<inode> ip, transaction *trans)
     if (trans)
       bp->add_to_transaction(trans);
   }
-
 }
 
 // Find the inode with number inum on device dev
@@ -468,7 +471,6 @@ void
 inode::link(void)
 {
   // Must hold ilock if inode is accessible by multiple threads
-  auto w = seq.write_begin();
   if (++nlink_ == 1) {
     // A non-zero nlink_ holds a reference to the inode
     inc();
@@ -479,7 +481,6 @@ void
 inode::unlink(void)
 {
   // Must hold ilock if inode is accessible by multiple threads
-  auto w = seq.write_begin();
   if (--nlink_ == 0) {
     // This should never be the last reference..
     dec();
@@ -516,7 +517,6 @@ inode::onzero(void)
   /*itrunc(sref<inode>::transfer(this));
 
   {
-    auto w = seq.write_begin();
     type = 0;
     major = 0;
     minor = 0;
@@ -712,7 +712,6 @@ zero_fill(sref<inode> ip, u32 offset)
 {
   scoped_gc_epoch e;
 
-  auto w = ip->seq.write_begin();
   u32 bno = BLOCKROUNDUP(offset);
 
   if (bno < NDIRECT) {
@@ -811,7 +810,6 @@ itrunc(sref<inode> ip, u32 offset, transaction *trans)
   // XXX how to serialize itrunc w.r.t. concurrent itrunc or expansion?
   // Could lock disk blocks (buf's), or could lock the inode?
 
-  auto w = ip->seq.write_begin();
   if (ip->size <= offset)
     return;
 
@@ -1000,7 +998,6 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
 void
 update_size(sref<inode> ip, u32 size, transaction *trans)
 {
-  auto w = ip->seq.write_begin();
   ip->size = size;
   iupdate(ip, trans);
 }
@@ -1090,7 +1087,6 @@ dir_flush_entry(sref<inode> dp, const char *name, transaction *trans)
     panic("dir_flush_entry");
 
   if (dp->size < de_info.offset_ + sizeof(de)) {
-    auto w = dp->seq.write_begin();
     dp->size = de_info.offset_ + sizeof(de);
   }
 

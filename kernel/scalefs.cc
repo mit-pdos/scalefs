@@ -67,17 +67,14 @@ void
 mfs_interface::free_inode(sref<inode> ip, transaction *tr)
 {
   ilock(ip, 1);
+  assert(ip->nlink() == 0);
   // Release the inode on the disk.
   ip->type = 0;
-  assert(ip->nlink() == 0);
   iupdate(ip, tr);
 
   // Perform the last decrement of the refcount. This pairs with the
   // extra increment that was done inside inode::init().
-  {
-    auto w = ip->seq.write_begin();
-    ip->dec();
-  }
+  ip->dec();
   iunlock(ip);
 }
 
