@@ -337,20 +337,9 @@ iupdate(sref<inode> ip, transaction *trans)
     bp->add_to_transaction(trans);
 }
 
-// Find the inode with number inum on device dev
-// and return the in-memory copy.
-// The inode is not locked, so someone else might
-// be modifying it.
-// But it has a ref count, so it won't be freed or reused.
-// Though unlocked, all fields will be present,
-// so looking a ip->inum and ip->gen are OK even w/o lock.
 inode::inode(u32 d, u32 i)
-  : rcu_freed("inode", this, sizeof(*this)),
-    dev(d), inum(i),
-    dir_offset(0),
-    valid(false),
-    busy(false),
-    readbusy(0)
+  : rcu_freed("inode", this, sizeof(*this)), dev(d), inum(i), dir_offset(0),
+    valid(false), busy(false), readbusy(0)
 {
   dir.store(nullptr);
   iaddrs.store(nullptr);
@@ -374,17 +363,16 @@ inode::~inode()
 sref<inode>
 iget(u32 dev, u32 inum)
 {
-  sref<inode> ip;
-
   // Assumes caller is holding a gc_epoch
 
  retry:
   // Try for cached inode.
   inode *iptr = nullptr;
-  if (ins->lookup(make_pair(dev, inum), &iptr))
+  sref<inode> ip;
+
+  if (ins->lookup(make_pair(dev, inum), &iptr)) {
     ip = sref<inode>::newref(iptr);
 
-  if (ip) {
     if (!ip->valid.load()) {
       acquire(&ip->lock);
       while (!ip->valid)
@@ -396,7 +384,7 @@ iget(u32 dev, u32 inum)
 
   // Allocate fresh inode cache slot.
   ip = inode::alloc(dev, inum);
-  if (ip == nullptr)
+  if (!ip)
     panic("iget: should throw_bad_alloc()");
 
   // Lock the inode
@@ -418,7 +406,7 @@ sref<inode>
 inode::alloc(u32 dev, u32 inum)
 {
   sref<inode> ip = sref<inode>::transfer(new inode(dev, inum));
-  if (ip == nullptr)
+  if (!ip)
     return sref<inode>();
 
   snprintf(ip->lockname, sizeof(ip->lockname), "cv:ino:%d", ip->inum);
@@ -446,29 +434,31 @@ inode::init(void)
   if (nlink_ > 0)
     inc();
 
-  // Perform another increment. This is decremented when the corresponding
-  // mnode's onzero() method is invoked. This is to help keep the inode
-  // around until all the open file descriptors of this file have been
-  // closed, even if that happens after unlink().
+  // Perform another increment. This is decremented from mfs_interface::
+  // free_inode(), possibly from the deferred inode reclamation path. This is
+  // to help keep the inode around until all the open file descriptors of this
+  // file have been closed, even if that happens after the last unlink().
   inc();
 
   valid.store(true);
 }
 
+// Caller must hold ilock() for write, if inode is accessible by multiple
+// threads.
 void
 inode::link(void)
 {
-  // Must hold ilock if inode is accessible by multiple threads
   if (++nlink_ == 1) {
     // A non-zero nlink_ holds a reference to the inode
     inc();
   }
 }
 
+// Caller must hold ilock() for write, if inode is accessible by multiple
+// threads.
 void
 inode::unlink(void)
 {
-  // Must hold ilock if inode is accessible by multiple threads
   if (--nlink_ == 0) {
     // This should never be the last reference..
     dec();
@@ -478,7 +468,6 @@ inode::unlink(void)
 short
 inode::nlink(void)
 {
-  // Must hold ilock if inode is accessible by multiple threads
   return nlink_;
 }
 
@@ -486,48 +475,29 @@ void
 inode::onzero(void)
 {
   acquire(&lock);
-  /*if (nlink())
-    panic("iput [%d]: nlink %u\n", inum, nlink());*/
 
-  // inode is no longer used: truncate and free inode.
   if (busy || readbusy)
-    panic("iput busy"); // race with iget
+    panic("inode::onzero() : inode is busy (locked)\n");
 
   if (!valid)
-    panic("iput not valid");
+    panic("inode::onzero() : inode's valid flag is false\n");
 
   busy = true;
   readbusy++;
 
-  // XXX: use gc_delayed() to truncate the inode later.
-  // flag it as a victim in the meantime.
-
-  /*itrunc(sref<inode>::transfer(this));
-
-  {
-    type = 0;
-    major = 0;
-    minor = 0;
-    gen += 1;
-  }*/
-
   release(&lock);
 
-  inode* ip = this;
   ins->remove(make_pair(dev, inum));
-  gc_delayed(ip);
+  gc_delayed(this);
   return;
 }
 
-// Lock the given inode.
-// XXX why does ilock() read the inode from disk?
-// why doesn't the iget() that allocated the inode cache entry
-// read the inode from disk?
+// Lock the given inode, for write if @writer == 1, and for read otherwise.
 void
 ilock(sref<inode> ip, int writer)
 {
-  if (ip == 0)
-    panic("ilock");
+  if (!ip)
+    panic("ilock(): illegal inode pointer\n");
 
   acquire(&ip->lock);
   if (writer) {
@@ -542,17 +512,18 @@ ilock(sref<inode> ip, int writer)
   release(&ip->lock);
 
   if (!ip->valid)
-    panic("ilock");
+    panic("ilock(): inode's valid flag is false\n");
 }
 
 // Unlock the given inode.
 void
 iunlock(sref<inode> ip)
 {
-  if (ip == 0)
-    panic("iunlock");
+  if (!ip)
+    panic("iunlock(): illegal inode pointer\n");
+
   if (!ip->readbusy && !ip->busy)
-    panic("iunlock");
+    panic("iunlock(): inode not locked\n");
 
   acquire(&ip->lock);
   --ip->readbusy;
