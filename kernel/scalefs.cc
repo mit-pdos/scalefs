@@ -142,6 +142,7 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
   return writei(i, p, pos, nbytes, tr, true);
 }
 
+// Returns an inode locked for write, on success.
 sref<inode>
 mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
 {
@@ -153,6 +154,7 @@ mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
   if (inum_lookup(mnum, &inum))
     return iget(1, inum);
 
+  // ialloc() returns a locked inode.
   sref<inode> ip = ialloc(1, type);
   inum_to_mnum->insert(ip->inum, mnum);
   mnum_to_inum->insert(mnum, ip->inum);
@@ -174,14 +176,13 @@ mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
   if (type == mnode::types::dir && !inum_lookup(parent_mnum, &parent_inum)) {
     sref<inode> parent_i = alloc_inode_for_mnode(parent_mnum, mnode::types::dir);
     parent_inum = parent_i->inum;
+    iunlock(parent_i);
   }
 
   sref<inode> i = alloc_inode_for_mnode(mnum, type);
   if (type == mnode::types::file) {
-    ilock(i, 0); // iupdate only reads the inode, so a readlock is sufficient.
     iupdate(i, tr);
   } else if (type == mnode::types::dir) {
-    ilock(i, 1);
     dirlink(i, "..", parent_inum, false, tr); // dirlink does an iupdate within.
   }
   iunlock(i);

@@ -210,17 +210,18 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 // inode without holding a reference to it.
 //
 // Processes are only allowed to read and write inode metadata and contents
-// when holding the inode's lock, represented by the I_BUSY flag in the
-// in-memory copy. Because inode locks are held during disk accesses, they
-// are implemented using a flag rather than with spin locks. Callers are
-// responsible for locking inodes before passing them to routines in this file;
-// leaving this responsibility with the caller makes it possible for them to
-// create arbitrarily-sized atomic operations.
+// when holding the inode's lock, represented by the 'readbusy' and 'busy'
+// flags in the in-memory copy. Because inode locks are held during disk
+// accesses, they are implemented using a flag rather than with spin locks.
+// Callers are responsible for locking inodes before passing them to routines
+// in this file; leaving this responsibility with the caller makes it possible
+// for them to create arbitrarily-sized atomic operations.
 //
 // To give maximum control over locking to the callers, the routines in this
-// file that return inode pointers return pointers to *unlocked* inodes. It is
-// the callers' responsibility to lock them before using them. A non-zero
-// ip->ref keeps these unlocked inodes in the cache.
+// file that return inode pointers return pointers to *unlocked* inodes (except
+// ialloc() which returns a locked inode to prevent races on freshly created
+// inodes). It is the callers' responsibility to lock them before using them.
+// A non-zero ip->ref keeps these unlocked inodes in the cache.
 
 void
 initinode(void)
@@ -236,6 +237,7 @@ initinode(void)
   the_root->init();
 }
 
+// Returns an inode locked for write, on success.
 static sref<inode>
 try_ialloc(u32 inum, u32 dev, short type)
 {
@@ -247,7 +249,6 @@ try_ialloc(u32 inum, u32 dev, short type)
   ip->gen += 1;
   if (ip->nlink() || ip->size || ip->addrs[0])
     panic("try_ialloc: inode not zeroed\n");
-  iunlock(ip);
   return ip;
 }
 
@@ -256,7 +257,7 @@ try_ialloc(u32 inum, u32 dev, short type)
 DEFINE_PERCPU(int, last_inode);
 
 // Allocate a new inode with the given type on device dev.
-// Returns a locked inode.
+// Returns an inode locked for write, on success.
 sref<inode>
 ialloc(u32 dev, short type)
 {
