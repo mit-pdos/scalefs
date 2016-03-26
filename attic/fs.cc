@@ -139,6 +139,97 @@ private:
 
 static inode_cache_dir the_inode_cache;
 
+
+void
+itrunc(sref<inode> ip, u32 offset, transaction *trans)
+{
+  scoped_gc_epoch e;
+
+  if (ip->size <= offset)
+    return;
+
+  for (int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
+    if (ip->addrs[i]) {
+      bfree(ip->dev, ip->addrs[i], trans, true);
+      ip->addrs[i] = 0;
+    }
+  }
+
+  if (ip->addrs[NDIRECT]) {
+    int start = (offset >= NDIRECT*BSIZE) ?
+      BLOCKROUNDUP(offset - NDIRECT*BSIZE) : 0;
+    {
+      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+      auto locked = bp->write();
+      if (ip->iaddrs.load() != nullptr)
+        memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
+
+      u32* a = (u32*)locked->data;
+      for (int i = start; i < NINDIRECT; i++) {
+        if (a[i]) {
+          bfree(ip->dev, a[i], trans, true);
+          a[i] = 0;
+        }
+      }
+      if (trans && start != 0)
+        bp->add_to_transaction(trans);
+    }
+
+    if (start == 0) {
+      bfree(ip->dev, ip->addrs[NDIRECT], trans, true);
+      ip->addrs[NDIRECT] = 0;
+    }
+    if (ip->iaddrs.load() != nullptr) {
+      kmfree((void*)ip->iaddrs.load(), IADDRSSZ);
+      ip->iaddrs.store(nullptr);
+    }
+  }
+
+  if (ip->addrs[NDIRECT+1]) {
+    int bno = (offset >= (NDIRECT+NINDIRECT)*BSIZE)?
+      BLOCKROUNDUP(offset-(NDIRECT+NINDIRECT)*BSIZE): 0;
+    {
+      sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+      auto locked1 = bp1->write();
+      u32* a1 = (u32*)locked1->data;
+      for (int i = bno/NINDIRECT; i < NINDIRECT; i++) {
+        if (!a1[i])
+          continue;
+        int start = (i == bno/NINDIRECT)? bno%NINDIRECT : 0;
+        {
+          sref<buf> bp2 = buf::get(ip->dev, a1[i]);
+          auto locked2 = bp2->write();
+          u32* a2 = (u32*)locked2->data;
+          for (int j = start; j < NINDIRECT; j++) {
+            if (!a2[j])
+              continue;
+
+            bfree(ip->dev, a2[j], trans, true);
+            a2[j] = 0;
+          }
+          if (trans && start != 0)
+            bp2->add_to_transaction(trans);
+        }
+
+        if (start == 0) {
+          bfree(ip->dev, a1[i], trans, true);
+          a1[i] = 0;
+        }
+      }
+      if (trans && bno != 0)
+        bp1->add_to_transaction(trans);
+    }
+
+    if (bno == 0) {
+      bfree(ip->dev, ip->addrs[NDIRECT+1], trans, true);
+      ip->addrs[NDIRECT+1] = 0;
+    }
+  }
+
+  ip->size = offset;
+}
+
+
 void
 dir_flush(sref<inode> dp, transaction *trans)
 {

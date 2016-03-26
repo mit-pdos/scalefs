@@ -667,6 +667,140 @@ retry3:
   return addr;
 }
 
+// Caller must hold ilock for write. The caller must also arrange to invoke
+// iupdate() when suitable, to flush the new inode size to the disk.
+void
+itrunc(sref<inode> ip, u32 offset, transaction *trans)
+{
+  scoped_gc_epoch e;
+
+  if (ip->size <= offset || offset >= MAXFILE*BSIZE)
+    return;
+
+  // Wipe out everything from bn (inclusive) till the end of the file.
+  // After itrunc() returns, appends will occur at 'offset'.
+  u32 bn = BLOCKROUNDUP(offset);
+
+  enum {
+    DIRECT_BLOCKS = 1,
+    INDIRECT_BLOCKS,
+    DBL_INDIRECT_BLOCKS,
+  };
+
+  u32 start_stage = DIRECT_BLOCKS, start_index = 0;
+
+  if (bn < NDIRECT) {
+    start_stage = DIRECT_BLOCKS;
+    start_index = bn;
+  } else if (bn < NDIRECT + NINDIRECT) {
+    start_stage = INDIRECT_BLOCKS;
+    start_index = bn - NDIRECT;
+  } else if (bn < NDIRECT + NINDIRECT + NINDIRECT*NINDIRECT) {
+    start_stage = DBL_INDIRECT_BLOCKS;
+    start_index = bn - NDIRECT - NINDIRECT;
+  }
+
+  switch (start_stage) {
+  case DIRECT_BLOCKS:
+
+    for (u32 i = start_index; i < NDIRECT; i++) {
+      if (!ip->addrs[i])
+        break;
+      bfree(ip->dev, ip->addrs[i], trans, true);
+      ip->addrs[i] = 0;
+    }
+    start_index = 0; // Fall through to next stage.
+
+  case INDIRECT_BLOCKS:
+
+    if (!ip->addrs[NDIRECT])
+      break; // No more blocks to delete.
+
+    {
+      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+      auto locked = bp->write();
+      u32 *ap = (u32 *)locked->data;
+
+      for (u32 i = start_index; i < NINDIRECT; i++) {
+        if (!ap[i])
+          break;
+
+        bfree(ip->dev, ap[i], trans, true);
+        ap[i] = 0;
+      }
+
+      if (start_index != 0)
+        bp->add_to_transaction(trans);
+    }
+
+    if (start_index == 0) {
+      bfree(ip->dev, ip->addrs[NDIRECT], trans, true);
+      ip->addrs[NDIRECT] = 0;
+    }
+
+    start_index = 0; // Fall through to next stage.
+
+  case DBL_INDIRECT_BLOCKS:
+
+    if (!ip->addrs[NDIRECT+1])
+      break;
+
+    {
+      sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+      auto locked1 = bp1->write();
+      u32 *ap1 = (u32 *)locked1->data;
+      u32 begin = start_index;
+
+      for (u32 i = begin / NINDIRECT; i < NINDIRECT; i++) {
+        if (!ap1[i])
+          break;
+
+        {
+          sref<buf> bp2 = buf::get(ip->dev, ap1[i]);
+          auto locked2 = bp2->write();
+          u32 *ap2 = (u32 *)locked2->data;
+
+          for (u32 j = begin % NINDIRECT; j < NINDIRECT; j++) {
+            if (!ap2[j])
+              break;
+
+            bfree(ip->dev, ap2[j], trans, true);
+            ap2[j] = 0;
+          }
+
+          if (!ap2[0])
+            bp2->add_to_transaction(trans);
+        }
+
+        if (begin % NINDIRECT == 0) {
+          bfree(ip->dev, ap1[i], trans, true);
+          ap1[i] = 0;
+        }
+
+        // Reset 'begin' after the first run through the nested loop, to ensure
+        // that its subsequent executions will process all the entries.
+        begin = 0;
+      }
+
+      if (start_index != 0)
+        bp1->add_to_transaction(trans);
+    }
+
+    if (start_index == 0) {
+      bfree(ip->dev, ip->addrs[NDIRECT+1], trans, true);
+      ip->addrs[NDIRECT+1] = 0;
+    }
+  }
+
+  // Final correctness check for the most common case:
+  if (offset == 0) {
+    for (u32 i = 0; i < NDIRECT + 2; i++)
+      assert(ip->addrs[i] == 0);
+  }
+
+  ip->size = offset;
+}
+
 // Drop the (clean) buffer-cache blocks associated with this file.
 // Caller must hold ilock for read.
 void
@@ -718,98 +852,6 @@ drop_bufcache(sref<inode> ip)
     // Drop the first-level doubly-indirect block.
     buf::put(ip->dev, ip->addrs[NDIRECT+1]);
   }
-}
-
-void
-itrunc(sref<inode> ip, u32 offset, transaction *trans)
-{
-  scoped_gc_epoch e;
-
-  // XXX how to serialize itrunc w.r.t. concurrent itrunc or expansion?
-  // Could lock disk blocks (buf's), or could lock the inode?
-
-  if (ip->size <= offset)
-    return;
-
-  for (int i = BLOCKROUNDUP(offset); i < NDIRECT; i++) {
-    if (ip->addrs[i]) {
-      bfree(ip->dev, ip->addrs[i], trans, true);
-      ip->addrs[i] = 0;
-    }
-  }
-
-  if (ip->addrs[NDIRECT]) {
-    int start = (offset >= NDIRECT*BSIZE) ?
-      BLOCKROUNDUP(offset - NDIRECT*BSIZE) : 0;
-    {
-      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
-      auto locked = bp->write();
-      if (ip->iaddrs.load() != nullptr)
-        memmove(locked->data, (void*)ip->iaddrs.load(), IADDRSSZ);
-
-      u32* a = (u32*)locked->data;
-      for (int i = start; i < NINDIRECT; i++) {
-        if (a[i]) {
-          bfree(ip->dev, a[i], trans, true);
-          a[i] = 0;
-        }
-      }
-      if (trans && start != 0)
-        bp->add_to_transaction(trans);
-    }
-
-    if (start == 0) {
-      bfree(ip->dev, ip->addrs[NDIRECT], trans, true);
-      ip->addrs[NDIRECT] = 0;
-    }
-    if (ip->iaddrs.load() != nullptr) {
-      kmfree((void*)ip->iaddrs.load(), IADDRSSZ);
-      ip->iaddrs.store(nullptr);
-    }
-  }
-
-  if (ip->addrs[NDIRECT+1]) {
-    int bno = (offset >= (NDIRECT+NINDIRECT)*BSIZE)?
-      BLOCKROUNDUP(offset-(NDIRECT+NINDIRECT)*BSIZE): 0;
-    {
-      sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
-      auto locked1 = bp1->write();
-      u32* a1 = (u32*)locked1->data;
-      for (int i = bno/NINDIRECT; i < NINDIRECT; i++) {
-        if (!a1[i])
-          continue;
-        int start = (i == bno/NINDIRECT)? bno%NINDIRECT : 0;
-        {
-          sref<buf> bp2 = buf::get(ip->dev, a1[i]);
-          auto locked2 = bp2->write();
-          u32* a2 = (u32*)locked2->data;
-          for (int j = start; j < NINDIRECT; j++) {
-            if (!a2[j])
-              continue;
-
-            bfree(ip->dev, a2[j], trans, true);
-            a2[j] = 0;
-          }
-          if (trans && start != 0)
-            bp2->add_to_transaction(trans);
-        }
-
-        if (start == 0) {
-          bfree(ip->dev, a1[i], trans, true);
-          a1[i] = 0;
-        }
-      }
-      if (trans && bno != 0)
-        bp1->add_to_transaction(trans);
-    }
-
-    if (bno == 0) {
-      bfree(ip->dev, ip->addrs[NDIRECT+1], trans, true);
-      ip->addrs[NDIRECT+1] = 0;
-    }
-  }
-
-  ip->size = offset;
 }
 
 //PAGEBREAK!
