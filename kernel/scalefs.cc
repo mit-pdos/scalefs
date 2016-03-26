@@ -1012,13 +1012,7 @@ mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
   apply_trans_on_disk(tr);
 
   ideflush();
-
-  // The blocks have been written to disk successfully. Safe to delete
-  // this transaction from the journal. (This means that all the
-  // transactions till this point have made it to the disk. So the journal
-  // can simply be truncated.) Since the journal is static, the journal file
-  // simply needs to be zero-filled.)
-  clear_journal();
+  reset_journal();
 }
 
 // Writes out the physical journal to the disk, and applies the committed
@@ -1094,7 +1088,7 @@ mfs_interface::flush_journal_locked()
       ideflush();
 
       processed_trans_vec.clear();
-      clear_journal();
+      reset_journal();
 
       // Retry this sub-transaction, since we couldn't write it to the journal.
       delete prune_trans;
@@ -1132,13 +1126,7 @@ mfs_interface::flush_journal_locked()
   ideflush();
 
   processed_trans_vec.clear();
-
-  // The blocks have been written to disk successfully. Safe to delete
-  // this transaction from the journal. (This means that all the
-  // transactions till this point have made it to the disk. So the journal
-  // can simply be truncated.) Since the journal is static, the journal file
-  // simply needs to be zero-filled.)
-  clear_journal();
+  reset_journal();
 
   delete prune_trans;
 
@@ -1338,22 +1326,40 @@ mfs_interface::process_journal()
     }
   }
 
-  // Zero-fill the journal
-  zero_fill(sv6_journal, PHYS_JOURNAL_SIZE);
+  reset_journal();
   iunlock(sv6_journal);
 
-  trans->write_to_disk_update_bufcache();
+  if (!jrnl_error)
+    trans->write_to_disk_update_bufcache();
   delete trans;
 }
 
-// Clear (zero-fill) the journal file on the disk
+// Reset the journal so that we can start writing to it again, from the
+// beginning. Writing a zero header at the very beginning of the journal
+// ensures that if we crash and reboot, none of the transactions in the
+// journal will be reapplied. Further, when this zero header gets overwritten
+// by a subsequent (possibly partially written) transaction, the timestamps
+// embedded in each transaction help identify blocks belonging to it, which
+// in turn helps us avoid applying partial or corrupted transactions upon
+// reboot.
+//
+// Must be invoked with the journal lock held.
 void
-mfs_interface::clear_journal()
+mfs_interface::reset_journal()
 {
-  assert(sv6_journal);
-  ilock(sv6_journal, WRITELOCK);
-  zero_fill(sv6_journal, fs_journal->current_offset());
-  iunlock(sv6_journal);
+  size_t hdr_size = sizeof(journal_block_header);
+  char buf[hdr_size];
+
+  memset(buf, 0, sizeof(buf));
+
+  transaction *tr = new transaction(0);
+
+  if (writei(sv6_journal, buf, 0 /* offset */, hdr_size, tr) != hdr_size)
+    panic("reset_journal() failed\n");
+
+  tr->write_to_disk();
+  delete tr;
+
   fs_journal->update_offset(0);
 }
 

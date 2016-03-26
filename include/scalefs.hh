@@ -516,7 +516,7 @@ class mfs_interface
     transaction *tr);
     void write_journal_trans_epilog(u64 timestamp, transaction *tr);
     void process_journal();
-    void clear_journal();
+    void reset_journal();
 
     // Metadata functions
     void alloc_mnode_lock(u64 mnum);

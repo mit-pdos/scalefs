@@ -667,55 +667,6 @@ retry3:
   return addr;
 }
 
-
-// Fill the file with zeroes till offset. Used to "clear" the journal file.
-void
-zero_fill(sref<inode> ip, u32 offset)
-{
-  scoped_gc_epoch e;
-
-  u32 bno = BLOCKROUNDUP(offset);
-
-  if (bno < NDIRECT) {
-  for (int i = 0; i < bno; i++)
-    if (ip->addrs[i])
-      bzero(ip->dev, ip->addrs[i], true);
-  }
-  bno -= NDIRECT;
-
-  if (bno < NINDIRECT) {
-    if (ip->addrs[NDIRECT]) {
-      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
-      auto copy = bp->read();
-      u32* a = (u32*)copy->data;
-      for (int i = 0; i < bno; i++)
-        if (a[i])
-          bzero(ip->dev, a[i], true);
-    }
-  }
-  bno -= NINDIRECT;
-
-  if (bno < NINDIRECT * NINDIRECT) {
-    if (ip->addrs[NDIRECT+1]) {
-      sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
-      auto copy1 = bp1->read();
-      u32* a1 = (u32*)copy1->data;
-      u32 end1 = (bno%NINDIRECT) ? bno/NINDIRECT+1 : bno/NINDIRECT;
-      for (int i = 0; i < end1; i++) {
-        if (a1[i]) {
-          sref<buf> bp2 = buf::get(ip->dev, a1[i]);
-          auto copy2 = bp2->read();
-          u32* a2 = (u32*)copy2->data;
-          u32 end2 = (i < end1-1) ? NINDIRECT : bno%NINDIRECT;
-          for (int j = 0; j < end2; j++)
-            if (a2[j])
-              bzero(ip->dev, a2[j], true);
-        }
-      }
-    }
-  }
-}
-
 // Drop the (clean) buffer-cache blocks associated with this file.
 void
 drop_bufcache(sref<inode> ip)

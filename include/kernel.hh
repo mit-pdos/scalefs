@@ -109,13 +109,12 @@ sref<inode>     iget(u32 dev, u32 inum);
 void            ilock(sref<inode>, int lock_type);
 void            iupdate(sref<inode>, transaction *trans = NULL);
 void            iunlock(sref<inode>);
-void            zero_fill(sref<inode>, u32 offset);
 void            drop_bufcache(sref<inode> ip);
 void            itrunc(sref<inode>, u32 offset = 0, transaction *trans = NULL);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);
-int             writei(sref<inode>, const char*, u32, u32,
-                  transaction *trans = NULL, bool writeback = false);
+int             writei(sref<inode>, const char*, u32, u32, transaction *trans = NULL,
+                       bool writeback = false);
 void            update_size(sref<inode>, u32, transaction *trans = NULL);
 sref<inode>     nameiparent(sref<inode> cwd, const char*, char*);
 int             dirlink(sref<inode>, const char*, u32, bool inc_link, transaction *trans);
