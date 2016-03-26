@@ -521,7 +521,9 @@ mfs_interface::evict_bufcache()
 
     if (m && m->type() == mnode::types::file) {
         sref<inode> ip = get_inode(m->mnum_, "evict_bufcache");
+        ilock(ip, READLOCK);
         drop_bufcache(ip);
+        iunlock(ip);
     }
   }
 }

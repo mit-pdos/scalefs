@@ -668,19 +668,23 @@ retry3:
 }
 
 // Drop the (clean) buffer-cache blocks associated with this file.
+// Caller must hold ilock for read.
 void
 drop_bufcache(sref<inode> ip)
 {
   scoped_gc_epoch e;
-
-  ilock(ip, READLOCK);
 
   for (int i = 0; i < NDIRECT; i++) {
     if (ip->addrs[i])
       buf::put(ip->dev, ip->addrs[i]);
   }
 
-  if (ip->addrs[NDIRECT]) {
+  // Note: If the indirect or doubly indirect blocks are themselves not in the
+  // bufcache, none of the data-blocks they point to will be in the bufcache
+  // either. So check that first! Don't read blocks from the disk into the
+  // bufcache just to throw them out!
+
+  if (ip->addrs[NDIRECT] && buf::in_bufcache(ip->dev, ip->addrs[NDIRECT])) {
     sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto copy = bp->read();
     u32 *a = (u32*)copy->data;
@@ -692,13 +696,13 @@ drop_bufcache(sref<inode> ip)
     buf::put(ip->dev, ip->addrs[NDIRECT]);
   }
 
-  if (ip->addrs[NDIRECT+1]) {
+  if (ip->addrs[NDIRECT+1] && buf::in_bufcache(ip->dev, ip->addrs[NDIRECT+1])) {
     sref<buf> bp1 = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
     auto copy1 = bp1->read();
     u32 *a1 = (u32*)copy1->data;
 
     for (int i = 0; i < NINDIRECT; i++) {
-      if (a1[i]) {
+      if (a1[i] && buf::in_bufcache(ip->dev, a1[i])) {
         sref<buf> bp2 = buf::get(ip->dev, a1[i]);
         auto copy2 = bp2->read();
         u32 *a2 = (u32*)copy2->data;
@@ -714,8 +718,6 @@ drop_bufcache(sref<inode> ip)
     // Drop the first-level doubly-indirect block.
     buf::put(ip->dev, ip->addrs[NDIRECT+1]);
   }
-
-  iunlock(ip);
 }
 
 void

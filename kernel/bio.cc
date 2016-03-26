@@ -9,6 +9,17 @@
 static weakcache<buf::key_t, buf> bufcache(BSIZE << 10);
             //I don't think this was changed when BSIZE was changed from 512 to 4096
 
+
+// Returns true if the specified block is cached in the buffer-cache, false
+// otherwise.
+bool
+buf::in_bufcache(u32 dev, u64 block)
+{
+  buf::key_t k = { dev, block };
+  sref<buf> b = bufcache.lookup(k);
+  return (b ? true : false);
+}
+
 // The caller sets @skip_disk_read to true if it is going to overwrite the
 // entire block shortly.
 sref<buf>
