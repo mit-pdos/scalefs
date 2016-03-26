@@ -104,7 +104,9 @@ sref<inode>     dirlookup(sref<inode>, char*);
 sref<inode>     ialloc(u32, short);
 sref<inode>     namei(sref<inode> cwd, const char*);
 sref<inode>     iget(u32 dev, u32 inum);
-void            ilock(sref<inode>, int writer);
+#define		READLOCK	0
+#define		WRITELOCK	1
+void            ilock(sref<inode>, int lock_type);
 void            iupdate(sref<inode>, transaction *trans = NULL);
 void            iunlock(sref<inode>);
 void            zero_fill(sref<inode>, u32 offset);

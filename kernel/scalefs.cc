@@ -66,7 +66,7 @@ mfs_interface::free_metadata_log(u64 mnum)
 void
 mfs_interface::free_inode(sref<inode> ip, transaction *tr)
 {
-  ilock(ip, 1);
+  ilock(ip, WRITELOCK);
   assert(ip->nlink() == 0);
   // Release the inode on the disk.
   ip->type = 0;
@@ -197,7 +197,7 @@ mfs_interface::truncate_file(u64 mfile_mnum, u32 offset, transaction *tr)
   scoped_gc_epoch e;
 
   sref<inode> ip = get_inode(mfile_mnum, "truncate_file");
-  ilock(ip, 1);
+  ilock(ip, WRITELOCK);
   itrunc(ip, offset, tr);
   iunlock(ip);
 
@@ -230,7 +230,7 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
     unlink_old_inode(mdir_mnum, name, tr);
   }
 
-  ilock(mdir_i, 1);
+  ilock(mdir_i, WRITELOCK);
   dirlink(mdir_i, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
   iunlock(mdir_i);
 }
@@ -245,7 +245,7 @@ mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
   if (!target)
     return;
 
-  ilock(i, 1);
+  ilock(i, WRITELOCK);
   if (target->type == T_DIR)
     dirunlink(i, name, target->inum, true, tr);
   else
@@ -275,7 +275,7 @@ mfs_interface::delete_old_inode(u64 mfile_mnum, transaction *tr)
 {
   sref<inode> ip = get_inode(mfile_mnum, "delete_old_inode");
 
-  ilock(ip, 1);
+  ilock(ip, WRITELOCK);
   itrunc(ip, 0, tr);
   iunlock(ip);
 
@@ -921,7 +921,7 @@ mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
     assert(inum_lookup(op->dst_parent_mnum, &dst_parent_inum));
 
     sref<inode> i = iget(1, mnode_inum);
-    ilock(i, 1);
+    ilock(i, WRITELOCK);
     dirunlink(i, "..", src_parent_inum, false, tr);
     dirlink(i, "..", dst_parent_inum, false, tr);
     iunlock(i);
@@ -1291,7 +1291,7 @@ mfs_interface::process_journal()
   sv6_journal = namei(sref<inode>(), "/sv6journal");
   assert(sv6_journal);
 
-  ilock(sv6_journal, 1);
+  ilock(sv6_journal, WRITELOCK);
 
   while (!jrnl_error) {
 
@@ -1351,7 +1351,7 @@ void
 mfs_interface::clear_journal()
 {
   assert(sv6_journal);
-  ilock(sv6_journal, 1);
+  ilock(sv6_journal, WRITELOCK);
   zero_fill(sv6_journal, fs_journal->current_offset());
   iunlock(sv6_journal);
   fs_journal->update_offset(0);
@@ -1650,7 +1650,7 @@ initfs()
 
       sref<inode> ip = iget(1, inum);
 
-      ilock(ip, 1);
+      ilock(ip, WRITELOCK);
       itrunc(ip, 0, tr);
       iunlock(ip);
 

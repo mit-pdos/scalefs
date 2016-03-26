@@ -245,7 +245,7 @@ try_ialloc(u32 inum, u32 dev, short type)
   if (ip->type || !cmpxch(&ip->type, (short) 0, type))
     return sref<inode>();
 
-  ilock(ip, 1);
+  ilock(ip, WRITELOCK);
   ip->gen += 1;
   if (ip->nlink() || ip->size || ip->addrs[0])
     panic("try_ialloc: inode not zeroed\n");
@@ -493,15 +493,16 @@ inode::onzero(void)
   return;
 }
 
-// Lock the given inode, for write if @writer == 1, and for read otherwise.
+// Lock the given inode, for write if @lock_type == WRITELOCK, and for read
+// otherwise.
 void
-ilock(sref<inode> ip, int writer)
+ilock(sref<inode> ip, int lock_type)
 {
   if (!ip)
     panic("ilock(): illegal inode pointer\n");
 
   acquire(&ip->lock);
-  if (writer) {
+  if (lock_type == WRITELOCK) {
     while (ip->busy || ip->readbusy)
       ip->cv.sleep(&ip->lock);
     ip->busy = true;
@@ -721,6 +722,8 @@ drop_bufcache(sref<inode> ip)
 {
   scoped_gc_epoch e;
 
+  ilock(ip, READLOCK);
+
   for (int i = 0; i < NDIRECT; i++) {
     if (ip->addrs[i])
       buf::put(ip->dev, ip->addrs[i]);
@@ -734,7 +737,7 @@ drop_bufcache(sref<inode> ip)
       if (a[i])
         buf::put(ip->dev, a[i]);
     }
-    // Drop the indirect block too, from the buffer-cache.
+    // Drop the indirect block.
     buf::put(ip->dev, ip->addrs[NDIRECT]);
   }
 
@@ -752,15 +755,16 @@ drop_bufcache(sref<inode> ip)
           if (a2[j])
             buf::put(ip->dev, a2[j]);
         }
-        // Drop the second-level doubly-indirect block too, from the
-        // buffer-cache.
+        // Drop the second-level doubly-indirect block.
         buf::put(ip->dev, a1[i]);
       }
     }
 
-    // Drop the first-level doubly-indirect block too, from the buffer-cache.
+    // Drop the first-level doubly-indirect block.
     buf::put(ip->dev, ip->addrs[NDIRECT+1]);
   }
+
+  iunlock(ip);
 }
 
 void
