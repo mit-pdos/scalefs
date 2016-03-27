@@ -138,8 +138,12 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
                               size_t nbytes, transaction *tr)
 {
   scoped_gc_epoch e;
-  sref<inode> i = get_inode(mfile_mnum, "sync_file_page");
-  return writei(i, p, pos, nbytes, tr, true);
+  sref<inode> ip = get_inode(mfile_mnum, "sync_file_page");
+
+  ilock(ip, WRITELOCK);
+  int ret = writei(ip, p, pos, nbytes, tr, true);
+  iunlock(ip);
+  return ret;
 }
 
 // Returns an inode locked for write, on success.
@@ -1003,18 +1007,23 @@ mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 
   trans = new transaction(0);
 
+  ilock(sv6_journal, WRITELOCK);
   write_journal_trans_prolog(timestamp, trans);
 
   // Write out the transaction blocks to the disk journal in timestamp order.
   write_journal_transaction_blocks(tr->blocks, timestamp, trans);
 
   write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
+  iunlock(sv6_journal);
 
   post_process_transaction(tr);
   apply_trans_on_disk(tr);
 
   ideflush();
+
+  ilock(sv6_journal, WRITELOCK);
   reset_journal();
+  iunlock(sv6_journal);
 }
 
 // Writes out the physical journal to the disk, and applies the committed
@@ -1042,6 +1051,8 @@ mfs_interface::flush_journal_locked()
   {
     auto it = fs_journal->transaction_log.begin();
     prolog_timestamp = (*it)->timestamp_;
+
+    ilock(sv6_journal, WRITELOCK);
     write_journal_trans_prolog(prolog_timestamp, trans);
   }
 
@@ -1076,6 +1087,7 @@ mfs_interface::flush_journal_locked()
       write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
 
       write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
+      iunlock(sv6_journal);
 
       // Apply all the committed sub-transactions to their final destinations
       // on the disk.
@@ -1090,13 +1102,16 @@ mfs_interface::flush_journal_locked()
       ideflush();
 
       processed_trans_vec.clear();
+      ilock(sv6_journal, WRITELOCK);
       reset_journal();
+      iunlock(sv6_journal);
 
       // Retry this sub-transaction, since we couldn't write it to the journal.
       delete prune_trans;
       prune_trans = new transaction(0);
       trans = new transaction(0);
       prolog_timestamp = timestamp;
+      ilock(sv6_journal, WRITELOCK);
       write_journal_trans_prolog(prolog_timestamp, trans);
       goto retry;
     }
@@ -1114,6 +1129,7 @@ mfs_interface::flush_journal_locked()
   }
 
   write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
+  iunlock(sv6_journal);
 
   // Apply all the committed sub-transactions to their final destinations on
   // the disk.
@@ -1128,7 +1144,9 @@ mfs_interface::flush_journal_locked()
   ideflush();
 
   processed_trans_vec.clear();
+  ilock(sv6_journal, WRITELOCK);
   reset_journal();
+  iunlock(sv6_journal);
 
   delete prune_trans;
 
@@ -1215,6 +1233,7 @@ mfs_interface::fits_in_journal(size_t num_trans_blocks)
 }
 
 
+// Caller must hold ilock for write on sv6_journal.
 void
 mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
 {
@@ -1224,6 +1243,7 @@ mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
 
 // Write a transaction's disk blocks to the journal in memory. Don't write
 // or flush it to the disk yet.
+// Caller must hold ilock for write on sv6_journal.
 void
 mfs_interface::write_journal_transaction_blocks(
     const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
@@ -1244,6 +1264,7 @@ mfs_interface::write_journal_transaction_blocks(
   }
 }
 
+// Caller must hold ilock for write on sv6_journal.
 void
 mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
 {
@@ -1345,7 +1366,7 @@ mfs_interface::process_journal()
 // in turn helps us avoid applying partial or corrupted transactions upon
 // reboot.
 //
-// Must be invoked with the journal lock held.
+// Caller must hold the journal lock and also ilock for write on sv6_journal.
 void
 mfs_interface::reset_journal()
 {

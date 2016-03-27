@@ -854,8 +854,22 @@ drop_bufcache(sref<inode> ip)
   }
 }
 
-//PAGEBREAK!
-// Read data from inode.
+// Read data from the inode. Called when the inode's data blocks are not cached
+// in the page-cache (MemFS) and hence have to be read fresh from the disk itself.
+//
+// Locking protocol: None. The caller doesn't need to hold ilock for read,
+// because readi() and writei() can never be concurrent on the same inode, asking
+// to read and write the same set of blocks. Here's why: writei() is only invoked
+// in the fsync path, to flush out dirty data from the page-cache to the
+// file/dir on the disk (via the bufcache). When an fsync() [and hence writei()]
+// is in progress, if a concurrent read() on the file asks for dirty blocks, it
+// will get fulfilled from the page-cache itself [i.e., readm() in MemFS] without
+// turning into a call to readi(). Instead, if the read() asks for clean blocks
+// of the file, then it can safely read from the bufcache via readi() because
+// the writei() (in the fsync path) doesn't modify any clean blocks. Thus, even
+// if we have concurrent calls to readi() and writei() on the same inode, they
+// will touch a mutually exclusive set of blocks, which implies that we don't
+// need any synchronization between them.
 int
 readi(sref<inode> ip, char *dst, u32 off, u32 n)
 {
@@ -887,13 +901,22 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
   return n;
 }
 
-// PAGEBREAK!
-// Write data to inode.
-// writeback = true indicates that the data block is not logged in the journal.
-// It is written back to the disk directly.
+// Write data to the inode. Called in the fsync() path to flush dirty data from
+// the page-cache (MemFS) to the inode's data blocks on the disk via the
+// bufcache.
+//
+// The modified blocks are written to the disk directly if @writeback == true,
+// and logged in the transaction otherwise.
+//
+// Locking protocol: The caller must hold ilock for write.
+//
+// Strictly speaking, this is unnecessary because concurrent calls to fsync()
+// on the same inode are serialized at the fsync() call itself (using per-mnode
+// locks). But we enforce this locking protocol here anyway to maintain writei()'s
+// correctness guarantees independent of fsync()'s concurrency strategy.
 int
 writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
-      bool writeback)
+       bool writeback)
 {
   scoped_gc_epoch e;
 
@@ -1032,6 +1055,7 @@ dir_init(sref<inode> dp)
   }
 }
 
+// Caller must hold ilock for write.
 void
 dir_flush_entry(sref<inode> dp, const char *name, transaction *trans)
 {
