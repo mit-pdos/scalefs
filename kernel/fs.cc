@@ -598,12 +598,13 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
         bfree(ip->dev, addr, trans);
         goto retry2;
       }
-      if (trans) {
-        char charbuf[BSIZE];
-        memmove(charbuf, (void*)ip->iaddrs.load(), IADDRSSZ);
-        // FIXME: Don't we also need to update the buffer-cache here?
-        trans->add_block(ip->addrs[NDIRECT], charbuf);
-      }
+
+      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+      auto locked = bp->write();
+      ap = (u32 *)locked->data;
+      ap[bn] = addr;
+      if (trans)
+        bp->add_to_transaction(trans);
     }
 
     return addr;
