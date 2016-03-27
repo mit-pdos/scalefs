@@ -140,6 +140,139 @@ private:
 static inode_cache_dir the_inode_cache;
 
 
+// Inode contents
+//
+// The contents (data) associated with each inode is stored
+// in a sequence of blocks on the disk.  The first NDIRECT blocks
+// are listed in ip->addrs[].  The next NINDIRECT blocks are
+// listed in the block ip->addrs[NDIRECT].  The next NINDIRECT^2
+// blocks are doubly-indirect from ip->addrs[NDIRECT+1].
+
+// Return the disk block address of the nth block in inode ip.
+// If there is no such block, bmap allocates one.
+static u32
+bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false)
+{
+  scoped_gc_epoch e;
+
+  u32* ap;
+  u32 addr;
+
+  if (bn < NDIRECT) {
+  retry0:
+    if ((addr = ip->addrs[bn]) == 0) {
+      addr = balloc(ip->dev, trans, zero_on_alloc);
+      if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
+        cprintf("bmap: race1\n");
+        bfree(ip->dev, addr, trans);
+        goto retry0;
+      }
+    }
+    return addr;
+  }
+  bn -= NDIRECT;
+
+  if (bn < NINDIRECT) {
+  retry1:
+    if (ip->iaddrs == nullptr) {
+      if ((addr = ip->addrs[NDIRECT]) == 0) {
+        addr = balloc(ip->dev, trans, true);
+        if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
+          cprintf("bmap: race2\n");
+          bfree(ip->dev, addr, trans);
+          goto retry1;
+        }
+      }
+
+      volatile u32* iaddrs = (u32*)kmalloc(IADDRSSZ, "iaddrs");
+      sref<buf> bp = buf::get(ip->dev, addr);
+      auto copy = bp->read();
+      memmove((void*)iaddrs, copy->data, IADDRSSZ);
+
+      if (!cmpxch(&ip->iaddrs, (volatile u32*)nullptr, iaddrs)) {
+        kmfree((void*)iaddrs, IADDRSSZ);
+        goto retry1;
+      }
+    }
+
+  retry2:
+    if ((addr = ip->iaddrs[bn]) == 0) {
+      addr = balloc(ip->dev, trans, zero_on_alloc);
+      if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
+        cprintf("bmap: race4\n");
+        bfree(ip->dev, addr, trans);
+        goto retry2;
+      }
+
+      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+      auto locked = bp->write();
+      ap = (u32 *)locked->data;
+      ap[bn] = addr;
+      if (trans)
+        bp->add_to_transaction(trans);
+    }
+
+    return addr;
+  }
+  bn -= NINDIRECT;
+
+  if (bn >= NINDIRECT * NINDIRECT)
+    panic("bmap: %d out of range", bn);
+
+  // Doubly-indirect blocks are currently "slower" because we do not
+  // cache an equivalent of ip->iaddrs.
+
+retry3:
+  if (ip->addrs[NDIRECT+1] == 0) {
+    addr = balloc(ip->dev, trans, true);
+    if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
+      cprintf("bmap: race5\n");
+      bfree(ip->dev, addr, trans);
+      goto retry3;
+    }
+  }
+
+  sref<buf> wb = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+
+  for (;;) {
+    auto copy = wb->read();
+    ap = (u32*)copy->data;
+    if (ap[bn / NINDIRECT] == 0) {
+      auto locked = wb->write();
+      ap = (u32*)locked->data;
+      if (ap[bn / NINDIRECT] == 0) {
+        ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
+        if (trans)
+          wb->add_to_transaction(trans);
+      }
+      continue;
+    }
+    addr = ap[bn / NINDIRECT];
+    break;
+  }
+
+  wb = buf::get(ip->dev, addr);
+
+  for (;;) {
+    auto copy = wb->read();
+    ap = (u32*)copy->data;
+    if (ap[bn % NINDIRECT] == 0) {
+      auto locked = wb->write();
+      ap = (u32*)locked->data;
+      if (ap[bn % NINDIRECT] == 0) {
+        ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
+        if (trans)
+          wb->add_to_transaction(trans);
+      }
+      continue;
+    }
+    addr = ap[bn % NINDIRECT];
+    break;
+  }
+
+  return addr;
+}
+
 void
 itrunc(sref<inode> ip, u32 offset, transaction *trans)
 {
