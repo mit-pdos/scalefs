@@ -542,14 +542,13 @@ static u32
 bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false)
 {
   scoped_gc_epoch e;
-
   u32* ap;
-  u32 addr;
 
   if (bn < NDIRECT) {
-    if ((addr = ip->addrs[bn]) == 0)
-      addr = ip->addrs[bn] = balloc(ip->dev, trans, zero_on_alloc);
-    return addr;
+    if (ip->addrs[bn] == 0)
+      ip->addrs[bn] = balloc(ip->dev, trans, zero_on_alloc);
+
+    return ip->addrs[bn];
   }
   bn -= NDIRECT;
 
@@ -558,21 +557,16 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
       ip->addrs[NDIRECT] = balloc(ip->dev, trans, true);
 
     sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
-    auto copy = bp->read();
-    ap = (u32 *)copy->data;
+    auto locked = bp->write();
+    ap = (u32 *)locked->data;
 
-    if ((addr = ap[bn]) == 0) {
-      auto locked = bp->write();
-      ap = (u32 *)locked->data;
-      if ((addr = ap[bn]) == 0) {
-        addr = ap[bn] = balloc(ip->dev, trans, zero_on_alloc);
-
-        if (trans)
-          bp->add_to_transaction(trans);
-      }
+    if (ap[bn] == 0) {
+      ap[bn] = balloc(ip->dev, trans, zero_on_alloc);
+      if (trans)
+        bp->add_to_transaction(trans);
     }
 
-    return addr;
+    return ap[bn];
   }
   bn -= NINDIRECT;
 
@@ -582,33 +576,28 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   if (ip->addrs[NDIRECT+1] == 0)
     ip->addrs[NDIRECT+1] = balloc(ip->dev, trans, true);
 
-  sref<buf> wb = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+  // First-level doubly-indirect block
+  sref<buf> fp = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+  auto flocked = fp->write();
+  ap = (u32 *)flocked->data;
 
-  auto copy = wb->read();
-  ap = (u32 *)copy->data;
   if (ap[bn / NINDIRECT] == 0) {
-    auto locked = wb->write();
-    ap = (u32 *)locked->data;
-    if (ap[bn / NINDIRECT] == 0) {
-      ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
-      if (trans)
-        wb->add_to_transaction(trans);
-    }
+    ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
+    if (trans)
+      fp->add_to_transaction(trans);
   }
 
-  sref<buf> db = buf::get(ip->dev, ap[bn / NINDIRECT]);
+  // Second-level doubly-indirect block
+  sref<buf> sp = buf::get(ip->dev, ap[bn / NINDIRECT]);
+  auto slocked = sp->write();
+  ap = (u32 *)slocked->data;
 
-  copy = db->read();
-  ap = (u32 *)copy->data;
   if (ap[bn % NINDIRECT] == 0) {
-    auto locked = db->write();
-    ap = (u32 *)locked->data;
-    if (ap[bn % NINDIRECT] == 0) {
-      ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
-      if (trans)
-        db->add_to_transaction(trans);
-    }
+    ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
+    if (trans)
+      sp->add_to_transaction(trans);
   }
+
   return ap[bn % NINDIRECT];
 }
 
