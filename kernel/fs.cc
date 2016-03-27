@@ -41,7 +41,6 @@
 #include "kstream.hh"
 #include "scalefs.hh"
 
-#define IADDRSSZ (sizeof(u32)*NINDIRECT)
 #define BLOCKROUNDUP(off) (((off)%BSIZE) ? (off)/BSIZE+1 : (off)/BSIZE)
 
 // A hash-table to cache in-memory inode data-structures.
@@ -343,7 +342,6 @@ inode::inode(u32 d, u32 i)
     valid(false), busy(false), readbusy(0)
 {
   dir.store(nullptr);
-  iaddrs.store(nullptr);
 }
 
 inode::~inode()
@@ -354,10 +352,6 @@ inode::~inode()
     d->remove(strbuf<DIRSIZ>(".."));
     gc_delayed(d);
     assert(cmpxch(&dir, d, (decltype(d)) 0));
-  }
-  if (iaddrs.load() != nullptr) {
-    kmfree((void*)iaddrs.load(), IADDRSSZ);
-    iaddrs.store(nullptr);
   }
 }
 
@@ -569,42 +563,28 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
 
   if (bn < NINDIRECT) {
   retry1:
-    if (ip->iaddrs == nullptr) {
-      if ((addr = ip->addrs[NDIRECT]) == 0) {
-        addr = balloc(ip->dev, trans, true);
-        if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
-          cprintf("bmap: race2\n");
-          bfree(ip->dev, addr, trans);
-          goto retry1;
-        }
-      }
-
-      volatile u32* iaddrs = (u32*)kmalloc(IADDRSSZ, "iaddrs");
-      sref<buf> bp = buf::get(ip->dev, addr);
-      auto copy = bp->read();
-      memmove((void*)iaddrs, copy->data, IADDRSSZ);
-
-      if (!cmpxch(&ip->iaddrs, (volatile u32*)nullptr, iaddrs)) {
-        kmfree((void*)iaddrs, IADDRSSZ);
+    if ((addr = ip->addrs[NDIRECT]) == 0) {
+      addr = balloc(ip->dev, trans, true);
+      if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
+        cprintf("bmap: race2\n");
+        bfree(ip->dev, addr, trans);
         goto retry1;
       }
     }
 
-  retry2:
-    if ((addr = ip->iaddrs[bn]) == 0) {
-      addr = balloc(ip->dev, trans, zero_on_alloc);
-      if (!__sync_bool_compare_and_swap(&ip->iaddrs[bn], (u32)0, addr)) {
-        cprintf("bmap: race4\n");
-        bfree(ip->dev, addr, trans);
-        goto retry2;
-      }
+    sref<buf> bp = buf::get(ip->dev, addr); // read ip->addrs[NDIRECT]
+    auto copy = bp->read();
+    ap = (u32 *)copy->data;
 
-      sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+    if ((addr = ap[bn]) == 0) {
       auto locked = bp->write();
       ap = (u32 *)locked->data;
-      ap[bn] = addr;
-      if (trans)
-        bp->add_to_transaction(trans);
+      if ((addr = ap[bn]) == 0) {
+        addr = ap[bn] = balloc(ip->dev, trans, zero_on_alloc);
+
+        if (trans)
+          bp->add_to_transaction(trans);
+      }
     }
 
     return addr;
@@ -613,9 +593,6 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
 
   if (bn >= NINDIRECT * NINDIRECT)
     panic("bmap: %d out of range", bn);
-
-  // Doubly-indirect blocks are currently "slower" because we do not
-  // cache an equivalent of ip->iaddrs.
 
 retry3:
   if (ip->addrs[NDIRECT+1] == 0) {
