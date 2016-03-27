@@ -101,7 +101,7 @@ struct dinode {
 #define NINODES		1000000
 
 // A prime number larger than NINODES
-#define NINODES_PRIME	1200061
+#define NINODES_PRIME	1010003
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
