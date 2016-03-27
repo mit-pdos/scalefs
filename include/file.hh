@@ -246,7 +246,7 @@ struct inode : public referenced, public rcu_freed
   std::atomic<int> readbusy;
 
   u32 size;
-  std::atomic<u32> addrs[NDIRECT+2];
+  u32 addrs[NDIRECT+2];
   short nlink_;
 
   // ??? what's the concurrency control plan?

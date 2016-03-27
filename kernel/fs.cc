@@ -528,17 +528,16 @@ iunlock(sref<inode> ip)
   release(&ip->lock);
 }
 
-//PAGEBREAK!
 // Inode contents
 //
-// The contents (data) associated with each inode is stored
-// in a sequence of blocks on the disk.  The first NDIRECT blocks
-// are listed in ip->addrs[].  The next NINDIRECT blocks are
-// listed in the block ip->addrs[NDIRECT].  The next NINDIRECT^2
-// blocks are doubly-indirect from ip->addrs[NDIRECT+1].
+// The contents (data) associated with each inode is stored in a sequence of
+// blocks on the disk.  The first NDIRECT blocks are listed in ip->addrs[].
+// The next NINDIRECT blocks are listed in the block ip->addrs[NDIRECT].
+// The next NINDIRECT^2 blocks are doubly-indirect from ip->addrs[NDIRECT+1].
 
-// Return the disk block address of the nth block in inode ip.
-// If there is no such block, bmap allocates one.
+// Return the disk block address of the nth block in inode ip. If there is no
+// such block, bmap allocates one. The caller must hold ilock() for write if
+// invoking bmap() from writei().
 static u32
 bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false)
 {
@@ -548,31 +547,17 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   u32 addr;
 
   if (bn < NDIRECT) {
-  retry0:
-    if ((addr = ip->addrs[bn]) == 0) {
-      addr = balloc(ip->dev, trans, zero_on_alloc);
-      if (!cmpxch(&ip->addrs[bn], (u32)0, addr)) {
-        cprintf("bmap: race1\n");
-        bfree(ip->dev, addr, trans);
-        goto retry0;
-      }
-    }
+    if ((addr = ip->addrs[bn]) == 0)
+      addr = ip->addrs[bn] = balloc(ip->dev, trans, zero_on_alloc);
     return addr;
   }
   bn -= NDIRECT;
 
   if (bn < NINDIRECT) {
-  retry1:
-    if ((addr = ip->addrs[NDIRECT]) == 0) {
-      addr = balloc(ip->dev, trans, true);
-      if (!cmpxch(&ip->addrs[NDIRECT], (u32)0, addr)) {
-        cprintf("bmap: race2\n");
-        bfree(ip->dev, addr, trans);
-        goto retry1;
-      }
-    }
+    if (ip->addrs[NDIRECT] == 0)
+      ip->addrs[NDIRECT] = balloc(ip->dev, trans, true);
 
-    sref<buf> bp = buf::get(ip->dev, addr); // read ip->addrs[NDIRECT]
+    sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
     auto copy = bp->read();
     ap = (u32 *)copy->data;
 
@@ -594,55 +579,37 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   if (bn >= NINDIRECT * NINDIRECT)
     panic("bmap: %d out of range", bn);
 
-retry3:
-  if (ip->addrs[NDIRECT+1] == 0) {
-    addr = balloc(ip->dev, trans, true);
-    if (!cmpxch(&ip->addrs[NDIRECT+1], (u32)0, addr)) {
-      cprintf("bmap: race5\n");
-      bfree(ip->dev, addr, trans);
-      goto retry3;
-    }
-  }
+  if (ip->addrs[NDIRECT+1] == 0)
+    ip->addrs[NDIRECT+1] = balloc(ip->dev, trans, true);
 
   sref<buf> wb = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
 
-  for (;;) {
-    auto copy = wb->read();
-    ap = (u32*)copy->data;
+  auto copy = wb->read();
+  ap = (u32 *)copy->data;
+  if (ap[bn / NINDIRECT] == 0) {
+    auto locked = wb->write();
+    ap = (u32 *)locked->data;
     if (ap[bn / NINDIRECT] == 0) {
-      auto locked = wb->write();
-      ap = (u32*)locked->data;
-      if (ap[bn / NINDIRECT] == 0) {
-        ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
-        if (trans)
-          wb->add_to_transaction(trans);
-      }
-      continue;
+      ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
+      if (trans)
+        wb->add_to_transaction(trans);
     }
-    addr = ap[bn / NINDIRECT];
-    break;
   }
 
-  wb = buf::get(ip->dev, addr);
+  sref<buf> db = buf::get(ip->dev, ap[bn / NINDIRECT]);
 
-  for (;;) {
-    auto copy = wb->read();
-    ap = (u32*)copy->data;
+  copy = db->read();
+  ap = (u32 *)copy->data;
+  if (ap[bn % NINDIRECT] == 0) {
+    auto locked = db->write();
+    ap = (u32 *)locked->data;
     if (ap[bn % NINDIRECT] == 0) {
-      auto locked = wb->write();
-      ap = (u32*)locked->data;
-      if (ap[bn % NINDIRECT] == 0) {
-        ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
-        if (trans)
-          wb->add_to_transaction(trans);
-      }
-      continue;
+      ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
+      if (trans)
+        db->add_to_transaction(trans);
     }
-    addr = ap[bn % NINDIRECT];
-    break;
   }
-
-  return addr;
+  return ap[bn % NINDIRECT];
 }
 
 // Caller must hold ilock for write. The caller must also arrange to invoke
