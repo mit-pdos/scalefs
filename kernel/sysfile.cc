@@ -144,11 +144,11 @@ sys_close(int fd)
 void
 sys_sync(void)
 {
-#if 0
   rootfs_interface->process_metadata_log_and_flush();
   rootfs_interface->sync_dirty_files();
+  // This second call to flush is to utilize group commit. See commit ae1629b9
+  // for details.
   rootfs_interface->process_metadata_log_and_flush();
-#endif
 }
 
 
