@@ -529,7 +529,6 @@ class mfs_interface
     void sync_dirty_files();
     void evict_bufcache();
     void evict_pagecache();
-    void process_metadata_log();
     void process_metadata_log_and_flush();
     void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
     void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
