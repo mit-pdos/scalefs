@@ -364,24 +364,15 @@ mfs_interface::process_metadata_log_and_flush()
 void
 mfs_interface::sync_dirty_files()
 {
-#if 0
-  superblock sb;
+  // Invoke sync_file() on every dirty mnode.
+  metadata_log_htab->enumerate([](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
 
-  get_superblock(&sb, false);
-
-  // Invoke sync_file() for every file mnode that we know of, by evaluating
-  // every key-value pair in the hash-table. This scheme (of using enumerate()
-  // with a callback) is more efficient than doing lookups for all inodes from
-  // 0 through sb.ninodes in the hash-table.
-
-  inum_to_mnum->enumerate([](const u64 &inum, u64 &mnum)->bool {
     sref<mnode> m = root_fs->mget(mnum);
-    if (m && m->type() == mnode::types::file)
+    if (m && m->is_dirty() && m->type() == mnode::types::file)
       m->as_file()->sync_file(false);
 
     return false;
   });
-#endif
 }
 
 void
