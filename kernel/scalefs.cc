@@ -150,16 +150,20 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
 sref<inode>
 mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
 {
+  sref<inode> ip;
   sleeplock *mnode_lock;
   assert(mnum_to_lock->lookup(mnum, &mnode_lock));
   auto lk = mnode_lock->guard();
 
   u64 inum;
-  if (inum_lookup(mnum, &inum))
-    return iget(1, inum);
+  if (inum_lookup(mnum, &inum)) {
+    ip = iget(1, inum);
+    ilock(ip, WRITELOCK);
+    return ip;
+  }
 
   // ialloc() returns a locked inode.
-  sref<inode> ip = ialloc(1, type);
+  ip = ialloc(1, type);
   inum_to_mnum->insert(ip->inum, mnum);
   mnum_to_inum->insert(mnum, ip->inum);
   return ip;
@@ -183,15 +187,15 @@ mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
     iunlock(parent_i);
   }
 
-  sref<inode> i = alloc_inode_for_mnode(mnum, type);
+  sref<inode> ip = alloc_inode_for_mnode(mnum, type);
   if (type == mnode::types::file) {
-    iupdate(i, tr);
+    iupdate(ip, tr);
   } else if (type == mnode::types::dir) {
-    dirlink(i, "..", parent_inum, false, tr); // dirlink does an iupdate within.
+    dirlink(ip, "..", parent_inum, false, tr); // dirlink does an iupdate within.
   }
-  iunlock(i);
+  iunlock(ip);
 
-  return i->inum;
+  return ip->inum;
 }
 
 // Truncates a file on disk to the specified size (offset).
