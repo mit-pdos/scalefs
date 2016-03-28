@@ -916,29 +916,7 @@ update_size(sref<inode> ip, u32 size, transaction *trans)
   iupdate(ip, trans);
 }
 
-//PAGEBREAK!
 // Directories
-
-int
-namecmp(const char *s, const char *t)
-{
-  return strncmp(s, t, DIRSIZ);
-}
-
-u64
-namehash(const strbuf<DIRSIZ> &n)
-{
-  u64 h = 0;
-  for (int i = 0; i < DIRSIZ && n.buf_[i]; i++) {
-    u64 c = n.buf_[i];
-    // Lifted from dcache.h in Linux v3.3
-    h = (h + (c << 4) + (c >> 4)) * 11;
-    // XXX(sbw) this doesn't seem to do well with the names
-    // in dirbench (the low-order bits get clumped).
-    // h = ((h << 8) ^ c) % 0xdeadbeef;
-  }
-  return h;
-}
 
 void
 dir_init(sref<inode> dp)

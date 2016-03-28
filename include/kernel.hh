@@ -99,7 +99,6 @@ int             load_image(proc *p, const char *path, const char * const *argv,
                            sref<vmap> *oldvmap_out);
 
 // fs.c
-int             namecmp(const char*, const char*);
 sref<inode>     dirlookup(sref<inode>, char*);
 sref<inode>     ialloc(u32, short);
 sref<inode>     namei(sref<inode> cwd, const char*);
