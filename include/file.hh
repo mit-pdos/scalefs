@@ -232,22 +232,23 @@ struct inode : public referenced, public rcu_freed
   short major;
   short minor;
 
+  std::atomic<bool> valid;
+
   // locks for the rest of the inode
   struct condvar cv;
   struct spinlock lock;
   char lockname[16];
 
-  // initially null, set once:
-  std::atomic<dirns*> dir;
-  std::atomic<u32> dir_offset; // The offset at which we can add the next entry.
-  std::atomic<bool> valid;
-
-  std::atomic<bool> busy;
-  std::atomic<int> readbusy;
+  // protected by the lock
+  bool busy;
+  int readbusy;
 
   u32 size;
   u32 addrs[NDIRECT+2];
   short nlink_;
+
+  std::atomic<dirns*> dir; // initially null, set once
+  u32 dir_offset; // The next dir-entry gets added at this offset.
 
   // ??? what's the concurrency control plan?
   struct localsock *localsock;

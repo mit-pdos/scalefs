@@ -338,8 +338,8 @@ iupdate(sref<inode> ip, transaction *trans)
 }
 
 inode::inode(u32 d, u32 i)
-  : rcu_freed("inode", this, sizeof(*this)), dev(d), inum(i), dir_offset(0),
-    valid(false), busy(false), readbusy(0)
+  : rcu_freed("inode", this, sizeof(*this)), dev(d), inum(i),
+    valid(false), busy(false), readbusy(0), dir_offset(0)
 {
   dir.store(nullptr);
 }
@@ -982,11 +982,7 @@ dir_init(sref<inode> dp)
     delete dir;
   }
 
-  if (!cmpxch(&dp->dir_offset, (u32) 0, dir_offset)) {
-
-    cmpxch(&dp->dir, dir, (decltype(dir)) 0);
-    delete dir;
-  }
+  dp->dir_offset = dir_offset;
 }
 
 // Caller must hold ilock for write.
@@ -1031,18 +1027,11 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
 {
   dir_init(dp);
 
-  //cprintf("dirlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
-  u32 dir_offset = dp->dir_offset.load();
   if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name),
-                              dir_entry_info(inum, dir_offset)))
+                              dir_entry_info(inum, dp->dir_offset)))
     return -1;
 
-  if (!cmpxch(&dp->dir_offset, dir_offset,
-              (u32)(dir_offset + sizeof(struct dirent)))) {
-
-    dp->dir.load()->remove(strbuf<DIRSIZ>(name));
-    return -1;
-  }
+  dp->dir_offset += sizeof(struct dirent);
 
   sref<inode> i = iget(1, inum);
   if (i)
