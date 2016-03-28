@@ -16,7 +16,6 @@ mfs_interface::mfs_interface()
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   fs_journal = new journal();
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
-  // XXX(rasha) Set up the physical journal file
 }
 
 bool
@@ -481,14 +480,34 @@ mfs_interface::process_metadata_log()
 #endif
 }
 
+// Applies all metadata operations logged in the logical logs. Called on sync.
 void
 mfs_interface::process_metadata_log_and_flush()
 {
-#if 0
+  // TODO: Implement absorption (detect operations that cancel each other,
+  // such as create and unlink of the same mnode, and absorb them).
+
+  // Invoke process_metadata_log() on every dirty mnode.
+  std::vector<sref<mnode>> mnode_list;
+  metadata_log_htab->enumerate([&](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
+
+    sref<mnode> m = root_fs->mget(mnum);
+    if (m && m->is_dirty())
+      mnode_list.push_back(m);
+
+      // We call process_metadata_log() outside enumerate() because it does a
+      // lookup on metadata_log_htab itself, which causes weird interactions.
+
+    return false;
+  });
+
+  for (auto &m : mnode_list) {
+    if (m->is_dirty())
+      process_metadata_log(get_tsc(), m->mnum_, m->type() == mnode::types::dir);
+  }
+
   auto journal_lock = fs_journal->prepare_for_commit();
-  process_metadata_log();
   flush_journal_locked();
-#endif
 }
 
 void
