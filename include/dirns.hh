@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nstbl.hh"
+#define NDIR_ENTRIES_PRIME	521
 
 struct dir_entry_info {
   u32 inum_;
@@ -20,9 +20,6 @@ struct dir_entry_info {
     return inum_ != o.inum_ || offset_ != o.offset_;
   }
 };
-
-u64 namehash(const strbuf<DIRSIZ>&);
-class dirns : public nstbl<strbuf<DIRSIZ>, dir_entry_info, namehash> {};
 
 class dir_entries {
 public:

@@ -341,17 +341,14 @@ inode::inode(u32 d, u32 i)
   : rcu_freed("inode", this, sizeof(*this)), dev(d), inum(i),
     valid(false), busy(false), readbusy(0), dir_offset(0)
 {
-  dir.store(nullptr);
 }
 
 inode::~inode()
 {
-  auto d = dir.load();
-  if (d) {
-    d->remove(strbuf<DIRSIZ>("."));
-    d->remove(strbuf<DIRSIZ>(".."));
-    gc_delayed(d);
-    assert(cmpxch(&dir, d, (decltype(d)) 0));
+  if (dir) {
+    dir->remove(strbuf<DIRSIZ>("."));
+    dir->remove(strbuf<DIRSIZ>(".."));
+    delete dir;
   }
 }
 
@@ -950,11 +947,13 @@ dir_init(sref<inode> dp)
 
   if (dp->dir)
     return;
-  if (dp->type != T_DIR)
-    panic("dir_init not DIR");
 
-  auto dir = new dirns();
+  if (dp->type != T_DIR)
+    panic("dir_init: inode is not a directory\n");
+
+  dp->dir = new dir_entries(NDIR_ENTRIES_PRIME);
   u32 dir_offset = 0;
+
   for (u32 off = 0; off < dp->size; off += BSIZE) {
     assert(dir_offset == off);
     sref<buf> bp;
@@ -964,22 +963,18 @@ dir_init(sref<inode> dp)
       // Read operations should never cause out-of-blocks conditions
       panic("dir_init: out of blocks");
     }
+
     auto copy = bp->read();
     for (const struct dirent *de = (const struct dirent *) copy->data;
 	 de < (const struct dirent *) (copy->data + BSIZE);
 	 de++) {
 
       if (de->inum)
-        dir->insert(strbuf<DIRSIZ>(de->name),
-                    dir_entry_info(de->inum, dir_offset));
+        dp->dir->insert(strbuf<DIRSIZ>(de->name),
+                        dir_entry_info(de->inum, dir_offset));
 
       dir_offset += sizeof(*de);
     }
-  }
-
-  if (!cmpxch(&dp->dir, (decltype(dir)) 0, dir)) {
-    // XXX free all the dirents
-    delete dir;
   }
 
   dp->dir_offset = dir_offset;
@@ -992,7 +987,9 @@ dir_flush_entry(sref<inode> dp, const char *name, transaction *trans)
   if (!dp->dir)
     return;
 
-  auto de_info = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
+  dir_entry_info de_info;
+  dp->dir->lookup(strbuf<DIRSIZ>(name), &de_info);
+
   struct dirent de;
   strncpy(de.name, name, DIRSIZ);
   de.inum = de_info.inum_;
@@ -1013,7 +1010,8 @@ dirlookup(sref<inode> dp, char *name)
 {
   dir_init(dp);
 
-  auto de_info = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
+  dir_entry_info de_info;
+  dp->dir->lookup(strbuf<DIRSIZ>(name), &de_info);
 
   if (de_info.inum_ == 0)
     return sref<inode>();
@@ -1027,20 +1025,20 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
 {
   dir_init(dp);
 
-  if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name),
-                              dir_entry_info(inum, dp->dir_offset)))
+  if (!dp->dir->insert(strbuf<DIRSIZ>(name),
+                       dir_entry_info(inum, dp->dir_offset)))
     return -1;
 
   dp->dir_offset += sizeof(struct dirent);
 
-  sref<inode> i = iget(1, inum);
-  if (i)
-    i->link();
+  sref<inode> ip = iget(1, inum);
+  if (ip)
+    ip->link();
+
   if (inc_link)
     dp->link();
 
   dir_flush_entry(dp, name, trans);
-
   return 0;
 }
 
@@ -1051,26 +1049,24 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
 {
   dir_init(dp);
 
-  //cprintf("dirunlink: %x (%d): %s -> %d\n", dp, dp->inum, name, inum);
+  dir_entry_info de_info;
+  dp->dir->lookup(strbuf<DIRSIZ>(name), &de_info);
 
-  auto de_info = dp->dir.load()->lookup(strbuf<DIRSIZ>(name));
-  if (!dp->dir.load()->remove(strbuf<DIRSIZ>(name)))
+  if (!dp->dir->remove(strbuf<DIRSIZ>(name)))
     return -1;
 
-  if (!dp->dir.load()->insert(strbuf<DIRSIZ>(name),
-                              dir_entry_info(0, de_info.offset_)))
+  if (!dp->dir->insert(strbuf<DIRSIZ>(name), dir_entry_info(0, de_info.offset_)))
     return -1;
 
-  sref<inode> i = iget(1, inum);
-  if (i)
-    i->unlink();
+  sref<inode> ip = iget(1, inum);
+  if (ip)
+    ip->unlink();
+
   if (dec_link)
     dp->unlink();
 
   dir_flush_entry(dp, name, trans);
-
-  dp->dir.load()->remove(strbuf<DIRSIZ>(name));
-
+  dp->dir->remove(strbuf<DIRSIZ>(name));
   return 0;
 }
 

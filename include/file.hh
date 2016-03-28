@@ -12,9 +12,7 @@
 #include "sleeplock.hh"
 #include <uk/unistd.h>
 
-class dirns;
-
-u64 namehash(const strbuf<DIRSIZ>&);
+class dir_entries;
 
 struct file {
   virtual int fsync() { return -1; }
@@ -247,7 +245,7 @@ struct inode : public referenced, public rcu_freed
   u32 addrs[NDIRECT+2];
   short nlink_;
 
-  std::atomic<dirns*> dir; // initially null, set once
+  dir_entries* dir;
   u32 dir_offset; // The next dir-entry gets added at this offset.
 
   // ??? what's the concurrency control plan?
