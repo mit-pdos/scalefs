@@ -62,7 +62,7 @@ namespace std {
     }
 
     bool operator!=(const pair<A, B> &other) const {
-      return !(first == other.first && second == other.second);
+      return first != other.first || second != other.second;
     }
   };
 
