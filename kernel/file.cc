@@ -15,11 +15,7 @@ file_mnode::fsync() {
   if (!m)
     return -1;
 
-  u64 fsync_tsc;
-  if (cpuid::features().rdtscp)
-    fsync_tsc = rdtscp();
-  else
-    fsync_tsc = rdtsc_serialized();
+  u64 fsync_tsc = get_tsc();
 
   if (m->type() == mnode::types::file) {
 

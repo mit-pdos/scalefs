@@ -14,11 +14,8 @@ void
 mfs_interface::process_metadata_log()
 {
   mfs_operation_vec ops;
-  u64 sync_tsc = 0;
-  if (cpuid::features().rdtscp)
-    sync_tsc = rdtscp();
-  else
-    sync_tsc = rdtsc_serialized();
+  u64 sync_tsc = get_tsc();
+
   {
     auto guard = metadata_log->synchronize_upto_tsc(sync_tsc);
     for (auto it = metadata_log->operation_vec.begin(); it !=
