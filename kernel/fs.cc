@@ -339,7 +339,7 @@ iupdate(sref<inode> ip, transaction *trans)
 
 inode::inode(u32 d, u32 i)
   : rcu_freed("inode", this, sizeof(*this)), dev(d), inum(i),
-    valid(false), busy(false), readbusy(0), dir_offset(0)
+    valid(false), busy(false), readbusy(0), dir(nullptr), dir_offset(0)
 {
 }
 
