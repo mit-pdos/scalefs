@@ -24,6 +24,9 @@
 #define SYNC_CREATE_UNLINK 2
 #define FSYNC_CREATE	3
 
+char *sync_options[] = {"SYNC_NONE", "SYNC_UNLINK", "SYNC_CREATE_UNLINK",
+                        "FSYNC_CREATE"};
+
 int num_cpus;
 unsigned long num_files;
 unsigned long num_dirs;
@@ -35,7 +38,7 @@ char *topdir, *buf;
 pthread_t tid[MAXCPUS];
 pthread_barrier_t bar;
 
-int sync_when;
+int sync_when, verbose;
 int per_cpu_dirs, use_fork;
 
 void *run_benchmark(void *arg);
@@ -85,8 +88,9 @@ int main(int argc, char **argv)
 	per_cpu_dirs = 0;
 	use_fork = 0;
 	sync_when = SYNC_UNLINK;
+	verbose = 0;
 
-	while ((ch = getopt(argc, argv, "n:s:c:pfy:")) != -1) {
+	while ((ch = getopt(argc, argv, "n:s:c:pfy:v")) != -1) {
 		switch (ch) {
 			case 'n':
 				num_files = atoi(optarg);
@@ -107,6 +111,9 @@ int main(int argc, char **argv)
 				break;
 			case 'y': // When to call sync()
 				sync_when = atoi(optarg);
+				break;
+			case 'v':
+				verbose = 1;
 				break;
 			default:
 				usage(argv[0]);
@@ -151,6 +158,20 @@ int main(int argc, char **argv)
 
 	if (!use_fork)
 		pthread_barrier_init(&bar, 0, num_cpus);
+
+	// Print out benchmark parameters.
+	printf("\n\n\n");
+	fflush(stdout);
+	printf("Running LFS-Smallfile test on %s, on %d CPUs\n", topdir, num_cpus);
+	printf("File Size = %d bytes\n", FILESIZE);
+	printf("No. of files = %ld\n", num_files);
+	printf("No. of dirs (spread) = %ld\n", num_dirs);
+	printf("No. of files per dir = %ld\n", nfiles_per_dir);
+	printf("Directories are: %s\n", per_cpu_dirs ? "per-cpu" : "shared");
+	printf("Sync/Fsync option: %s\n", sync_options[sync_when]);
+	printf("Running %d parallel benchmark instance(s) using %s\n",
+                num_cpus, use_fork ? "fork" : "pthreads");
+	fflush(stdout);
 
 	/* Time the overall benchmark */
 	usec = 0;
@@ -220,62 +241,74 @@ void *run_benchmark(void *arg)
 	 */
 	total_sec = 0;
 
-	printf ( "\n\n\n" );
-	fflush ( stdout );
-	printf ( "Running smallfile test on %s, on CPU %d\n", topdir, cpu );
-	printf ( "File Size = %d bytes\n", FILESIZE );
-	printf ( "No. of files = %ld\n", num_files );
-	printf ( "No. of dirs (spread) = %ld\n", num_dirs );
-	printf ( "No. of files per dir = %ld\n", nfiles_per_dir );
-	printf ( "Test            Time(sec)       Files/sec\n" );
-	printf ( "----            ---------       ---------\n" );
+	if (verbose) {
+		printf("Test            Time(sec)       Files/sec\n");
+		printf("----            ---------       ---------\n");
+	}
 
 	usec = create_files(topdir, buf, cpu);
-	sec = (float) usec / 1000000.0;
-	throughput = ((float) num_files / sec);
-	printf ( "create_files\t%7.3f\t\t%7.3f\n", sec, throughput );
-	fflush ( stdout );
-	total_sec += sec;
+
+	if (verbose) {
+		sec = (float) usec / 1000000.0;
+		throughput = ((float) num_files / sec);
+		printf("create_files\t%7.3f\t\t%7.3f\n", sec, throughput);
+		fflush(stdout);
+		total_sec += sec;
+	}
 
 	if (sync_when == SYNC_CREATE_UNLINK) {
 		sleep(2);
 
 		usec = sync_files();
-		sec = (float) usec / 1000000.0;
-		throughput = ((float) num_files / sec);
-		printf ( "sync_files_1\t%7.3f\t\t%7.3f\n", sec, throughput );
-		fflush ( stdout );
-		total_sec += sec;
+
+		if (verbose) {
+			sec = (float) usec / 1000000.0;
+			throughput = ((float) num_files / sec);
+			printf("sync_files_1\t%7.3f\t\t%7.3f\n", sec, throughput);
+			fflush(stdout);
+			total_sec += sec;
+		}
 	}
 
 	usec = read_files(topdir, buf, cpu);
-	sec = (float) usec / 1000000.0;
-	throughput = ((float) num_files / sec);
-	printf ( "read_files\t%7.3f\t\t%7.3f\n", sec, throughput );
-	fflush ( stdout );
-	total_sec += sec;
+
+	if (verbose) {
+		sec = (float) usec / 1000000.0;
+		throughput = ((float) num_files / sec);
+		printf("read_files\t%7.3f\t\t%7.3f\n", sec, throughput);
+		fflush(stdout);
+		total_sec += sec;
+	}
 
 	usec = unlink_files(topdir, buf, cpu);
-	sec = (float) usec / 1000000.0;
-	throughput = ((float) num_files / sec);
-	printf ( "unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput );
-	fflush ( stdout );
-	total_sec += sec;
+
+	if (verbose) {
+		sec = (float) usec / 1000000.0;
+		throughput = ((float) num_files / sec);
+		printf("unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput);
+		fflush(stdout);
+		total_sec += sec;
+	}
 
 	if (sync_when == SYNC_UNLINK || sync_when == SYNC_CREATE_UNLINK) {
 		sleep(2);
 
 		usec = sync_files();
-		sec = (float) usec / 1000000.0;
-		throughput = ((float) num_files / sec);
-		printf ( "sync_files_2\t%7.3f\t\t%7.3f\n", sec, throughput );
-		fflush ( stdout );
-		total_sec += sec;
+
+		if (verbose) {
+			sec = (float) usec / 1000000.0;
+			throughput = ((float) num_files / sec);
+			printf("sync_files_2\t%7.3f\t\t%7.3f\n", sec, throughput);
+			fflush(stdout);
+			total_sec += sec;
+		}
 	}
 
-	avg_throughput = ((float) num_files / total_sec);
-	printf ( "thread %d total \t%7.3f\t\t%7.3f\n", cpu, total_sec, avg_throughput );
-	fflush ( stdout );
+	if (verbose) {
+		avg_throughput = ((float) num_files / total_sec);
+		printf("thread %d total \t%7.3f\t\t%7.3f\n", cpu, total_sec, avg_throughput);
+		fflush(stdout);
+	}
 
 	return 0;
 }
