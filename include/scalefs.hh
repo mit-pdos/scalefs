@@ -306,8 +306,6 @@ class transaction
 
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->async_iowait();
-
-      ideflush();
     }
 
     // Writes the blocks in the transaction to disk, and updates the

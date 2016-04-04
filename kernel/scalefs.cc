@@ -847,11 +847,7 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 {
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
-  for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
-    (*b)->writeback_async();
-
-  for (auto b = tr->blocks.begin(); b != tr->blocks.end(); b++)
-    (*b)->async_iowait();
+  tr->write_to_disk();
 }
 
 // Logs a transaction in the disk journal and then applies it to the disk,
@@ -1140,6 +1136,7 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
   // Write out the disk blocks in the transaction to stable storage before
   // committing the transaction.
   trans->write_to_disk();
+  ideflush();
   delete trans;
 
   // The transaction ends with a commit block.
@@ -1148,6 +1145,7 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
   write_journal_header(jrnl_commit, timestamp, trans);
 
   trans->write_to_disk();
+  ideflush();
   delete trans;
 }
 
@@ -1250,6 +1248,7 @@ mfs_interface::reset_journal()
     panic("reset_journal() failed\n");
 
   tr->write_to_disk();
+  ideflush();
   delete tr;
 
   fs_journal->update_offset(0);
