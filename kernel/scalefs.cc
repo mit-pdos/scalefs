@@ -1247,8 +1247,7 @@ mfs_interface::reset_journal()
   if (writei(sv6_journal, buf, 0 /* offset */, hdr_size, tr) != hdr_size)
     panic("reset_journal() failed\n");
 
-  tr->write_to_disk();
-  ideflush();
+  tr->write_to_disk_raw();
   delete tr;
 
   fs_journal->update_offset(0);
@@ -1535,7 +1534,7 @@ initfs()
 
   get_superblock(&sb, true);
 
-  {
+  if (sb.num_reclaim_inodes) {
     auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
 
     for (int i = 0; i < sb.num_reclaim_inodes; i++) {

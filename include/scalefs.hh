@@ -94,7 +94,9 @@ struct transaction_diskblock
       auto locked = bp->write();
       memmove(locked->data, blockdata, BSIZE);
     }
-    bp->writeback_async();
+    // Can't use async I/O here (which uses sleep) because this is called during
+    // early boot, before the process is fully setup for scheduling.
+    writeback();
   }
 
 };
@@ -306,6 +308,15 @@ class transaction
 
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->async_iowait();
+    }
+
+    // Same as write_to_disk(), except that this uses synchronous disk I/O,
+    // and does not make the process sleep/wait (which can be troublesome at
+    // early boot before the process is fully setup for scheduling).
+    void write_to_disk_raw()
+    {
+      for (auto b = blocks.begin(); b != blocks.end(); b++)
+        (*b)->writeback();
     }
 
     // Writes the blocks in the transaction to disk, and updates the
