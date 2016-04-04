@@ -362,14 +362,18 @@ mfs_interface::process_metadata_log_and_flush()
 }
 
 void
-mfs_interface::sync_dirty_files()
+mfs_interface::sync_dirty_files_and_dirs()
 {
   // Invoke sync_file() on every dirty mnode.
   metadata_log_htab->enumerate([](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
 
     sref<mnode> m = root_fs->mget(mnum);
-    if (m && m->is_dirty() && m->type() == mnode::types::file)
-      m->as_file()->sync_file(false);
+    if (m && m->is_dirty()) {
+      if (m->type() == mnode::types::file)
+        m->as_file()->sync_file(false);
+      else if (m->type() == mnode::types::dir)
+        m->as_dir()->sync_dir();
+    }
 
     return false;
   });

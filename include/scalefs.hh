@@ -526,7 +526,7 @@ class mfs_interface
     void metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val);
     void metadata_op_end(u64 mnum, size_t cpu, u64 tsc_val);
     void add_to_metadata_log(u64 mnum, mfs_operation *op);
-    void sync_dirty_files();
+    void sync_dirty_files_and_dirs();
     void evict_bufcache();
     void evict_pagecache();
     void process_metadata_log_and_flush();

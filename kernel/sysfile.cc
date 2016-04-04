@@ -145,7 +145,7 @@ void
 sys_sync(void)
 {
   rootfs_interface->process_metadata_log_and_flush();
-  rootfs_interface->sync_dirty_files();
+  rootfs_interface->sync_dirty_files_and_dirs();
   // This second call to flush is to utilize group commit. See commit ae1629b9
   // for details.
   rootfs_interface->process_metadata_log_and_flush();
