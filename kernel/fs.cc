@@ -947,9 +947,10 @@ dir_init(sref<inode> dp)
 	 de < (const struct dirent *) (copy->data + BSIZE);
 	 de++) {
 
-      if (de->inum)
-        dp->dir->insert(strbuf<DIRSIZ>(de->name),
-                        dir_entry_info(de->inum, dir_offset));
+      if (de->inum) {
+        dir_entry_info de_info(de->inum, dir_offset);
+        dp->dir->insert(strbuf<DIRSIZ>(de->name), de_info);
+      }
 
       dir_offset += sizeof(*de);
     }
@@ -1003,8 +1004,9 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
 {
   dir_init(dp);
 
-  if (!dp->dir->insert(strbuf<DIRSIZ>(name),
-                       dir_entry_info(inum, dp->dir_offset)))
+  dir_entry_info de_info(inum, dp->dir_offset);
+
+  if (!dp->dir->insert(strbuf<DIRSIZ>(name), de_info));
     return -1;
 
   dp->dir_offset += sizeof(struct dirent);
@@ -1033,7 +1035,8 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
   if (!dp->dir->remove(strbuf<DIRSIZ>(name)))
     return -1;
 
-  if (!dp->dir->insert(strbuf<DIRSIZ>(name), dir_entry_info(0, de_info.offset_)))
+  de_info.inum_ = 0;
+  if (!dp->dir->insert(strbuf<DIRSIZ>(name), de_info))
     return -1;
 
   sref<inode> ip = iget(1, inum);
