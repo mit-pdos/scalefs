@@ -527,7 +527,7 @@ sys_unlink(userptr_str path)
     assert(md->as_dir()->remove(name, mf, &tsc));
     if (is_root_fs) {
       mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc,
-                            mf->mnum_, md->mnum_, name.buf_);
+                            mf->mnum_, md->mnum_, name.buf_, mf->type());
       rootfs_interface->add_to_metadata_log(md->mnum_, op);
       rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
     }
@@ -541,7 +541,7 @@ sys_unlink(userptr_str path)
   } else {
     if (is_root_fs) {
       mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc,
-                            mf->mnum_, md->mnum_, name.buf_);
+                            mf->mnum_, md->mnum_, name.buf_, mf->type());
       rootfs_interface->add_to_metadata_log(md->mnum_, op);
       rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
     }

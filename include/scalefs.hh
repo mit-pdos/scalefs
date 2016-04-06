@@ -720,8 +720,9 @@ class mfs_operation_unlink: public mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation_unlink);
 
-    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[])
-      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt)
+    mfs_operation_unlink(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[],
+                         short m_type)
+      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -745,12 +746,14 @@ class mfs_operation_unlink: public mfs_operation
       cprintf("Mnode Num: %ld\n", mnode_mnum);
       cprintf("Parent Mnode Num: %ld\n", parent_mnum);
       cprintf("Name: %s\n", name);
+      cprintf("Mnode type: %d\n", mnode_type);
     }
 
   private:
     u64 mnode_mnum;   // mnode number of the file/directory to be unlinked
     u64 parent_mnum;  // mnode number of the parent directory
     char *name;       // name of the file/directory
+    short mnode_type; // type of the mnode (file/dir)
 };
 
 class mfs_operation_rename_link: public mfs_operation
