@@ -158,6 +158,22 @@ mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
   return ret;
 }
 
+// Truncates a file on disk to the specified size (offset).
+void
+mfs_interface::truncate_file(u64 mfile_mnum, u32 offset, transaction *tr)
+{
+  scoped_gc_epoch e;
+
+  sref<inode> ip = get_inode(mfile_mnum, "truncate_file");
+  ilock(ip, WRITELOCK);
+  itrunc(ip, offset, tr);
+  iunlock(ip);
+
+  sref<mnode> m = root_fs->mget(mfile_mnum);
+  if (m)
+    m->as_file()->remove_pgtable_mappings(offset);
+}
+
 // Returns an inode locked for write, on success.
 sref<inode>
 mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
@@ -209,23 +225,6 @@ mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
 
   return ip->inum;
 }
-
-// Truncates a file on disk to the specified size (offset).
-void
-mfs_interface::truncate_file(u64 mfile_mnum, u32 offset, transaction *tr)
-{
-  scoped_gc_epoch e;
-
-  sref<inode> ip = get_inode(mfile_mnum, "truncate_file");
-  ilock(ip, WRITELOCK);
-  itrunc(ip, offset, tr);
-  iunlock(ip);
-
-  sref<mnode> m = root_fs->mget(mfile_mnum);
-  if (m)
-    m->as_file()->remove_pgtable_mappings(offset);
-}
-
 
 // Creates a directory entry for a name that exists in the in-memory
 // representation but not on the disk.
