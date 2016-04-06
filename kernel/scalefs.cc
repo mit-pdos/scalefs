@@ -197,33 +197,35 @@ mfs_interface::alloc_inode_for_mnode(u64 mnum, u8 type)
   return ip;
 }
 
-// Creates a new file [or directory] on the disk if an mnode (mfile) [or mdir]
-// does not have a corresponding inode mapping. Returns the inode number of
-// the newly created inode.
-u64
-mfs_interface::create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
-                                      transaction *tr)
+// Creates a new file on the disk if an mnode (mfile) does not have a
+// corresponding inode mapping.
+void
+mfs_interface::create_file(u64 mnum, u8 type, transaction *tr)
+{
+  sref<inode> ip = alloc_inode_for_mnode(mnum, type);
+  iupdate(ip, tr);
+  iunlock(ip);
+}
+
+// Creates a new directory on the disk if an mnode (mdir) does not have a
+// corresponding inode mapping.
+void
+mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
 {
   u64 parent_inum = 0;
 
   // To create a new directory, we need to allocate a new inode as well as
   // initialize it with the ".." link, for which we need to know its parent's
   // inode number.
-  if (type == mnode::types::dir && !inum_lookup(parent_mnum, &parent_inum)) {
+  if (!inum_lookup(parent_mnum, &parent_inum)) {
     sref<inode> parent_i = alloc_inode_for_mnode(parent_mnum, mnode::types::dir);
     parent_inum = parent_i->inum;
     iunlock(parent_i);
   }
 
   sref<inode> ip = alloc_inode_for_mnode(mnum, type);
-  if (type == mnode::types::file) {
-    iupdate(ip, tr);
-  } else if (type == mnode::types::dir) {
-    dirlink(ip, "..", parent_inum, false, tr); // dirlink does an iupdate within.
-  }
+  dirlink(ip, "..", parent_inum, false, tr); // dirlink does an iupdate within.
   iunlock(ip);
-
-  return ip->inum;
 }
 
 // Creates a directory entry for a name that exists in the in-memory
@@ -795,7 +797,11 @@ void
 mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  create_file_dir_if_new(op->mnode_mnum, op->parent_mnum, op->mnode_type, tr);
+
+  if (op->mnode_type == mnode::types::file)
+    create_file(op->mnode_mnum, op->mnode_type, tr);
+  else if (op->mnode_type == mnode::types::dir)
+    create_dir(op->mnode_mnum, op->parent_mnum, op->mnode_type, tr);
 }
 
 // Link operation

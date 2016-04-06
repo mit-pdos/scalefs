@@ -495,8 +495,8 @@ class mfs_interface
     int sync_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes,
                        transaction *tr);
     sref<inode> alloc_inode_for_mnode(u64 mnum, u8 type);
-    u64 create_file_dir_if_new(u64 mnum, u64 parent_mnum, u8 type,
-                               transaction *tr);
+    void create_file(u64 mnum, u8 type, transaction *tr);
+    void create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr);
     void truncate_file(u64 mfile_mnum, u32 offset, transaction *tr);
 
     // Directory functions
