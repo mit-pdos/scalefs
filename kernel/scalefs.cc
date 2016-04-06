@@ -237,10 +237,10 @@ mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
 // Creates a directory entry for a name that exists in the in-memory
 // representation but not on the disk.
 void
-mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
+mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 		                      u8 type, transaction *tr)
 {
-  sref<inode> mdir_ip = get_inode(mdir_mnum, "create_directory_entry");
+  sref<inode> mdir_ip = get_inode(mdir_mnum, "add_dir_entry");
 
   u64 dirent_inum = 0;
   assert(inum_lookup(dirent_mnum, &dirent_inum));
@@ -254,7 +254,7 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
 
     // The name now refers to a different inode. Unlink the old one to make
     // way for a new directory entry for this mapping.
-    unlink_old_inode(mdir_mnum, name, tr);
+    remove_dir_entry(mdir_mnum, name, tr);
   }
 
   sref<inode> dirent_ip = iget(1, dirent_inum);
@@ -269,9 +269,9 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
 // The file/directory names that are present in the mdir are specified in names_vec.
 void
-mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
+mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr)
 {
-  sref<inode> ip = get_inode(mdir_mnum, "unlink_old_inode");
+  sref<inode> ip = get_inode(mdir_mnum, "remove_dir_entry");
   sref<inode> target = dirlookup(ip, name);
   if (!target)
     return;
@@ -297,16 +297,17 @@ mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
       // The mnode is gone (which also implies that all its open file
       // descriptors have been closed as well). So it is safe to delete its
       // inode from the disk.
-      delete_old_inode(mnum, tr);
+      delete_mnum_inode(mnum, tr);
     }
   }
 }
 
-// Deletes the inode and its file-contents from the disk.
+// Deletes the inode corresponding to the mnum and its file-contents from the
+// disk.
 void
-mfs_interface::delete_old_inode(u64 mfile_mnum, transaction *tr)
+mfs_interface::delete_mnum_inode(u64 mnum, transaction *tr)
 {
-  sref<inode> ip = get_inode(mfile_mnum, "delete_old_inode");
+  sref<inode> ip = get_inode(mnum, "delete_mnum_inode");
 
   ilock(ip, WRITELOCK);
   itrunc(ip, 0, tr);
@@ -315,10 +316,10 @@ mfs_interface::delete_old_inode(u64 mfile_mnum, transaction *tr)
   // TODO: Make sure to free up these data-structures even if we happen to
   // absorb (cancel-out) the create/link and the unlink operations of this
   // mnode.
-  mnum_to_inum->remove(mfile_mnum);
+  mnum_to_inum->remove(mnum);
   inum_to_mnum->remove(ip->inum);
-  free_metadata_log(mfile_mnum);
-  free_mnode_lock(mfile_mnum);
+  free_metadata_log(mnum);
+  free_mnode_lock(mnum);
   free_inode(ip, tr);
 }
 
@@ -821,7 +822,7 @@ void
 mfs_interface::mfs_link(mfs_operation_link *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  create_directory_entry(op->parent_mnum, op->name, op->mnode_mnum,
+  add_dir_entry(op->parent_mnum, op->name, op->mnode_mnum,
                          op->mnode_type, tr);
 }
 
@@ -830,9 +831,7 @@ void
 mfs_interface::mfs_unlink(mfs_operation_unlink *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  char str[DIRSIZ];
-  strcpy(str, op->name);
-  unlink_old_inode(op->parent_mnum, str, tr);
+  remove_dir_entry(op->parent_mnum, op->name, tr);
 }
 
 // Rename Link operation
@@ -840,7 +839,7 @@ void
 mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  create_directory_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
+  add_dir_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
                          op->mnode_type, tr);
 
   if (op->mnode_type == mnode::types::dir &&
@@ -869,10 +868,10 @@ mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *t
 {
   scoped_gc_epoch e;
 
-  // unlink_old_inode() deletes the inode if its link count drops to zero. So it
+  // remove_dir_entry() deletes the inode if its link count drops to zero. So it
   // is crucial that we add the new link first (via mfs_rename_link()) and only
   // then remove the old link.
-  unlink_old_inode(op->src_parent_mnum, op->name, tr);
+  remove_dir_entry(op->src_parent_mnum, op->name, tr);
 }
 
 // Logs a transaction to the physical journal. Does not apply it to the disk yet

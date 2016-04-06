@@ -501,10 +501,10 @@ class mfs_interface
 
     // Directory functions
     void initialize_dir(sref<mnode> m);
-    void create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
-                                u8 type, transaction *tr);
-    void unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr);
-    void delete_old_inode(u64 mfile_mnum, transaction *tr);
+    void add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum, u8 type,
+                       transaction *tr);
+    void remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr);
+    void delete_mnum_inode(u64 mnum, transaction *tr);
 
     bool mnum_name_insert(u64 mnum, const strbuf<DIRSIZ>& name);
     bool mnum_name_lookup(u64 mnum, strbuf<DIRSIZ> *nameptr);
