@@ -559,6 +559,10 @@ enum {
   // pending stack, as a dependency.
   RET_LINK,
 
+  // Encountered an unlink operation on a directory, and added the directory
+  // mnode being unlinked to the pending stack, as a dependency.
+  RET_DIRUNLINK,
+
   // Encountered a rename barrier and added its parent mnode to the pending
   // stack as a dependency.
   RET_RENAME_BARRIER,
@@ -582,6 +586,7 @@ int
 mfs_interface::process_ops_from_oplog(
                     mfs_logical_log *mfs_log, u64 max_tsc, int count,
                     std::vector<pending_metadata> &pending_stack,
+                    std::vector<dirunlink_metadata> &dirunlink_stack,
                     std::vector<rename_metadata> &rename_stack,
                     std::vector<rename_barrier_metadata> &rename_barrier_stack)
 {
@@ -620,6 +625,24 @@ mfs_interface::process_ops_from_oplog(
       // Add the create operation of the mnode being linked as a dependency.
       pending_stack.push_back({link_op->mnode_mnum, link_op->timestamp, 1});
       return RET_LINK;
+    }
+
+    auto unlink_op = dynamic_cast<mfs_operation_unlink*>(*it);
+    if (unlink_op && unlink_op->mnode_type == mnode::types::dir) {
+      // Flush out all the directory's operations first, before unlinking it.
+
+      auto mnum = unlink_op->mnode_mnum;
+      if (dirunlink_stack.size() && mnum == dirunlink_stack.back().mnum) {
+        // Already processed.
+        dirunlink_stack.pop_back();
+        add_op_to_journal(*it);
+        it = mfs_log->operation_vec.erase(it);
+        continue;
+      }
+
+      dirunlink_stack.push_back({mnum});
+      pending_stack.push_back({mnum, get_tsc(), -1});
+      return RET_DIRUNLINK;
     }
 
     auto rename_barrier_op = dynamic_cast<mfs_operation_rename_barrier*>(*it);
@@ -697,6 +720,7 @@ void
 mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 {
   std::vector<pending_metadata> pending_stack;
+  std::vector<dirunlink_metadata> dirunlink_stack;
   std::vector<rename_metadata> rename_stack;
   std::vector<rename_barrier_metadata> rename_barrier_stack;
   mfs_logical_log *mfs_log;
@@ -711,7 +735,8 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 
     mfs_log->lock.acquire();
     ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, pending_stack,
-                                 rename_stack, rename_barrier_stack);
+                                 dirunlink_stack, rename_stack,
+                                 rename_barrier_stack);
     mfs_log->lock.release();
 
     switch (ret) {
@@ -721,6 +746,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
       break;
 
     case RET_LINK:
+    case RET_DIRUNLINK:
     case RET_RENAME_BARRIER:
     case RET_RENAME_SUBOP:
       continue;
@@ -740,8 +766,8 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
     }
   }
 
-  assert(!pending_stack.size() && !rename_stack.size() &&
-         !rename_barrier_stack.size());
+  assert(!pending_stack.size() && !dirunlink_stack.size() && !rename_stack.size()
+         && !rename_barrier_stack.size());
 }
 
 void
