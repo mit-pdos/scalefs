@@ -208,24 +208,30 @@ mfs_interface::create_file(u64 mnum, u8 type, transaction *tr)
 }
 
 // Creates a new directory on the disk if an mnode (mdir) does not have a
-// corresponding inode mapping.
+// corresponding inode mapping. This does not change the link counts of the
+// parent or the newly created sub-directory. (That is postponed until the
+// sub-directory is actually linked into the parent.)
 void
 mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
 {
   u64 parent_inum = 0;
+  sref<inode> parent_ip, subdir_ip = alloc_inode_for_mnode(mnum, type);
 
-  // To create a new directory, we need to allocate a new inode as well as
-  // initialize it with the ".." link, for which we need to know its parent's
-  // inode number.
+  // The new sub-directory needs to be initialized with the ".." link, pointing
+  // to its parent's inode number.
   if (!inum_lookup(parent_mnum, &parent_inum)) {
-    sref<inode> parent_i = alloc_inode_for_mnode(parent_mnum, mnode::types::dir);
-    parent_inum = parent_i->inum;
-    iunlock(parent_i);
+    parent_ip = alloc_inode_for_mnode(parent_mnum, mnode::types::dir);
+    parent_inum = parent_ip->inum;
   }
 
-  sref<inode> ip = alloc_inode_for_mnode(mnum, type);
-  dirlink(ip, "..", parent_inum, false, tr); // dirlink does an iupdate within.
-  iunlock(ip);
+  dirlink(subdir_ip, "..", parent_inum, false, tr);
+
+  // Flush parent inode too, if it was newly created above.
+  if (parent_ip) {
+    iupdate(parent_ip, tr);
+    iunlock(parent_ip);
+  }
+  iunlock(subdir_ip);
 }
 
 // Creates a directory entry for a name that exists in the in-memory
@@ -852,10 +858,11 @@ void
 mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr)
 {
   scoped_gc_epoch e;
-  char str[DIRSIZ];
-  strcpy(str, op->name);
 
-  unlink_old_inode(op->src_parent_mnum, str, tr);
+  // unlink_old_inode() deletes the inode if its link count drops to zero. So it
+  // is crucial that we add the new link first (via mfs_rename_link()) and only
+  // then remove the old link.
+  unlink_old_inode(op->src_parent_mnum, op->name, tr);
 }
 
 // Logs a transaction to the physical journal. Does not apply it to the disk yet

@@ -1011,12 +1011,15 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
 
   dp->dir_offset += sizeof(struct dirent);
 
-  sref<inode> ip = iget(1, inum);
-  if (ip)
-    ip->link();
+  // If adding the ".." link in a directory, don't change *any* link counts.
+  if (strncmp(name, "..", DIRSIZ) != 0) {
+    sref<inode> ip = iget(1, inum);
+    if (ip)
+      ip->link();
 
-  if (inc_link)
-    dp->link();
+    if (inc_link)
+      dp->link();
+  }
 
   dir_flush_entry(dp, name, trans);
   return 0;
@@ -1039,12 +1042,15 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
   if (!dp->dir->insert(strbuf<DIRSIZ>(name), de_info))
     return -1;
 
-  sref<inode> ip = iget(1, inum);
-  if (ip)
-    ip->unlink();
+  // If removing the ".." link in a directory, don't change *any* link counts.
+  if (strncmp(name, "..", DIRSIZ) != 0) {
+    sref<inode> ip = iget(1, inum);
+    if (ip)
+      ip->unlink();
 
-  if (dec_link)
-    dp->unlink();
+    if (dec_link)
+      dp->unlink();
+  }
 
   dir_flush_entry(dp, name, trans);
   dp->dir->remove(strbuf<DIRSIZ>(name));
