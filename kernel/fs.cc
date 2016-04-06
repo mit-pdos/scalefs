@@ -1002,6 +1002,8 @@ int
 dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
         transaction *trans)
 {
+  bool ip_updated = false;
+  sref<inode> ip;
   dir_init(dp);
 
   dir_entry_info de_info(inum, dp->dir_offset);
@@ -1013,15 +1015,21 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
 
   // If adding the ".." link in a directory, don't change *any* link counts.
   if (strncmp(name, "..", DIRSIZ) != 0) {
-    sref<inode> ip = iget(1, inum);
-    if (ip)
+    ip = iget(1, inum);
+    if (ip) {
       ip->link();
+      ip_updated = true;
+    }
 
     if (inc_link)
       dp->link();
   }
 
   dir_flush_entry(dp, name, trans);
+
+  // Update the on-disk link count of the inode being linked.
+  if (ip_updated)
+    iupdate(ip, trans);
   return 0;
 }
 
@@ -1030,6 +1038,8 @@ int
 dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
           transaction *trans)
 {
+  bool ip_updated = false;
+  sref<inode> ip;
   dir_init(dp);
 
   dir_entry_info de_info;
@@ -1044,9 +1054,11 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
 
   // If removing the ".." link in a directory, don't change *any* link counts.
   if (strncmp(name, "..", DIRSIZ) != 0) {
-    sref<inode> ip = iget(1, inum);
-    if (ip)
+    ip = iget(1, inum);
+    if (ip) {
       ip->unlink();
+      ip_updated = true;
+    }
 
     if (dec_link)
       dp->unlink();
@@ -1054,6 +1066,10 @@ dirunlink(sref<inode> dp, const char *name, u32 inum, bool dec_link,
 
   dir_flush_entry(dp, name, trans);
   dp->dir->remove(strbuf<DIRSIZ>(name));
+
+  // Update the on-disk link count of the inode being unlinked.
+  if (ip_updated)
+    iupdate(ip, trans);
   return 0;
 }
 

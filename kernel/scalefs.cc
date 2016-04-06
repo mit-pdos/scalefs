@@ -240,16 +240,16 @@ void
 mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 		                      u8 type, transaction *tr)
 {
-  sref<inode> mdir_i = get_inode(mdir_mnum, "create_directory_entry");
+  sref<inode> mdir_ip = get_inode(mdir_mnum, "create_directory_entry");
 
   u64 dirent_inum = 0;
   assert(inum_lookup(dirent_mnum, &dirent_inum));
 
   // Check if the directory entry already exists.
-  sref<inode> i = dirlookup(mdir_i, name);
+  sref<inode> ip = dirlookup(mdir_ip, name);
 
-  if (i) {
-    if (i->inum == dirent_inum)
+  if (ip) {
+    if (ip->inum == dirent_inum)
       return;
 
     // The name now refers to a different inode. Unlink the old one to make
@@ -257,9 +257,13 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
     unlink_old_inode(mdir_mnum, name, tr);
   }
 
-  ilock(mdir_i, WRITELOCK);
-  dirlink(mdir_i, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
-  iunlock(mdir_i);
+  sref<inode> dirent_ip = iget(1, dirent_inum);
+
+  ilock(mdir_ip, WRITELOCK);
+  ilock(dirent_ip, WRITELOCK);
+  dirlink(mdir_ip, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
+  iunlock(dirent_ip);
+  iunlock(mdir_ip);
 }
 
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
@@ -267,17 +271,19 @@ mfs_interface::create_directory_entry(u64 mdir_mnum, char *name, u64 dirent_mnum
 void
 mfs_interface::unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr)
 {
-  sref<inode> i = get_inode(mdir_mnum, "unlink_old_inode");
-  sref<inode> target = dirlookup(i, name);
+  sref<inode> ip = get_inode(mdir_mnum, "unlink_old_inode");
+  sref<inode> target = dirlookup(ip, name);
   if (!target)
     return;
 
-  ilock(i, WRITELOCK);
+  ilock(ip, WRITELOCK);
+  ilock(target, WRITELOCK);
   if (target->type == T_DIR)
-    dirunlink(i, name, target->inum, true, tr);
+    dirunlink(ip, name, target->inum, true, tr);
   else
-    dirunlink(i, name, target->inum, false, tr);
-  iunlock(i);
+    dirunlink(ip, name, target->inum, false, tr);
+  iunlock(target);
+  iunlock(ip);
 
   if (!target->nlink()) {
     u64 mnum;
@@ -845,11 +851,15 @@ mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
     assert(inum_lookup(op->src_parent_mnum, &src_parent_inum));
     assert(inum_lookup(op->dst_parent_mnum, &dst_parent_inum));
 
-    sref<inode> i = iget(1, mnode_inum);
-    ilock(i, WRITELOCK);
-    dirunlink(i, "..", src_parent_inum, false, tr);
-    dirlink(i, "..", dst_parent_inum, false, tr);
-    iunlock(i);
+    sref<inode> ip = iget(1, mnode_inum);
+
+    // No need to acquire write-lock on src-parent or dst-parent because calls
+    // to dirlink/dirunlink which only alter the ".." links don't modify the
+    // parent directories in any way.
+    ilock(ip, WRITELOCK);
+    dirunlink(ip, "..", src_parent_inum, false, tr);
+    dirlink(ip, "..", dst_parent_inum, false, tr);
+    iunlock(ip);
   }
 }
 
