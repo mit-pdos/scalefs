@@ -11,11 +11,24 @@
 
 mfs_interface::mfs_interface()
 {
+  fs_journal = new journal();
   inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
-  fs_journal = new journal();
+  mnum_to_name = new chainhash<u64, strbuf<DIRSIZ>>(NINODES_PRIME); // Debug
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
+}
+
+bool
+mfs_interface::mnum_name_insert(u64 mnum, const strbuf<DIRSIZ>& name)
+{
+  return mnum_to_name->insert(mnum, name);
+}
+
+bool
+mfs_interface::mnum_name_lookup(u64 mnum, strbuf<DIRSIZ> *nameptr)
+{
+  return mnum_to_name->lookup(mnum, nameptr);
 }
 
 bool
@@ -1345,6 +1358,7 @@ mfs_interface::load_dir(sref<inode> i, sref<mnode> m)
     mlinkref mlink(mf);
     mlink.acquire();
     m->as_dir()->insert(name, &mlink);
+    mnum_name_insert(mf->mnum_, name);
   }
 }
 
@@ -1361,6 +1375,9 @@ mfs_interface::load_root()
   sref<inode> i = iget(1, 1);
   assert(i->type.load() == T_DIR);
   m = mnode_alloc(1, mnode::types::dir);
+
+  strbuf<DIRSIZ> name("/");
+  mnum_name_insert(m->mnum_, name);
   return m;
 }
 

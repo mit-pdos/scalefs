@@ -506,6 +506,8 @@ class mfs_interface
     void unlink_old_inode(u64 mdir_mnum, char* name, transaction *tr);
     void delete_old_inode(u64 mfile_mnum, transaction *tr);
 
+    bool mnum_name_insert(u64 mnum, const strbuf<DIRSIZ>& name);
+    bool mnum_name_lookup(u64 mnum, strbuf<DIRSIZ> *nameptr);
     bool inum_lookup(u64 mnum, u64 *inumptr);
     sref<mnode> mnode_lookup(u64 inum, u64 *mnumptr);
 
@@ -578,6 +580,7 @@ class mfs_interface
     // Mapping from in-memory mnode numbers to disk inode numbers
     chainhash<u64, u64> *mnum_to_inum;
     chainhash<u64, sleeplock*> *mnum_to_lock;
+    chainhash<u64, strbuf<DIRSIZ>> *mnum_to_name;
 
     typedef struct mfs_op_idx {
       int create_index;

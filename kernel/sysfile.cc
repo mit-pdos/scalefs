@@ -605,6 +605,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       assert(mf->as_dir()->insert("..", &parentlink));
       if (md->as_dir()->insert(name, &ilink, &tsc)) {
         if (myproc() != bootproc) {
+          rootfs_interface->mnum_name_insert(mf->mnum_, name);
           mfs_operation *op_c = new mfs_operation_create(rootfs_interface, tsc,
                                   mf->mnum_, md->mnum_, name.buf_, type);
           rootfs_interface->add_to_metadata_log(mf->mnum_, op_c);
@@ -636,6 +637,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
     if (md->as_dir()->insert(name, &ilink, &tsc)) {
       if (myproc() != bootproc) {
+        rootfs_interface->mnum_name_insert(mf->mnum_, name);
         mfs_operation *op_c = new mfs_operation_create(rootfs_interface, tsc,
                               mf->mnum_, md->mnum_, name.buf_, type);
         rootfs_interface->add_to_metadata_log(mf->mnum_, op_c);
