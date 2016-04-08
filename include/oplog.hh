@@ -559,6 +559,7 @@ namespace oplog {
           // to take affect yet.
           flush_logger(&way->logger_);
           cpus_.atomic_reset(cpu);
+          way->obj_.store(nullptr, std::memory_order_relaxed);
           any = true;
         }
         if (!any)
