@@ -1008,7 +1008,7 @@ dirlink(sref<inode> dp, const char *name, u32 inum, bool inc_link,
 
   dir_entry_info de_info(inum, dp->dir_offset);
 
-  if (!dp->dir->insert(strbuf<DIRSIZ>(name), de_info));
+  if (!dp->dir->insert(strbuf<DIRSIZ>(name), de_info))
     return -1;
 
   dp->dir_offset += sizeof(struct dirent);

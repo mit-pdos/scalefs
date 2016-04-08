@@ -285,6 +285,7 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr)
   iunlock(target);
   iunlock(ip);
 
+  assert(target->nlink() >= 0);
   if (!target->nlink()) {
     u64 mnum;
     sref<mnode> m = mnode_lookup(target->inum, &mnum);
