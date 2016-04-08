@@ -319,8 +319,6 @@ mfs_interface::delete_mnum_inode(u64 mnum, transaction *tr)
   // mnode.
   mnum_to_inum->remove(mnum);
   inum_to_mnum->remove(ip->inum);
-  free_metadata_log(mnum);
-  free_mnode_lock(mnum);
   free_inode(ip, tr);
 }
 
@@ -614,6 +612,7 @@ int
 mfs_interface::process_ops_from_oplog(
                     mfs_logical_log *mfs_log, u64 max_tsc, int count,
                     std::vector<pending_metadata> &pending_stack,
+                    std::vector<u64> &unlink_mnum_list,
                     std::vector<dirunlink_metadata> &dirunlink_stack,
                     std::vector<rename_metadata> &rename_stack,
                     std::vector<rename_barrier_metadata> &rename_barrier_stack)
@@ -656,21 +655,25 @@ mfs_interface::process_ops_from_oplog(
     }
 
     auto unlink_op = dynamic_cast<mfs_operation_unlink*>(*it);
-    if (unlink_op && unlink_op->mnode_type == mnode::types::dir) {
-      // Flush out all the directory's operations first, before unlinking it.
+    if (unlink_op) {
+      if (unlink_op->mnode_type == mnode::types::dir) {
+        // Flush out all the directory's operations first, before unlinking it.
+        auto mnum = unlink_op->mnode_mnum;
+        if (dirunlink_stack.size() && mnum == dirunlink_stack.back().mnum) {
+          // Already processed.
+          dirunlink_stack.pop_back();
+          unlink_mnum_list.push_back(mnum);
+          add_op_to_journal(*it);
+          it = mfs_log->operation_vec.erase(it);
+          continue;
+        }
 
-      auto mnum = unlink_op->mnode_mnum;
-      if (dirunlink_stack.size() && mnum == dirunlink_stack.back().mnum) {
-        // Already processed.
-        dirunlink_stack.pop_back();
-        add_op_to_journal(*it);
-        it = mfs_log->operation_vec.erase(it);
-        continue;
+        dirunlink_stack.push_back({mnum});
+        pending_stack.push_back({mnum, get_tsc(), -1});
+        return RET_DIRUNLINK;
+      } else {
+        unlink_mnum_list.push_back(unlink_op->mnode_mnum);
       }
-
-      dirunlink_stack.push_back({mnum});
-      pending_stack.push_back({mnum, get_tsc(), -1});
-      return RET_DIRUNLINK;
     }
 
     auto rename_barrier_op = dynamic_cast<mfs_operation_rename_barrier*>(*it);
@@ -748,10 +751,10 @@ void
 mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 {
   std::vector<pending_metadata> pending_stack;
+  std::vector<u64> unlink_mnum_list;
   std::vector<dirunlink_metadata> dirunlink_stack;
   std::vector<rename_metadata> rename_stack;
   std::vector<rename_barrier_metadata> rename_barrier_stack;
-  mfs_logical_log *mfs_log;
   int ret;
 
   pending_stack.push_back({mnode_mnum, max_tsc, -1});
@@ -759,11 +762,12 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
   while (pending_stack.size()) {
     pending_metadata pm = pending_stack.back();
 
+    mfs_logical_log *mfs_log;
     assert(metadata_log_htab->lookup(pm.mnum, &mfs_log));
 
     mfs_log->lock.acquire();
     ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, pending_stack,
-                                 dirunlink_stack, rename_stack,
+                                 unlink_mnum_list, dirunlink_stack, rename_stack,
                                  rename_barrier_stack);
     mfs_log->lock.release();
 
@@ -796,6 +800,19 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 
   assert(!pending_stack.size() && !dirunlink_stack.size() && !rename_stack.size()
          && !rename_barrier_stack.size());
+
+  // Release the auxiliary resources of recently deleted mnodes, now that we
+  // are sure that we won't need them any more.
+  for (auto &mnum : unlink_mnum_list) {
+    u64 inum;
+    if (!inum_lookup(mnum, &inum)) {
+      // delete_mnum_inode() removes the mnum from the mnum_to_inum hash-table.
+      // So failing this lookup is a reliable indication (in this particular
+      // context) that this mnode was deleted already.
+      free_metadata_log(mnum);
+      free_mnode_lock(mnum);
+    }
+  }
 }
 
 void

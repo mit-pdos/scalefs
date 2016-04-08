@@ -551,6 +551,7 @@ class mfs_interface
                            bool skip_add = false);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
                   std::vector<pending_metadata> &pending_stack,
+                  std::vector<u64> &unlink_mnum_list,
                   std::vector<dirunlink_metadata> &dirunlink_stack,
                   std::vector<rename_metadata> &rename_stack,
                   std::vector<rename_barrier_metadata> &rename_barrier_stack);
