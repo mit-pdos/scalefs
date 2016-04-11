@@ -143,7 +143,11 @@ public:
     if (sizeof(T) != PGSIZE)
       panic("%s cannot allocate %zu bytes", __PRETTY_FUNCTION__, sizeof(T));
 
+#if __GNUC__ >= 5
+    if (std::is_trivially_default_constructible<T>::value) {
+#else
     if (std::has_trivial_default_constructor<T>::value) {
+#endif
       // A trivial default constructor will zero-initialize
       // everything, so we can short-circuit this by allocating a zero
       // page.

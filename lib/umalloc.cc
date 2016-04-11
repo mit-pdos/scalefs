@@ -310,8 +310,13 @@ namespace {
 
     T* default_allocate()
     {
+#if __GNUC__ >= 5
+      static_assert(std::is_trivially_default_constructible<T>::value,
+                    "T does not have a trivial default constructor");
+#else
       static_assert(std::has_trivial_default_constructor<T>::value,
                     "T does not have a trivial default constructor");
+#endif
       return allocate(1);
     }
   };

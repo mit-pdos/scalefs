@@ -1397,7 +1397,11 @@ private:
       r->leaf_node_alloc_.deallocate(this, 1);
     }
 
-  private:
+  /**
+   * In GCC 5.3.1, std::is_trivially_default_constructible<leaf_node>::value
+   * is false unless we drop the "private" modifier here..
+   */
+  // private:
     ~leaf_node() = default;
   };
 
