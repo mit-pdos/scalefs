@@ -393,7 +393,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
     scoped_acquire lk;
 
-    if (mfold->type() == mnode::types::dir) {
+    if (mdold != mdnew && mfold->type() == mnode::types::dir) {
       lk = root_fs->dir_rename_lock.guard(); // Filesystem-wide lock.
 
       // Loop avoidance: Abort if the source is an ancestor of the destination.
@@ -416,14 +416,15 @@ sys_rename(userptr_str old_path, userptr_str new_path)
     // where it sees the rename_unlink but fails to notice the rename_link!).
     u64 tsc_val = get_tsc();
     rootfs_interface->metadata_op_start(mdnew->mnum_, myid(), tsc_val);
-    rootfs_interface->metadata_op_start(mdold->mnum_, myid(), tsc_val);
+    if (mdold != mdnew)
+      rootfs_interface->metadata_op_start(mdold->mnum_, myid(), tsc_val);
 
     if (mdnew->as_dir()->replace_from(newname, mfroadblock,
           mdold, oldname, mfold,
           (mfold->type() == mnode::types::dir) ? mfold->as_dir() : nullptr,
           &tsc)) {
 
-      if (mfold->type() == mnode::types::dir) {
+      if (mdold != mdnew && mfold->type() == mnode::types::dir) {
 
         // Add rename barriers to the destination directory and all its
         // in-memory ancestors, with the same timestamp.
@@ -446,6 +447,11 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
       mfs_operation *op_rename_link, *op_rename_unlink;
 
+      // The order of logging these 2 parts (i.e., rename_link first and then
+      // rename_unlink) matters while processing the log for fsync(), especially
+      // in the case where both the source and destination parent directories
+      // are the same (which implies that we are logging both these operations
+      // to a common mnode).
       op_rename_link = new mfs_operation_rename_link(rootfs_interface, tsc,
                            oldname.buf_, mfold->mnum_, mdold->mnum_,
                            newname.buf_, mdnew->mnum_, mfold->type());
@@ -457,13 +463,15 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       rootfs_interface->add_to_metadata_log(mdold->mnum_, op_rename_unlink);
 
       tsc_val = get_tsc();
-      rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
+      if (mdold != mdnew)
+        rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
       rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
       return 0;
     }
 
     tsc_val = get_tsc();
-    rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
+    if (mdold != mdnew)
+      rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
     rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
 
     /*

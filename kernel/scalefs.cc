@@ -693,6 +693,38 @@ mfs_interface::process_ops_from_oplog(
 
     if (rename_link_op || rename_unlink_op) {
 
+      // If this not a cross-directory rename, deal with it separately. If
+      // that's the case indeed, we are guaranteed to find rename-link-op first,
+      // followed by rename-unlink-op.
+      // TODO: Modify apply_rename_pair() to also handle this, instead of treating
+      // it as a special case here.
+      if (rename_link_op &&
+          rename_link_op->src_parent_mnum == rename_link_op->dst_parent_mnum) {
+
+        transaction *tr = nullptr;
+
+        // Make sure that both parts of the rename operation are applied within
+        // the same transaction, to preserve atomicity.
+        tr = new transaction(rename_link_op->timestamp);
+
+        // Set 'skip_add' to true, to avoid adding the transaction to the journal
+        // before it is fully formed.
+        add_op_to_journal(rename_link_op, tr, true);
+        it = mfs_log->operation_vec.erase(it);
+
+        // The very next operation in this oplog *has* to be the corresponding
+        // rename_unlink_op.
+        auto r_unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(*it);
+        assert(r_unlink_op && r_unlink_op->timestamp == rename_link_op->timestamp
+               && r_unlink_op->src_parent_mnum == r_unlink_op->dst_parent_mnum);
+
+        add_op_to_journal(r_unlink_op, tr);
+        it = mfs_log->operation_vec.erase(it);
+        continue;
+      }
+
+      // Cross-directory renames, of both files and directories are handled below.
+
       // Check if this is the counterpart of the latest rename sub-operation
       // that we know of.
 
