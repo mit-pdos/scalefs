@@ -486,7 +486,6 @@ class mfs_interface
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
-    void free_inode(sref<inode> ip, transaction *tr);
     // File functions
     u64 get_file_size(u64 mfile_mnum);
     void update_file_size(u64 mfile_mnum, u32 size, transaction *tr);

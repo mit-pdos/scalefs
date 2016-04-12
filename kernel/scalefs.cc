@@ -75,21 +75,6 @@ mfs_interface::free_metadata_log(u64 mnum)
   delete mfs_log;
 }
 
-void
-mfs_interface::free_inode(sref<inode> ip, transaction *tr)
-{
-  ilock(ip, WRITELOCK);
-  assert(ip->nlink() == 0);
-  // Release the inode on the disk.
-  ip->type = 0;
-  iupdate(ip, tr);
-
-  // Perform the last decrement of the refcount. This pairs with the
-  // extra increment that was done inside inode::init().
-  ip->dec();
-  iunlock(ip);
-}
-
 // Returns an sref to an inode if mnum is mapped to one.
 sref<inode>
 mfs_interface::get_inode(u64 mnum, const char *str)
@@ -1632,7 +1617,7 @@ initfs()
       itrunc(ip, 0, tr);
       iunlock(ip);
 
-      rootfs_interface->free_inode(ip, tr);
+      free_inode(ip, tr);
       rootfs_interface->add_to_journal_locked(tr);
       sb.reclaim_inodes[i] = 0;
     }

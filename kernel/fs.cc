@@ -308,6 +308,21 @@ ialloc(u32 dev, short type)
   return sref<inode>();
 }
 
+void
+free_inode(sref<inode> ip, transaction *tr)
+{
+  ilock(ip, WRITELOCK);
+  assert(ip->nlink() == 0);
+  // Release the inode on the disk.
+  ip->type = 0;
+  iupdate(ip, tr);
+
+  // Perform the last decrement of the refcount. This pairs with the
+  // extra increment that was done inside inode::init().
+  ip->dec();
+  iunlock(ip);
+}
+
 // Propagate the changes made to the in-memory inode metadata, to the disk.
 // As far as possible, don't invoke iupdate() on every little change to the
 // inode; batch the updates and call iupdate() once at the end, to avoid the
