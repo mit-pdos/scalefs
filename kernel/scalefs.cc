@@ -22,7 +22,11 @@ mfs_interface::mfs_interface()
 bool
 mfs_interface::mnum_name_insert(u64 mnum, const strbuf<DIRSIZ>& name)
 {
+#if DEBUG
   return mnum_to_name->insert(mnum, name);
+#else
+  return true;
+#endif
 }
 
 bool
