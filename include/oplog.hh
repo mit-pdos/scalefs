@@ -91,13 +91,13 @@ namespace oplog {
     };
 
   protected:
-    // Return a locked operation logger for this object.  In general,
-    // this logger will be CPU-local, meaning that operations from
-    // different cores can be performed in parallel and without
-    // communication.
-    locked_logger get_logger()
+    // Return a locked operation logger for this object on the specified
+    // cpu. In general, this logger will be CPU-local, meaning that
+    // operations from different cores can be performed in parallel and
+    // without communication.
+    locked_logger get_logger(int cpu)
     {
-      auto id = myid();
+      auto id = cpu;
       auto my_way = cache_[id].hash_way(this);
     back_out:
       auto guard = my_way->lock_.guard();
@@ -452,12 +452,14 @@ namespace oplog {
     typedef struct mfs_tsc {
       u64 tsc_value;
       seqcount<u32> seq;
-      spinlock write_lock;
     } mfs_tsc;
+
     // The starting time of the latest mfs metadata operation on each core
     percpu<mfs_tsc> mfs_start_tsc;
     // The ending time of the latest mfs metadata operation on each core
     percpu<mfs_tsc> mfs_end_tsc;
+    // Lock to protect writes to both mfs_start_tsc and mfs_end_tsc.
+    percpu<sleeplock> mfs_tsc_lock;
 
     // Heap-merges pending loggers and applies the operations, leaving behind
     // operations that have timestamps greater than max_tsc.
@@ -516,14 +518,22 @@ namespace oplog {
     }
 
   public:
+
+    lock_guard<sleeplock> get_tsc_lock_guard(int cpu) {
+      auto guard = mfs_tsc_lock[cpu].guard();
+      return std::move(guard);
+    }
+
+    // The caller must hold mfs_tsc_lock[cpu], before calling update_start_tsc()
+    // and update_end_tsc(); Further, both these functions must be invoked in
+    // the same critical section, without releasing the lock.
+
     void update_start_tsc(size_t cpu, u64 start_tsc) {
-      auto lock = mfs_start_tsc[cpu].write_lock.guard();
       auto w = mfs_start_tsc[cpu].seq.write_begin();
       mfs_start_tsc[cpu].tsc_value = start_tsc;
     }
 
     void update_end_tsc(size_t cpu, u64 end_tsc) {
-      auto lock = mfs_end_tsc[cpu].write_lock.guard();
       auto w = mfs_end_tsc[cpu].seq.write_begin();
       mfs_end_tsc[cpu].tsc_value = end_tsc;
     }

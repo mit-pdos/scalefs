@@ -123,11 +123,11 @@ public:
       };
 
       void add_mapping(rmap_entry map) {
-        get_logger()->push<add_op>(add_op(this, map));
+        get_logger(myid())->push<add_op>(add_op(this, map));
       }
 
       void remove_mapping(rmap_entry map) {
-        get_logger()->push<rem_op>(rem_op(this, map));
+        get_logger(myid())->push<rem_op>(rem_op(this, map));
       }
 
       void sync(std::vector<rmap_entry> &vec) {

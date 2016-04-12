@@ -537,8 +537,9 @@ class mfs_interface
     void free_mnode_lock(u64 mnum);
     void alloc_metadata_log(u64 mnum);
     void free_metadata_log(u64 mnum);
-    void metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val);
-    void metadata_op_end(u64 mnum, size_t cpu, u64 tsc_val);
+    lock_guard<sleeplock> metadata_op_lockguard(u64 mnum, int cpu);
+    void metadata_op_start(u64 mnum, int cpu, u64 tsc_val);
+    void metadata_op_end(u64 mnum, int cpu, u64 tsc_val);
     void add_to_metadata_log(u64 mnum, mfs_operation *op);
     void sync_dirty_files_and_dirs();
     void evict_bufcache();
@@ -941,7 +942,8 @@ class mfs_logical_log: public mfs_logged_object
 
     void add_operation(mfs_operation *op)
     {
-      get_logger()->push_with_tsc<add_op>(add_op(this, op));
+      // FIXME: Take the cpu as an argument to this function.
+      get_logger(myid())->push_with_tsc<add_op>(add_op(this, op));
     }
 
     // This function pre-allocates a per-core logger for this core,
@@ -949,7 +951,7 @@ class mfs_logical_log: public mfs_logged_object
     // This helps avoid extraneous sharing reports when using commuter.
     void preload_oplog()
     {
-      get_logger();
+      get_logger(myid());
     }
 
   protected:

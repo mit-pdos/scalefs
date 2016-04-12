@@ -317,8 +317,20 @@ mfs_interface::initialize_dir(sref<mnode> m)
   load_dir(i, m);
 }
 
+lock_guard<sleeplock>
+mfs_interface::metadata_op_lockguard(u64 mnum, int cpu)
+{
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnum, &mfs_log));
+  return std::move(mfs_log->get_tsc_lock_guard(cpu));
+}
+
+// Both metadata_op_start() and metadata_op_end() must be invoked while keeping
+// the lock-guard returned by metadata_op_lockguard() alive. They must both be
+// invoked in the same critical section, without releasing the lock in between.
+
 void
-mfs_interface::metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val)
+mfs_interface::metadata_op_start(u64 mnum, int cpu, u64 tsc_val)
 {
   mfs_logical_log *mfs_log;
   assert(metadata_log_htab->lookup(mnum, &mfs_log));
@@ -326,7 +338,7 @@ mfs_interface::metadata_op_start(u64 mnum, size_t cpu, u64 tsc_val)
 }
 
 void
-mfs_interface::metadata_op_end(u64 mnum, size_t cpu, u64 tsc_val)
+mfs_interface::metadata_op_end(u64 mnum, int cpu, u64 tsc_val)
 {
   mfs_logical_log *mfs_log;
   assert(metadata_log_htab->lookup(mnum, &mfs_log));
