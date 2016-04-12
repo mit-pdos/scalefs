@@ -540,7 +540,7 @@ class mfs_interface
     lock_guard<sleeplock> metadata_op_lockguard(u64 mnum, int cpu);
     void metadata_op_start(u64 mnum, int cpu, u64 tsc_val);
     void metadata_op_end(u64 mnum, int cpu, u64 tsc_val);
-    void add_to_metadata_log(u64 mnum, mfs_operation *op);
+    void add_to_metadata_log(u64 mnum, int cpu, mfs_operation *op);
     void sync_dirty_files_and_dirs();
     void evict_bufcache();
     void evict_pagecache();
@@ -940,10 +940,9 @@ class mfs_logical_log: public mfs_logged_object
       mfs_operation *operation;
     };
 
-    void add_operation(mfs_operation *op)
+    void add_operation(mfs_operation *op, int cpu)
     {
-      // FIXME: Take the cpu as an argument to this function.
-      get_logger(myid())->push_with_tsc<add_op>(add_op(this, op));
+      get_logger(cpu)->push_with_tsc<add_op>(add_op(this, op));
     }
 
     // This function pre-allocates a per-core logger for this core,

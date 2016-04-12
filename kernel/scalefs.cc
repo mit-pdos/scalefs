@@ -347,11 +347,11 @@ mfs_interface::metadata_op_end(u64 mnum, int cpu, u64 tsc_val)
 
 // Adds a metadata operation to the logical log.
 void
-mfs_interface::add_to_metadata_log(u64 mnum, mfs_operation *op)
+mfs_interface::add_to_metadata_log(u64 mnum, int cpu, mfs_operation *op)
 {
   mfs_logical_log *mfs_log;
   assert(metadata_log_htab->lookup(mnum, &mfs_log));
-  mfs_log->add_operation(op);
+  mfs_log->add_operation(op, cpu);
 }
 
 // Applies all metadata operations logged in the logical logs. Called on sync.

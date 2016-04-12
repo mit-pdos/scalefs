@@ -321,18 +321,20 @@ sys_link(userptr_str old_path, userptr_str new_path)
 
   assert(md->fs_ == root_fs);
 
-  rootfs_interface->metadata_op_start(md->mnum_, myid(), get_tsc());
+  int cpu = myid();
+  auto guard = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+  rootfs_interface->metadata_op_start(md->mnum_, cpu, get_tsc());
 
   if (!md->as_dir()->insert(name, &mflink, &tsc)) {
-    rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
+    rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
     return -1;
   }
 
   mfs_operation *op =
       new mfs_operation_link(rootfs_interface, tsc, mflink.mn()->mnum_,
                              md->mnum_, name.buf_, mflink.mn()->type());
-  rootfs_interface->add_to_metadata_log(md->mnum_, op);
-  rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
+  rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op);
+  rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
   return 0;
 }
 
@@ -415,9 +417,38 @@ sys_rename(userptr_str old_path, userptr_str new_path)
     // of when fsync() is invoked. (We don't want to end up in a situation
     // where it sees the rename_unlink but fails to notice the rename_link!).
     u64 tsc_val = get_tsc();
-    rootfs_interface->metadata_op_start(mdnew->mnum_, myid(), tsc_val);
+    int cpu = myid();
+
+    // Lock ordering: Acquire the locks in increasing order of their mnode
+    // numbers.
+    std::vector<u64> mnode_mnums;
+    mnode_mnums.push_back(mdnew->mnum_);
+    if (mdold != mdnew) {
+      mnode_mnums.push_back(mdold->mnum_);
+
+      if (mfold->type() == mnode::types::dir) {
+        sref<mnode> mdparent, md = mdnew;
+        while (1) {
+          mdparent = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
+          // Don't add mdnew->mnum_ twice; we already added it once above.
+          if (md != mdnew)
+            mnode_mnums.push_back(md->mnum_);
+
+          if (md->mnum_ == root_mnum)
+            break;
+          md = mdparent;
+        }
+      }
+    }
+
+    std::sort(mnode_mnums.begin(), mnode_mnums.end());
+    std::vector<lock_guard<sleeplock>> mfs_tsc_locks;
+    for (auto &mnum : mnode_mnums)
+      mfs_tsc_locks.push_back(rootfs_interface->metadata_op_lockguard(mnum, cpu));
+
+    rootfs_interface->metadata_op_start(mdnew->mnum_, cpu, tsc_val);
     if (mdold != mdnew)
-      rootfs_interface->metadata_op_start(mdold->mnum_, myid(), tsc_val);
+      rootfs_interface->metadata_op_start(mdold->mnum_, cpu, tsc_val);
 
     // We need to call _op_start() on all the relevant mnodes *before*
     // performing the rename, to make sure that the linearization point of the
@@ -431,7 +462,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
         mdparent = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
         // Don't add to mdnew twice; we already added to it once above.
         if (md != mdnew)
-          rootfs_interface->metadata_op_start(md->mnum_, myid(), tsc_val);
+          rootfs_interface->metadata_op_start(md->mnum_, cpu, tsc_val);
 
         if (md->mnum_ == root_mnum)
           break;
@@ -456,10 +487,10 @@ sys_rename(userptr_str old_path, userptr_str new_path)
           op_rename_barrier = new mfs_operation_rename_barrier(rootfs_interface,
                                   tsc, md->mnum_, mdparent->mnum_, mfold->type());
 
-          rootfs_interface->add_to_metadata_log(md->mnum_, op_rename_barrier);
+          rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_rename_barrier);
           // We'll add _op_end to mdnew below anyway, so skip it here.
           if (md != mdnew)
-            rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+            rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
 
           if (md->mnum_ == root_mnum)
             break;
@@ -477,17 +508,17 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       op_rename_link = new mfs_operation_rename_link(rootfs_interface, tsc,
                            oldname.buf_, mfold->mnum_, mdold->mnum_,
                            newname.buf_, mdnew->mnum_, mfold->type());
-      rootfs_interface->add_to_metadata_log(mdnew->mnum_, op_rename_link);
+      rootfs_interface->add_to_metadata_log(mdnew->mnum_, cpu, op_rename_link);
 
       op_rename_unlink = new mfs_operation_rename_unlink(rootfs_interface, tsc,
                              oldname.buf_, mfold->mnum_, mdold->mnum_,
                              newname.buf_, mdnew->mnum_, mfold->type());
-      rootfs_interface->add_to_metadata_log(mdold->mnum_, op_rename_unlink);
+      rootfs_interface->add_to_metadata_log(mdold->mnum_, cpu, op_rename_unlink);
 
       tsc_val = get_tsc();
       if (mdold != mdnew)
-        rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
-      rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
+        rootfs_interface->metadata_op_end(mdold->mnum_, cpu, tsc_val);
+      rootfs_interface->metadata_op_end(mdnew->mnum_, cpu, tsc_val);
       return 0;
     }
 
@@ -497,7 +528,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
         mdparent = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
         // Don't add to mdnew twice; we will add to it again below anyway.
         if (md != mdnew)
-          rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+          rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
 
         if (md->mnum_ == root_mnum)
           break;
@@ -507,8 +538,8 @@ sys_rename(userptr_str old_path, userptr_str new_path)
 
     tsc_val = get_tsc();
     if (mdold != mdnew)
-      rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
-    rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
+      rootfs_interface->metadata_op_end(mdold->mnum_, cpu, tsc_val);
+    rootfs_interface->metadata_op_end(mdnew->mnum_, cpu, tsc_val);
 
     /*
      * The inodes for the source and/or the destination file names
@@ -540,7 +571,9 @@ sys_unlink(userptr_str path)
     return -1;
 
   assert(md->fs_ == root_fs);
-  rootfs_interface->metadata_op_start(md->mnum_, myid(), get_tsc());
+  int cpu = myid();
+  auto guard = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+  rootfs_interface->metadata_op_start(md->mnum_, cpu, get_tsc());
 
   if (mf->type() == mnode::types::dir) {
     /*
@@ -548,7 +581,7 @@ sys_unlink(userptr_str path)
      * or sub-directories can be subsequently created in that directory.
      */
     if (!mf->as_dir()->kill(md)) {
-      rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
+      rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
       return -1;
     }
 
@@ -563,20 +596,20 @@ sys_unlink(userptr_str path)
     mfs_operation *op =
         new mfs_operation_unlink(rootfs_interface, tsc, mf->mnum_, md->mnum_,
                                  name.buf_, mf->type());
-    rootfs_interface->add_to_metadata_log(md->mnum_, op);
-    rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
+    rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op);
+    rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
     return 0;
   }
 
   if (!md->as_dir()->remove(name, mf, &tsc)) {
-    rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
+    rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
     return -1;
   }
 
   mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc, mf->mnum_,
                                                md->mnum_, name.buf_, mf->type());
-  rootfs_interface->add_to_metadata_log(md->mnum_, op);
-  rootfs_interface->metadata_op_end(md->mnum_, myid(), get_tsc());
+  rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op);
+  rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
   return 0;
 }
 
@@ -615,8 +648,19 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     mf->initialized(true);
 
     u64 tsc_val = get_tsc();
-    rootfs_interface->metadata_op_start(md->mnum_, myid(), tsc_val);
-    rootfs_interface->metadata_op_start(mf->mnum_, myid(), tsc_val);
+    int cpu = myid();
+    lock_guard<sleeplock> l1, l2;
+
+    if (md->mnum_ < mf->mnum_) {
+      l1 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+      l2 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
+    } else {
+      l1 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
+      l2 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+    }
+
+    rootfs_interface->metadata_op_start(md->mnum_, cpu, tsc_val);
+    rootfs_interface->metadata_op_start(mf->mnum_, cpu, tsc_val);
 
     if (mtype == mnode::types::dir) {
       /*
@@ -640,15 +684,15 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
           op_c = new mfs_operation_create(rootfs_interface, tsc, mf->mnum_,
                                           md->mnum_, name.buf_, type);
-          rootfs_interface->add_to_metadata_log(mf->mnum_, op_c);
+          rootfs_interface->add_to_metadata_log(mf->mnum_, cpu, op_c);
 
           op_l = new mfs_operation_link(rootfs_interface, tsc, mf->mnum_,
                                         md->mnum_, name.buf_, type);
-          rootfs_interface->add_to_metadata_log(md->mnum_, op_l);
+          rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_l);
 
           tsc_val = get_tsc();
-          rootfs_interface->metadata_op_end(mf->mnum_, myid(), tsc_val);
-          rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+          rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
+          rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
         }
         return mf;
       }
@@ -659,8 +703,8 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
        */
       assert(mf->as_dir()->remove("..", md));
       tsc_val = get_tsc();
-      rootfs_interface->metadata_op_end(mf->mnum_, myid(), tsc_val);
-      rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+      rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
+      rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
       continue;
     }
 
@@ -674,23 +718,23 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
         op_c = new mfs_operation_create(rootfs_interface, tsc, mf->mnum_,
                                         md->mnum_, name.buf_, type);
-        rootfs_interface->add_to_metadata_log(mf->mnum_, op_c);
+        rootfs_interface->add_to_metadata_log(mf->mnum_, cpu, op_c);
 
         op_l = new mfs_operation_link(rootfs_interface, tsc, mf->mnum_,
                                       md->mnum_, name.buf_, type);
-        rootfs_interface->add_to_metadata_log(md->mnum_, op_l);
+        rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_l);
 
         tsc_val = get_tsc();
-        rootfs_interface->metadata_op_end(mf->mnum_, myid(), tsc_val);
-        rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+        rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
+        rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
       }
       return mf;
     }
 
     /* Failed to insert, retry */
     tsc_val = get_tsc();
-    rootfs_interface->metadata_op_end(mf->mnum_, myid(), tsc_val);
-    rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+    rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
+    rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
   }
 }
 
