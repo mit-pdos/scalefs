@@ -4,6 +4,7 @@
 #include <new>
 #include <stdexcept>
 
+#include "kernel.hh"
 #include "ilist.hh"
 
 #ifndef BUDDY_DEBUG
@@ -46,12 +47,12 @@ private:
   static std::size_t size_to_order(std::size_t size) __attribute__((const))
   {
     if (size < MIN_SIZE)
-      throw std::domain_error("buddy allocator: size < MIN_SIZE");
+      panic("buddy allocator: size %lu < MIN_SIZE %d bytes\n", size, MAX_SIZE);
     if (size > MAX_SIZE)
-      throw std::domain_error("buddy allocator: size > MAX_SIZE");
+      panic("buddy allocator: size %lu > MAX_SIZE %d bytes\n", size, MAX_SIZE);
     std::size_t log2 = __builtin_ctz(size);
     if (size != 1 << log2)
-      throw std::domain_error("buddy allocator: size is not a power of two");
+      panic("buddy allocator: size %lu is not a power of two", size);
     return log2 - __builtin_ctz(MIN_SIZE);
   }
 
