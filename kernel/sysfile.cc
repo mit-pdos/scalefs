@@ -419,6 +419,27 @@ sys_rename(userptr_str old_path, userptr_str new_path)
     if (mdold != mdnew)
       rootfs_interface->metadata_op_start(mdold->mnum_, myid(), tsc_val);
 
+    // We need to call _op_start() on all the relevant mnodes *before*
+    // performing the rename, to make sure that the linearization point of the
+    // rename is contained strictly between all pairs of _op_start() and _op_end().
+    // Thus, there should be no call to _op_start() after performing the rename.
+    // Since we hold a global lock for directory renames, the directory hierarchy
+    // won't change here, which makes this job easy.
+    if (mdold != mdnew && mfold->type() == mnode::types::dir) {
+      sref<mnode> mdparent, md = mdnew;
+      while (1) {
+        mdparent = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
+        // Don't add to mdnew twice; we already added to it once above.
+        if (md != mdnew)
+          rootfs_interface->metadata_op_start(md->mnum_, myid(), tsc_val);
+
+        if (md->mnum_ == root_mnum)
+          break;
+        md = mdparent;
+      }
+    }
+
+    // Perform the actual rename operation in MemFS.
     if (mdnew->as_dir()->replace_from(newname, mfroadblock,
           mdold, oldname, mfold,
           (mfold->type() == mnode::types::dir) ? mfold->as_dir() : nullptr,
@@ -435,9 +456,10 @@ sys_rename(userptr_str old_path, userptr_str new_path)
           op_rename_barrier = new mfs_operation_rename_barrier(rootfs_interface,
                                   tsc, md->mnum_, mdparent->mnum_, mfold->type());
 
-          rootfs_interface->metadata_op_start(md->mnum_, myid(), tsc_val);
           rootfs_interface->add_to_metadata_log(md->mnum_, op_rename_barrier);
-          rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+          // We'll add _op_end to mdnew below anyway, so skip it here.
+          if (md != mdnew)
+            rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
 
           if (md->mnum_ == root_mnum)
             break;
@@ -467,6 +489,20 @@ sys_rename(userptr_str old_path, userptr_str new_path)
         rootfs_interface->metadata_op_end(mdold->mnum_, myid(), tsc_val);
       rootfs_interface->metadata_op_end(mdnew->mnum_, myid(), tsc_val);
       return 0;
+    }
+
+    if (mdold != mdnew && mfold->type() == mnode::types::dir) {
+      sref<mnode> mdparent, md = mdnew;
+      while (1) {
+        mdparent = md->as_dir()->lookup(strbuf<DIRSIZ>(".."));
+        // Don't add to mdnew twice; we will add to it again below anyway.
+        if (md != mdnew)
+          rootfs_interface->metadata_op_end(md->mnum_, myid(), tsc_val);
+
+        if (md->mnum_ == root_mnum)
+          break;
+        md = mdparent;
+      }
     }
 
     tsc_val = get_tsc();
