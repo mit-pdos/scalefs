@@ -109,6 +109,10 @@ namespace oplog {
           // between this and synchronize, we may deadlock here if we
           // simply acquire cur_obj's sync lock.  Hence, we perform
           // deadlock avoidance.
+          // (Furthermore, since sync_lock_ is a sleeplock, while
+          // way->lock_ is a spinlock, we can't actually afford to
+          // sleep on contention here; if we did, it would lead to
+          // "sleeping inside atomic section" bug).
           auto sync_guard = cur_obj->sync_lock_.try_guard();
           if (!sync_guard)
             // We would deadlock with synchronize.  Back out
@@ -224,6 +228,13 @@ namespace oplog {
     bitset<NCPU> cpus_;
 
     // This lock serializes log flushes and protects clearing cpus_.
+    // Note: sync_lock_ is a sleeplock, whereas way->lock_ is a spinlock.
+    // So the only legal lock ordering is to nest the way->lock_ inside
+    // the sync_lock_. However, we are forced to acquire these locks in
+    // the opposite order in get_logger(); but luckily, our deadlock
+    // avoidance scheme retries if the sync_lock_ is contended, so we
+    // never actually sleep while holding the spinlock, which makes it
+    // safe.
     sleeplock sync_lock_;
   };
 
