@@ -251,7 +251,7 @@ mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
 // representation but not on the disk.
 void
 mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
-		                      u8 type, transaction *tr)
+		             u8 type, transaction *tr, bool acquire_locks)
 {
   sref<inode> mdir_ip = get_inode(mdir_mnum, "add_dir_entry");
 
@@ -277,10 +277,12 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 
   // Lock ordering rule: Acquire all inode-block locks before performing any
   // ilock().
-  std::vector<u64> inum_list;
-  inum_list.push_back(mdir_ip->inum);
-  inum_list.push_back(dirent_inum);
-  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+  if (acquire_locks) {
+    std::vector<u64> inum_list;
+    inum_list.push_back(mdir_ip->inum);
+    inum_list.push_back(dirent_inum);
+    acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+  }
 
   sref<inode> dirent_ip = iget(1, dirent_inum);
 
@@ -295,7 +297,8 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 // Deletes directory entries (from the disk) which no longer exist in the mdir.
 // The file/directory names that are present in the mdir are specified in names_vec.
 void
-mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr)
+mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
+                                bool acquire_locks)
 {
   sref<inode> mdir_ip = get_inode(mdir_mnum, "remove_dir_entry");
   sref<inode> target = dirlookup(mdir_ip, name);
@@ -304,10 +307,12 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr)
 
   // Lock ordering rule: Acquire all inode-block locks before performing any
   // ilock().
-  std::vector<u64> inum_list;
-  inum_list.push_back(mdir_ip->inum);
-  inum_list.push_back(target->inum);
-  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+  if (acquire_locks) {
+    std::vector<u64> inum_list;
+    inum_list.push_back(mdir_ip->inum);
+    inum_list.push_back(target->inum);
+    acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+  }
 
   ilock(mdir_ip, WRITELOCK);
   ilock(target, WRITELOCK);
@@ -937,16 +942,28 @@ void
 mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
 {
   scoped_gc_epoch e;
+
+  u64 mnode_inum, src_parent_inum, dst_parent_inum;
+  assert(inum_lookup(op->mnode_mnum, &mnode_inum));
+  assert(inum_lookup(op->src_parent_mnum, &src_parent_inum));
+  assert(inum_lookup(op->dst_parent_mnum, &dst_parent_inum));
+
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock().
+  std::vector<u64> inum_list;
+  inum_list.push_back(mnode_inum);
+  inum_list.push_back(src_parent_inum);
+  if (dst_parent_inum != src_parent_inum)
+    inum_list.push_back(dst_parent_inum);
+
+  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+
+  // Buffer-cache updates start here.
   add_dir_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
-                         op->mnode_type, tr);
+                op->mnode_type, tr, false);
 
   if (op->mnode_type == mnode::types::dir &&
       op->dst_parent_mnum != op->src_parent_mnum) {
-
-    u64 mnode_inum, src_parent_inum, dst_parent_inum;
-    assert(inum_lookup(op->mnode_mnum, &mnode_inum));
-    assert(inum_lookup(op->src_parent_mnum, &src_parent_inum));
-    assert(inum_lookup(op->dst_parent_mnum, &dst_parent_inum));
 
     sref<inode> ip = iget(1, mnode_inum);
 
@@ -966,10 +983,12 @@ mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *t
 {
   scoped_gc_epoch e;
 
+  // Buffer-cache updates start in mfs_rename_link() itself.
+
   // remove_dir_entry() deletes the inode if its link count drops to zero. So it
   // is crucial that we add the new link first (via mfs_rename_link()) and only
   // then remove the old link.
-  remove_dir_entry(op->src_parent_mnum, op->name, tr);
+  remove_dir_entry(op->src_parent_mnum, op->name, tr, false);
 }
 
 void
