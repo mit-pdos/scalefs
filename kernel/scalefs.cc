@@ -297,19 +297,27 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 void
 mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr)
 {
-  sref<inode> ip = get_inode(mdir_mnum, "remove_dir_entry");
-  sref<inode> target = dirlookup(ip, name);
+  sref<inode> mdir_ip = get_inode(mdir_mnum, "remove_dir_entry");
+  sref<inode> target = dirlookup(mdir_ip, name);
   if (!target)
     return;
 
-  ilock(ip, WRITELOCK);
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock().
+  std::vector<u64> inum_list;
+  inum_list.push_back(mdir_ip->inum);
+  inum_list.push_back(target->inum);
+  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+
+  ilock(mdir_ip, WRITELOCK);
   ilock(target, WRITELOCK);
+  // Buffer-cache updates start here.
   if (target->type == T_DIR)
-    dirunlink(ip, name, target->inum, true, tr);
+    dirunlink(mdir_ip, name, target->inum, true, tr);
   else
-    dirunlink(ip, name, target->inum, false, tr);
+    dirunlink(mdir_ip, name, target->inum, false, tr);
   iunlock(target);
-  iunlock(ip);
+  iunlock(mdir_ip);
 
   assert(target->nlink() >= 0);
   if (!target->nlink()) {
