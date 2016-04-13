@@ -617,12 +617,14 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, transaction *tr,
   if (!tr)
     tr = new transaction(op->timestamp);
 
-  auto journal_lock = fs_journal->prepare_for_commit();
   op->apply(tr);
   pre_process_transaction(tr);
 
   if (!skip_add) {
-    fs_journal->enqueue_transaction_locked(tr);
+    {
+      auto journal_lock = fs_journal->prepare_for_commit();
+      fs_journal->enqueue_transaction_locked(tr);
+    }
     release_inodebitmap_locks(tr);
   }
 
@@ -1037,13 +1039,19 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
-  auto journal_lock = fs_journal->prepare_for_commit();
   pre_process_transaction(tr);
-  fs_journal->enqueue_transaction_locked(tr);
+
+  {
+    auto journal_lock = fs_journal->prepare_for_commit();
+    fs_journal->enqueue_transaction_locked(tr);
+  }
+
   release_inodebitmap_locks(tr);
 
-  if (flush_journal)
+  if (flush_journal) {
+    auto journal_lock = fs_journal->prepare_for_commit();
     flush_journal_locked();
+  }
 }
 
 // Writes out the physical journal to the disk, and applies the committed
@@ -1789,7 +1797,6 @@ initfs()
   rootfs_interface->alloc_inodebitmap_locks();
 
   if (sb.num_reclaim_inodes) {
-    auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
 
     for (int i = 0; i < sb.num_reclaim_inodes; i++) {
       if (!(inum = sb.reclaim_inodes[i]))
@@ -1806,12 +1813,18 @@ initfs()
 
       free_inode(ip, tr);
       rootfs_interface->pre_process_transaction(tr);
-      rootfs_interface->fs_journal->enqueue_transaction_locked(tr);
+      {
+        auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
+        rootfs_interface->fs_journal->enqueue_transaction_locked(tr);
+      }
       rootfs_interface->release_inodebitmap_locks(tr); // This seems unnecessary.
       sb.reclaim_inodes[i] = 0;
     }
 
-    rootfs_interface->flush_journal_locked();
+    {
+      auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
+      rootfs_interface->flush_journal_locked();
+    }
 
     // Reset the reclaim_inodes[] list in the on-disk superblock.
     sb.num_reclaim_inodes = 0;
