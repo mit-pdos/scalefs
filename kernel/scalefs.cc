@@ -192,6 +192,16 @@ void
 mfs_interface::create_file(u64 mnum, u8 type, transaction *tr)
 {
   sref<inode> ip = alloc_inode_for_mnode(mnum, type);
+  iunlock(ip);
+
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock().
+  std::vector<u64> inum_list;
+  inum_list.push_back(ip->inum);
+  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+
+  // Buffer-cache updates start here.
+  ilock(ip, WRITELOCK);
   iupdate(ip, tr);
   iunlock(ip);
 }
@@ -204,19 +214,33 @@ void
 mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
 {
   u64 parent_inum = 0;
-  sref<inode> parent_ip, subdir_ip = alloc_inode_for_mnode(mnum, type);
+  sref<inode> parent_ip, subdir_ip;
 
   // The new sub-directory needs to be initialized with the ".." link, pointing
   // to its parent's inode number.
   if (!inum_lookup(parent_mnum, &parent_inum)) {
     parent_ip = alloc_inode_for_mnode(parent_mnum, mnode::types::dir);
+    iunlock(parent_ip);
     parent_inum = parent_ip->inum;
   }
 
+  subdir_ip = alloc_inode_for_mnode(mnum, type);
+  iunlock(subdir_ip);
+
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock().
+  std::vector<u64> inum_list;
+  inum_list.push_back(parent_inum);
+  inum_list.push_back(subdir_ip->inum);
+  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+
+  // Buffer-cache updates start here.
+  ilock(subdir_ip, WRITELOCK);
   dirlink(subdir_ip, "..", parent_inum, false, tr);
 
   // Flush parent inode too, if it was newly created above.
   if (parent_ip) {
+    ilock(parent_ip, WRITELOCK);
     iupdate(parent_ip, tr);
     iunlock(parent_ip);
   }
