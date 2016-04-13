@@ -340,22 +340,20 @@ class journal
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal()
+    journal() : current_off(0)
     {
-      current_off = 0;
-      transaction_log = std::vector<transaction*>();
     }
 
     ~journal()
     {
-      for (auto it = transaction_log.begin(); it != transaction_log.end(); it++)
+      for (auto it = transaction_queue.begin(); it != transaction_queue.end(); it++)
         delete (*it);
     }
 
-    // Add a new transaction to the journal.
-    void add_transaction_locked(transaction *tr)
+    // Add a new transaction to the journal's transaction queue.
+    void enqueue_transaction_locked(transaction *tr)
     {
-      transaction_log.push_back(tr);
+      transaction_queue.push_back(tr);
     }
 
     lock_guard<sleeplock> prepare_for_commit()
@@ -380,10 +378,8 @@ class journal
     void update_offset(u32 new_off) { current_off = new_off; }
 
   private:
-    // List of transactions (Unordered).
-    std::vector<transaction*> transaction_log;
-    // Guards updates to the transaction_log
-    sleeplock write_lock;
+    std::vector<transaction*> transaction_queue;
+    sleeplock write_lock; // Guards updates to the transaction queue
     // Current size of flushed out transactions on the disk
     u32 current_off;
 };
@@ -491,7 +487,6 @@ class mfs_interface
     sref<mnode> load_root();
 
     // Journal functions
-    void add_to_journal_locked(transaction *tr);
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
     void apply_trans_on_disk(transaction *tr);
@@ -525,8 +520,8 @@ class mfs_interface
     void process_metadata_log_and_flush();
     void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
     void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
-    void add_op_to_journal(mfs_operation *op, transaction *tr = nullptr,
-                           bool skip_add = false);
+    void add_op_to_transaction_queue(mfs_operation *op, transaction *tr = nullptr,
+                                     bool skip_add = false);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
                   std::vector<pending_metadata> &pending_stack,
                   std::vector<u64> &unlink_mnum_list,
