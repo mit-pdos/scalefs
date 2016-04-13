@@ -967,36 +967,10 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
+  add_to_journal_locked(tr);
 
-  if (!flush_journal) {
-    add_to_journal_locked(tr);
-    return;
-  }
-
-  u64 timestamp = tr->timestamp_;
-
-  pre_process_transaction(tr);
-  tr->deduplicate_blocks();
-
-  transaction *trans = new transaction(0);
-
-  ilock(sv6_journal, WRITELOCK);
-  write_journal_trans_prolog(timestamp, trans);
-
-  // Write out the transaction blocks to the disk journal in timestamp order.
-  write_journal_transaction_blocks(tr->blocks, timestamp, trans);
-
-  write_journal_trans_epilog(timestamp, trans); // This also deletes trans.
-  iunlock(sv6_journal);
-
-  post_process_transaction(tr);
-  apply_trans_on_disk(tr);
-
-  ideflush();
-
-  ilock(sv6_journal, WRITELOCK);
-  reset_journal();
-  iunlock(sv6_journal);
+  if (flush_journal)
+    flush_journal_locked();
 }
 
 // Writes out the physical journal to the disk, and applies the committed

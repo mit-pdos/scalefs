@@ -368,9 +368,8 @@ mfile::sync_file(bool flush_journal)
   // to disk.
   rootfs_interface->add_fsync_to_journal(trans, flush_journal);
 
-  // We are done with this transaction, if we already flushed it to disk.
-  if (flush_journal)
-    delete trans;
+  // flush_journal_locked() (invoked by add_fsync_to_journal()) deletes trans,
+  // so we don't have to delete it here.
 
   dirty(false);
 }
