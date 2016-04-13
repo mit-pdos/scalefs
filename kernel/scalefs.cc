@@ -1060,7 +1060,8 @@ mfs_interface::flush_journal_locked()
       prune_trans->deduplicate_blocks();
 
       // Write out the transaction blocks to the disk journal in timestamp order.
-      write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
+      write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
+                                       trans);
 
       write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
       iunlock(sv6_journal);
@@ -1101,7 +1102,8 @@ mfs_interface::flush_journal_locked()
       prune_trans->deduplicate_blocks();
 
       // Write out the transaction blocks to the disk journal in timestamp order.
-      write_journal_transaction_blocks(prune_trans->blocks, timestamp, trans);
+      write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
+                                       trans);
   }
 
   write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
