@@ -335,19 +335,15 @@ class transaction
 
 // The "physical" journal is made up of transactions, which in turn are made up of
 // updated diskblocks.
-class journal
-{
+class journal {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal() : current_off(0)
-    {
-    }
+    journal() : current_off(0) {}
 
     ~journal()
     {
-      for (auto it = transaction_queue.begin(); it != transaction_queue.end(); it++)
-        delete (*it);
+      assert(transaction_queue.empty());
     }
 
     // Add a new transaction to the journal's transaction queue.
