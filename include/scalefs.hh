@@ -538,6 +538,8 @@ class mfs_interface
     void free_block(u32 bno);
     void print_free_blocks(print_stream *s);
 
+    void alloc_inodebitmap_locks();
+
     void preload_oplog();
 
   private:
@@ -586,6 +588,9 @@ class mfs_interface
     sleeplock freelist_lock; // Synchronizes access to free_bit_freelist.
 
     sleeplock inode_reclaim_lock;
+
+    // Set of locks, one per inode-block and one per bitmap-block.
+    std::vector<sleeplock*> inodebitmap_locks;
 };
 
 class mfs_operation

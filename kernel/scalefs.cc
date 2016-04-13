@@ -1593,6 +1593,24 @@ mfs_interface::defer_inode_reclaim(u32 inum)
   bp->writeback();
 }
 
+// Allocates a lock for every inode block and every bitmap block.
+void
+mfs_interface::alloc_inodebitmap_locks()
+{
+  superblock sb;
+  get_superblock(&sb, false);
+
+  // The superblock is immediately followed by the inode blocks, which in turn
+  // are immediately followed by the bitmap blocks. So we allocate locks for
+  // block numbers 0 through the last bitmap block (inclusive).
+  int last_blocknum = BBLOCK(sb.size - 1, sb.ninodes);
+
+  inodebitmap_locks.reserve(last_blocknum + 1);
+
+  for (int i = 0; i <= last_blocknum; i++)
+    inodebitmap_locks.push_back(new sleeplock());
+}
+
 void
 initfs()
 {
@@ -1616,6 +1634,7 @@ initfs()
   superblock sb;
 
   get_superblock(&sb, true);
+  rootfs_interface->alloc_inodebitmap_locks();
 
   if (sb.num_reclaim_inodes) {
     auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
