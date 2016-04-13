@@ -497,6 +497,7 @@ class mfs_interface
     void apply_trans_on_disk(transaction *tr);
     void add_fsync_to_journal(transaction *tr, bool flush_journal);
     void flush_journal_locked();
+    void flush_journal();
     void write_journal_hdrblock(const char *header, const char *datablock,
                                 transaction *tr);
     void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr);

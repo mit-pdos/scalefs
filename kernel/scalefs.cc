@@ -1104,6 +1104,13 @@ mfs_interface::flush_journal_locked()
 }
 
 void
+mfs_interface::flush_journal(void)
+{
+  auto journal_lock = fs_journal->prepare_for_commit();
+  flush_journal_locked();
+}
+
+void
 mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
                                       transaction *tr)
 {

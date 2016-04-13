@@ -145,10 +145,10 @@ void
 sys_sync(void)
 {
   rootfs_interface->process_metadata_log_and_flush();
+  // Add transactions to the journal's transaction log; don't flush them yet.
   rootfs_interface->sync_dirty_files_and_dirs();
-  // This second call to flush is to utilize group commit. See commit ae1629b9
-  // for details.
-  rootfs_interface->process_metadata_log_and_flush();
+  // Flush the journal's transaction log using group commit.
+  rootfs_interface->flush_journal();
 }
 
 
