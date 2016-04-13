@@ -570,8 +570,10 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, transaction *tr,
   auto journal_lock = fs_journal->prepare_for_commit();
   op->apply(tr);
 
-  if (!skip_add)
+  if (!skip_add) {
     fs_journal->enqueue_transaction_locked(tr);
+    release_inodebitmap_locks(tr);
+  }
 
   delete op;
 }
@@ -961,6 +963,7 @@ mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
   fs_journal->enqueue_transaction_locked(tr);
+  release_inodebitmap_locks(tr);
 
   if (flush_journal)
     flush_journal_locked();
@@ -1611,6 +1614,79 @@ mfs_interface::alloc_inodebitmap_locks()
     inodebitmap_locks.push_back(new sleeplock());
 }
 
+// Acquire a set of inode-block or bitmap-block locks in the context of the
+// specified transaction.
+//
+// @num_list: List of inode numbers or list of block numbers.
+//            (They are distinguished by the type parameter).
+// @type: INODE_BLOCK or BITMAP_BLOCK
+//
+// Note: The numbers in num_list must be uniform - either all of them must be
+// inode numbers or all of them must be block numbers.
+//
+// acquire_inodebitmap_locks() internally calculates the inode-blocks and
+// bitmap-blocks corresponding to these numbers and acquires their corresponding
+// locks (with appropriate checks to avoid double-acquires).
+void
+mfs_interface::acquire_inodebitmap_locks(std::vector<u64> &num_list, int type,
+                                         transaction *tr)
+{
+  u32 blocknum = 0;
+  superblock sb;
+  std::vector<u64> block_numbers;
+
+  switch (type) {
+  case INODE_BLOCK:
+    for (auto &n : num_list) {
+      blocknum = IBLOCK(n);
+      for (auto &b : block_numbers) {
+        if (b == blocknum)
+          goto skip_inode; // Already locked
+      }
+      block_numbers.push_back(blocknum);
+     skip_inode:
+      ;
+    }
+
+    break;
+
+  case BITMAP_BLOCK:
+    get_superblock(&sb, false);
+
+    for (auto &n : num_list) {
+      blocknum = BBLOCK(n, sb.ninodes);
+      for (auto &b : block_numbers) {
+        if (b == blocknum)
+          goto skip_bitmap; // Already locked
+      }
+      block_numbers.push_back(blocknum);
+     skip_bitmap:
+      ;
+    }
+
+    break;
+  }
+
+  // Lock ordering rule: Acquire the locks in increasing order of their
+  // block numbers.
+  std::sort(block_numbers.begin(), block_numbers.end());
+  for (auto &blknum : block_numbers) {
+    sleeplock *sl = inodebitmap_locks.at(blknum);
+    sl->acquire();
+    tr->inodebitmap_locks.push_back(sl);
+  }
+}
+
+void
+mfs_interface::release_inodebitmap_locks(transaction *tr)
+{
+  // Lock ordering is irrelevant for release.
+  for (auto &sl : tr->inodebitmap_locks)
+    sl->release();
+
+  tr->inodebitmap_locks.clear();
+}
+
 void
 initfs()
 {
@@ -1654,6 +1730,7 @@ initfs()
 
       free_inode(ip, tr);
       rootfs_interface->fs_journal->enqueue_transaction_locked(tr);
+      rootfs_interface->release_inodebitmap_locks(tr); // This seems unnecessary.
       sb.reclaim_inodes[i] = 0;
     }
 

@@ -26,8 +26,7 @@ typedef struct transaction_diskblock transaction_diskblock;
 // A single disk block that was updated as the result of a transaction. All
 // diskblocks that were written to during the transaction are stored as a linked
 // list in the transaction object.
-struct transaction_diskblock
-{
+struct transaction_diskblock {
   u32 blocknum;           // The disk block number
   char *blockdata;        // Disk block contents
   u64 timestamp;          // Updates within a transaction should be written out
@@ -103,8 +102,7 @@ struct transaction_diskblock
 
 // A transaction represents all related updates that take place as the result of a
 // filesystem operation.
-class transaction
-{
+class transaction {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
@@ -331,6 +329,9 @@ class transaction
     // Block numbers of blocks freed within this transaction. These blocks have
     // not been marked as free on the disk yet.
     std::vector<u32> free_block_list;
+
+    // Set of inode-block and bitmap-block locks that this transaction owns.
+    std::vector<sleeplock*> inodebitmap_locks;
 };
 
 // The "physical" journal is made up of transactions, which in turn are made up of
@@ -538,7 +539,15 @@ class mfs_interface
     void free_block(u32 bno);
     void print_free_blocks(print_stream *s);
 
+    enum {
+      INODE_BLOCK = 1,
+      BITMAP_BLOCK,
+    };
+
     void alloc_inodebitmap_locks();
+    void acquire_inodebitmap_locks(std::vector<u64> &num_list, int type,
+                                   transaction *tr);
+    void release_inodebitmap_locks(transaction *tr);
 
     void preload_oplog();
 
