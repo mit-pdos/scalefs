@@ -619,6 +619,7 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, transaction *tr,
 
   auto journal_lock = fs_journal->prepare_for_commit();
   op->apply(tr);
+  pre_process_transaction(tr);
 
   if (!skip_add) {
     fs_journal->enqueue_transaction_locked(tr);
@@ -994,6 +995,17 @@ mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *t
 void
 mfs_interface::pre_process_transaction(transaction *tr)
 {
+  std::sort(tr->allocated_block_list.begin(), tr->allocated_block_list.end());
+  std::sort(tr->free_block_list.begin(), tr->free_block_list.end());
+
+  std::vector<u64> bnum_list;
+  for (auto &b : tr->allocated_block_list)
+    bnum_list.push_back(b);
+  for (auto &b : tr->free_block_list)
+    bnum_list.push_back(b);
+
+  acquire_inodebitmap_locks(bnum_list, BITMAP_BLOCK, tr);
+
   // Update the free bitmap on the disk.
   if (!tr->allocated_block_list.empty())
     balloc_on_disk(tr->allocated_block_list, tr);
@@ -1026,6 +1038,7 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
   auto journal_lock = fs_journal->prepare_for_commit();
+  pre_process_transaction(tr);
   fs_journal->enqueue_transaction_locked(tr);
   release_inodebitmap_locks(tr);
 
@@ -1067,7 +1080,6 @@ mfs_interface::flush_journal_locked()
        it != fs_journal->transaction_queue.end(); it++) {
 
     timestamp = (*it)->timestamp_;
-    pre_process_transaction(*it);
 
     retry:
 
@@ -1793,6 +1805,7 @@ initfs()
       iunlock(ip);
 
       free_inode(ip, tr);
+      rootfs_interface->pre_process_transaction(tr);
       rootfs_interface->fs_journal->enqueue_transaction_locked(tr);
       rootfs_interface->release_inodebitmap_locks(tr); // This seems unnecessary.
       sb.reclaim_inodes[i] = 0;

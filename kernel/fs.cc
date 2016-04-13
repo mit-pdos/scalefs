@@ -155,13 +155,10 @@ bfree(int dev, u64 x, transaction *trans = NULL, bool delayed_free = false)
 
 // Mark blocks as allocated or freed in the on-disk bitmap.
 // Allocate if @alloc == true, free otherwise.
+// The caller must provide a sorted block list.
 void
 balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 {
-  // Sort the blocks in ascending order, so that we update the bitmap blocks
-  // on the disk one after another, without going back and forth.
-  std::sort(blocks.begin(), blocks.end());
-
   // Aggregate all updates to the same free bitmap block and write it out
   // just once, using a single transaction_diskblock.
   for (auto bno = blocks.begin(); bno != blocks.end(); ) {
