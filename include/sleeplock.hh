@@ -25,6 +25,7 @@ class sleeplock {
 
   void release() {
     scoped_acquire x(&spinlock_);
+    assert(held_);
     held_ = false;
     cv_.wake_all();
   }

@@ -974,14 +974,11 @@ mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
   }
 
   u64 timestamp = tr->timestamp_;
-  transaction *trans;
 
   pre_process_transaction(tr);
-
-  tr->prepare_for_commit();
   tr->deduplicate_blocks();
 
-  trans = new transaction(0);
+  transaction *trans = new transaction(0);
 
   ilock(sv6_journal, WRITELOCK);
   write_journal_trans_prolog(timestamp, trans);
@@ -1039,7 +1036,6 @@ mfs_interface::flush_journal_locked()
     pre_process_transaction(*it);
 
     retry:
-    (*it)->prepare_for_commit();
 
     if (fits_in_journal((*it)->blocks.size())) {
 
@@ -1052,10 +1048,6 @@ mfs_interface::flush_journal_locked()
       // No space left in the journal to accommodate this sub-transaction.
       // So commit and apply all the earlier sub-transactions, to make space
       // for the remaining sub-transactions.
-
-      // Explicitly release this sub-transaction's write_lock. We'll retry this
-      // sub-transaction later.
-      (*it)->finish_after_commit();
 
       prune_trans->deduplicate_blocks();
 

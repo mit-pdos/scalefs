@@ -129,7 +129,6 @@ class transaction
 
     void add_block(std::unique_ptr<transaction_diskblock> b)
     {
-      auto l = write_lock.guard();
       blocks.push_back(std::move(b));
     }
 
@@ -161,7 +160,6 @@ class transaction
         // into the hash table.
         trans_blocks->remove(blocknum);
         {
-          auto l = write_lock.guard();
           memmove(tdp->blockdata, buf, BSIZE);
           tdp->timestamp = new_timestamp;
         }
@@ -207,7 +205,6 @@ class transaction
         // into the hash table.
         trans_blocks->remove(blocknum);
         {
-          auto l = write_lock.guard();
           memmove(tdp->blockdata, b->blockdata, BSIZE);
           tdp->timestamp = new_timestamp;
         }
@@ -232,7 +229,6 @@ class transaction
     // Add multiple disk blocks to a transaction.
     void add_blocks(std::vector<std::unique_ptr<transaction_diskblock> > bvec)
     {
-      auto l = write_lock.guard();
       for (auto &b : bvec)
         blocks.push_back(std::move(b));
     }
@@ -245,22 +241,6 @@ class transaction
     void add_free_block(u32 bno)
     {
       free_block_list.push_back(bno);
-    }
-
-    // Prepare the transaction for two phase commit. The transaction diskblocks
-    // are ordered by timestamp. (This is needed to ensure that multiple changes
-    // to the same block are written to disk in the correct order).
-    void prepare_for_commit()
-    {
-      // All relevant blocks must have been added to the transaction at
-      // this point. A try acquire must succeed.
-      auto l = write_lock.try_guard();
-      assert(static_cast<bool>(l));
-    }
-
-    void finish_after_commit()
-    {
-      write_lock.release();
     }
 
     void deduplicate_blocks()
@@ -344,9 +324,6 @@ class transaction
     // to allocate memory for the hash table on-demand.
     bool htable_initialized;
 
-    // Guards updates to the transaction_diskblock vector.
-    sleeplock write_lock;
-
     // Block numbers of newly allocated blocks within this transaction. These
     // blocks have not been marked as allocated on the disk yet.
     std::vector<u32> allocated_block_list;
@@ -390,7 +367,7 @@ class journal
       // correct linearization of the memfs operations. So the transactions are
       // logged in the correct order.
 
-      return l;
+      return std::move(l);
     }
 
     // comparison function to order journal transactions in timestamp order
