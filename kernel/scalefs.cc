@@ -265,15 +265,28 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
     if (ip->inum == dirent_inum)
       return;
 
+    // FIXME: Restore the call to remove_dir_entry; with that, the buffer-cache
+    // updates will actually start at this point. So fix the lock ordering for
+    // the inode-block locks.
+#if 0
     // The name now refers to a different inode. Unlink the old one to make
     // way for a new directory entry for this mapping.
     remove_dir_entry(mdir_mnum, name, tr);
+#endif
   }
+
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock().
+  std::vector<u64> inum_list;
+  inum_list.push_back(mdir_ip->inum);
+  inum_list.push_back(dirent_inum);
+  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
 
   sref<inode> dirent_ip = iget(1, dirent_inum);
 
   ilock(mdir_ip, WRITELOCK);
   ilock(dirent_ip, WRITELOCK);
+  // Buffer-cache updates start here.
   dirlink(mdir_ip, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
   iunlock(dirent_ip);
   iunlock(mdir_ip);
