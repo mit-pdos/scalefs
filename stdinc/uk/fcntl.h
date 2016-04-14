@@ -13,5 +13,6 @@
 #define O_CLOEXEC 0x2000
 #define O_NONBLOCK 0x4000
 #define O_NDELAY  O_NONBLOCK
+#define O_LARGEFILE 0     // for compatibility with fxmark
 
 #define AT_FDCWD  -100

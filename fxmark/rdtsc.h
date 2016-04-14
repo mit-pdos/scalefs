@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#define barrier() __asm__ __volatile__("": : :"memory")
+#define fxmark_barrier() __asm__ __volatile__("": : :"memory")
 
 static inline uint64_t __attribute__((__always_inline__))
 rdtsc(void)
@@ -19,7 +19,7 @@ rdtsc_beg(void)
     // (The memory clobber on this is actually okay as long as GCC
     // knows that no one ever took the address of things it has in
     // registers.)
-    barrier();
+    fxmark_barrier();
     // See the "Improved Benchmarking Method" in Intel's "How to
     // Benchmark Code Execution Times on Intel® IA-32 and IA-64
     // Instruction Set Architectures"
@@ -36,19 +36,19 @@ rdtsc_beg(void)
                      : : "%rax", "%rbx", "%rcx", "%rdx");
     tsc = ((uint64_t) a) | (((uint64_t) d) << 32);
 #endif
-    barrier();
+    fxmark_barrier();
     return tsc;
 }
 
 static inline uint64_t __attribute__((__always_inline__))
 rdtsc_end(void)
 {
-    barrier();
+    fxmark_barrier();
     uint32_t a, d;
     __asm __volatile("rdtscp; mov %%eax, %0; mov %%edx, %1; cpuid"
                      : "=r" (a), "=r" (d)
                      : : "%rax", "%rbx", "%rcx", "%rdx");
-    barrier();
+    fxmark_barrier();
     return ((uint64_t) a) | (((uint64_t) d) << 32);
 }
 

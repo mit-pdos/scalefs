@@ -1,6 +1,15 @@
 #ifndef __FX_H__
 #define __FX_H__
+#ifdef XV6_USER
+#include "types.h"
+#include "fs.h"
+#include <stdio.h>
+#include <errno.h>
+#define sprintf(buf, args...) snprintf(buf, 4096, args)
+static int errno;   // xv6 has no errno
+#else
 #include <linux/limits.h>
+#endif
 #include "bench.h"
 
 #define FX_OPT_MAX_PRIVATE 4

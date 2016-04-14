@@ -101,20 +101,25 @@ writebuf(int c, void *arg)
   }
 }
 
-void
+int
 vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
 {
+  int r;
   struct bufstate bs = { buf, buf+n-1 };
-  vprintfmt(writebuf, (void*) &bs, fmt, ap);
+  r = vprintfmt(writebuf, (void*) &bs, fmt, ap);
   bs.p[0] = '\0';
+  return r;
 }
 
-void
+u32
 snprintf(char *buf, u32 n, const char *fmt, ...)
 {
   va_list ap;
+  int r;
 
   va_start(ap, fmt);
-  vsnprintf(buf, n, fmt, ap);
+  r = vsnprintf(buf, n, fmt, ap);
   va_end(ap);
+
+  return r;
 }

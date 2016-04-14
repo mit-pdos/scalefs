@@ -2,7 +2,12 @@
 #define __BENCH_H__
 #include <stdint.h>
 #include <stdio.h>
+#ifdef XV6_USER
+#include "types.h"
+#include "fs.h"
+#else
 #include <linux/limits.h>
+#endif
 
 /* architecture dependent configuration */ 
 #define PAGE_SIZE 4096

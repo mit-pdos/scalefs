@@ -1,6 +1,11 @@
 -include $(O)/fxmark/*.d
 
-FXMARK_INCLUDES := -Ifxmark
+FXMARK_CFLAGS   := -Wall -g -O3 -D_GNU_SOURCE
+FXMARK_INCLUDES := -Ifxmark -I$(O)/fxmark
+
+ifeq ($(PLATFORM),xv6)
+FXMARK_CFLAGS   += -DXV6_USER
+endif
 
 FXMARK_SRCFILES := \
 	fxmark/DRBH.c \
@@ -13,11 +18,6 @@ FXMARK_SRCFILES := \
 	fxmark/DWOL.c \
 	fxmark/DWOM.c \
 	fxmark/DWSL.c \
-	fxmark/DWTL.c \
-	fxmark/MRDL.c \
-	fxmark/MRDL_bg.c \
-	fxmark/MRDM.c \
-	fxmark/MRDM_bg.c \
 	fxmark/MRPH.c \
 	fxmark/MRPL.c \
 	fxmark/MRPM.c \
@@ -25,7 +25,6 @@ FXMARK_SRCFILES := \
 	fxmark/MWCL.c \
 	fxmark/MWCM.c \
 	fxmark/MWRL.c \
-	fxmark/MWRM.c \
 	fxmark/MWUL.c \
 	fxmark/MWUM.c \
 	fxmark/bench.c \
@@ -33,7 +32,25 @@ FXMARK_SRCFILES := \
 	fxmark/rdtsc.c \
 	fxmark/util.c
 
+## Some fxmark microbenchmarks don't compile on sv6 due to missing features
+## (like the lack of a truncate syscall)..
+FXMARK_SRCFILES_BROKEN := \
+	fxmark/DWTL.c \
+	fxmark/MRDL.c \
+	fxmark/MRDL_bg.c \
+	fxmark/MRDM.c \
+	fxmark/MRDM_bg.c \
+	fxmark/MWRM.c
+
 FXMARK_OBJFILES := $(patsubst %.c, $(O)/%.o, $(FXMARK_SRCFILES))
+
+$(O)/fxmark/cpupol.h: fxmark/cpuinfo fxmark/cpu-sequences fxmark/gen_corepolicy
+	$(Q)cat fxmark/cpuinfo | ./fxmark/cpu-sequences | ./fxmark/gen_corepolicy c > $@ 2>&1
+
+$(O)/fxmark/%.o: fxmark/%.c $(O)/fxmark/cpupol.h $(O)/sysroot
+	@echo "  CC     $@"
+	$(Q)mkdir -p $(@D)
+	$(Q)$(CC) $(CFLAGS) -c -o $@ $< $(FXMARK_CFLAGS) $(FXMARK_INCLUDES)
 
 $(O)/bin/fxmark.unstripped: $(FXMARK_OBJFILES)
 	@echo "  LD     $@"

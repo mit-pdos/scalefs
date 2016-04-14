@@ -129,6 +129,7 @@ include bin/Makefrag
 include tools/Makefrag
 include tools/zlib-1.2.8/Makefrag
 include metis/Makefrag
+include fxmark/Makefrag
 
 $(O)/%.o: %.c $(O)/sysroot
 	@echo "  CC     $@"
