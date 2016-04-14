@@ -1,0 +1,41 @@
+-include $(O)/fxmark/*.d
+
+FXMARK_INCLUDES := -Ifxmark
+
+FXMARK_SRCFILES := \
+	fxmark/DRBH.c \
+	fxmark/DRBH_bg.c \
+	fxmark/DRBL.c \
+	fxmark/DRBL_bg.c \
+	fxmark/DRBM.c \
+	fxmark/DRBM_bg.c \
+	fxmark/DWAL.c \
+	fxmark/DWOL.c \
+	fxmark/DWOM.c \
+	fxmark/DWSL.c \
+	fxmark/DWTL.c \
+	fxmark/MRDL.c \
+	fxmark/MRDL_bg.c \
+	fxmark/MRDM.c \
+	fxmark/MRDM_bg.c \
+	fxmark/MRPH.c \
+	fxmark/MRPL.c \
+	fxmark/MRPM.c \
+	fxmark/MRPM_bg.c \
+	fxmark/MWCL.c \
+	fxmark/MWCM.c \
+	fxmark/MWRL.c \
+	fxmark/MWRM.c \
+	fxmark/MWUL.c \
+	fxmark/MWUM.c \
+	fxmark/bench.c \
+	fxmark/fxmark.c \
+	fxmark/rdtsc.c \
+	fxmark/util.c
+
+FXMARK_OBJFILES := $(patsubst %.c, $(O)/%.o, $(FXMARK_SRCFILES))
+
+$(O)/bin/fxmark.unstripped: $(FXMARK_OBJFILES)
+	@echo "  LD     $@"
+	$(Q)mkdir -p $(@D)
+	$(Q)$(CXX) $(CXXFLAGS) -o $@ $(ULIB_BEGIN) $^ $(ULIB_END)
