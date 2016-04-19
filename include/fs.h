@@ -92,7 +92,7 @@ struct dinode {
 #define BPB           (BSIZE*8)
 
 // Block containing bit for block b
-#define BBLOCK(b, ninodes) (b/BPB + (ninodes)/IPB + 3)
+#define BBLOCK(b, ninodes) ((b)/BPB + (ninodes)/IPB + 3)
 
 // Number of inodes to create in the filesystem. Consumed by tools/mkfs.c
 // as well as kernel/scalefs.cc (to decide the size of the inum<->mnode
