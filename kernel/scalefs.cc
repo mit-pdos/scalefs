@@ -1520,7 +1520,7 @@ mfs_interface::initialize_freeblock_bitmap()
   get_superblock(&sb, false);
 
   // Allocate the memory for the bit_vector in one shot, instead of doing it
-  // piecemeal using .emplace_back() in a loop.
+  // piecemeal using .push_back() in a loop.
   freeblock_bitmap.bit_vector.reserve(sb.size);
 
   for (b = 0; b < sb.size; b += BPB) {
@@ -1537,16 +1537,40 @@ mfs_interface::initialize_freeblock_bitmap()
       // Maintain a vector as well as a linked-list representation of the
       // free-bits, to speed up freeing and allocation of blocks, respectively.
       free_bit *bit = new free_bit(b + bi, f);
-      freeblock_bitmap.bit_vector.emplace_back(bit);
-
-      if (!f)
-        continue;
-
-      // Add the block to the freelist if it is actually free.
-      auto list_lock = freeblock_bitmap.list_lock.guard();
-      freeblock_bitmap.bit_freelist.push_back(bit);
+      freeblock_bitmap.bit_vector.push_back(bit);
     }
   }
+
+  // Distribute the blocks among the CPUs and add the free blocks to the per-CPU
+  // freelists.
+
+  // TODO: Remove this assert and handle cases where multiple CPUs have to share
+  // the same bitmap blocks.
+  static_assert((NMEGS * BLKS_PER_MEG) / BPB >= NCPU,
+                "No. of bitmap-blocks < NCPU\n");
+
+  u32 nbitblocks = sb.size/BPB;
+  u32 bitblocks_per_cpu = nbitblocks/NCPU;
+  u32 bits_per_cpu = bitblocks_per_cpu * BPB;
+
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
+
+    if (VERBOSE)
+      cprintf("Per-CPU block allocator: CPU %d   blocks [%u - %u]\n",
+              cpu, cpu * bits_per_cpu, ((cpu+1) * bits_per_cpu) - 1);
+
+    for (u32 bno = cpu * bits_per_cpu; bno < (cpu+1) * bits_per_cpu; bno++) {
+      auto bit = freeblock_bitmap.bit_vector.at(bno);
+      bit->cpu = cpu;
+      if (bit->is_free)
+        freeblock_bitmap.freelists[cpu].bit_freelist.push_back(bit);
+    }
+  }
+
+  // TODO: Build a small global reserve pool of free blocks, to be used when a
+  // per-CPU freelist runs out, before stealing free blocks from other CPUs'
+  // freelists.
 }
 
 // Allocate a block from the freeblock_bitmap.
@@ -1555,22 +1579,27 @@ mfs_interface::alloc_block()
 {
   u32 bno;
   superblock sb;
+  int cpu = myid();
 
   // Use the linked-list representation of the free-bits to perform block
   // allocation in O(1) time. This list only contains the blocks that are
   // actually free, so we can allocate any one of them.
 
-  auto list_lock = freeblock_bitmap.list_lock.guard();
+  auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
 
-  if (!freeblock_bitmap.bit_freelist.empty()) {
+  if (!freeblock_bitmap.freelists[cpu].bit_freelist.empty()) {
 
-    auto it = freeblock_bitmap.bit_freelist.begin();
+    auto it = freeblock_bitmap.freelists[cpu].bit_freelist.begin();
     assert(it->is_free);
     it->is_free = false;
     bno = it->bno_;
-    freeblock_bitmap.bit_freelist.erase(it);
+    freeblock_bitmap.freelists[cpu].bit_freelist.erase(it);
     return bno;
   }
+
+  // TODO: Fallback to other CPUs' free blocks if we run out of free blocks
+  // on our CPU.
+  panic("alloc_block(): Out of blocks on CPU %d\n", cpu);
 
   get_superblock(&sb, false);
   return sb.size; // out of blocks
@@ -1584,10 +1613,11 @@ mfs_interface::free_block(u32 bno)
   // O(1) time (by optimizing the blocknumber-to-free_bit lookup).
   free_bit *bit = freeblock_bitmap.bit_vector.at(bno);
 
-  auto list_lock = freeblock_bitmap.list_lock.guard();
+  int cpu = bit->cpu;
+  auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
   assert(!bit->is_free);
   bit->is_free = true;
-  freeblock_bitmap.bit_freelist.push_front(bit);
+  freeblock_bitmap.freelists[cpu].bit_freelist.push_front(bit);
 }
 
 void

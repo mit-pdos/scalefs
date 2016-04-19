@@ -439,6 +439,7 @@ class mfs_interface
     // structs in memory first.
     typedef struct free_bit {
       u32 bno_;
+      int cpu;
       bool is_free;
       ilink<free_bit> link;
 
@@ -468,8 +469,15 @@ class mfs_interface
       // in O(1) time). Items are never removed from the bit_vector so as to
       // enable the O(1) lookups.
       std::vector<free_bit*> bit_vector;
-      ilist<free_bit, &free_bit::link> bit_freelist;
-      spinlock list_lock; // Guards modifications to the bit_freelist
+
+      struct freelist {
+        ilist<free_bit, &free_bit::link> bit_freelist;
+        spinlock list_lock; // Guards modifications to the bit_freelist
+      };
+
+      // We maintain per-CPU freelists for scalability. The bit_vector is
+      // read-only after initialization, so a single one will suffice.
+      percpu<struct freelist> freelists;
     } freeblock_bitmap;
 
     NEW_DELETE_OPS(mfs_interface);
