@@ -265,6 +265,46 @@ protected:
   void onzero() override;
 };
 
+typedef struct free_inum {
+  u32 inum_;
+  int cpu;
+  bool is_free;
+  ilink<free_inum> link;
+
+  free_inum(u32 inum, bool f): inum_(inum), is_free(f) {}
+  NEW_DELETE_OPS(free_inum);
+
+  free_inum& operator=(const free_inum&) = delete;
+  free_inum(const free_inum&) = delete;
+
+  free_inum& operator=(free_inum&&) = default;
+  free_inum(free_inum&&) = default;
+} free_inum;
+
+// The freeinum_bitmap in memory, used to perform inode number allocations
+// for on-disk inodes.
+struct freeinum_bitmap {
+  // We maintain the bitmap as both a vector and a linked-list so that we
+  // can perform both allocations and frees in O(1) time. The inum_vector
+  // contains entries for all inums, whereas the inum_freelist contains
+  // entries only for inums that are actually free. The allocator consumes
+  // items from the inum_freelist in O(1) time; the free code locates the
+  // free_inum data-structure corresponding to the inum being freed in O(1)
+  // time using the inum_vector and inserts it into the inum_freelist (also
+  // in O(1) time). Items are never removed from the inum_vector so as to
+  // enable the O(1) lookups.
+  std::vector<free_inum*> inum_vector;
+
+  struct freelist {
+    ilist<free_inum, &free_inum::link> inum_freelist;
+    spinlock list_lock; // Guards modifications to the inum_freelist.
+  };
+
+  // We maintain per-CPU freelists for scalability. The inum_vector is
+  // read-only after initialization, so a single one will suffice.
+  percpu<struct freelist> freelists;
+  struct freelist reserve_freelist; // Global reserve pool of free inums.
+};
 
 // device implementations
 

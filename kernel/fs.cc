@@ -46,6 +46,8 @@
 // A hash-table to cache in-memory inode data-structures.
 static chainhash<pair<u32, u32>, inode*> *ins;
 
+static struct freeinum_bitmap freeinum_bitmap;
+
 static sref<inode> the_root;
 static struct superblock sb_root;
 
@@ -219,6 +221,83 @@ balloc_free_on_disk(std::vector<u32>& blocks, transaction *trans, bool alloc)
 // inodes). It is the callers' responsibility to lock them before using them.
 // A non-zero ip->ref keeps these unlocked inodes in the cache.
 
+
+// Initialize the freeinum_bitmap from the disk when the system boots.
+static void
+initialize_freeinum_bitmap(void)
+{
+  sref<buf> bp;
+  superblock sb;
+  int ninums;
+
+  get_superblock(&sb, false);
+
+  // Allocate the memory for the inum_vector in one shot, instead of doing it
+  // piecemeal using .push_back() in a loop.
+  freeinum_bitmap.inum_vector.reserve(sb.ninodes);
+
+  for (u32 inum = 0; inum < sb.ninodes; inum += IPB) {
+    bp = buf::get(1, IBLOCK(inum));
+    auto copy = bp->read();
+
+    ninums = std::min((u32)IPB, sb.ninodes - inum);
+
+    for (int i = 0; i < ninums; i++) {
+      const dinode *dip = (const struct dinode*)copy->data + (inum + i)%IPB;
+
+      // Maintain a vector as well as a linked-list representation of the free
+      // inums, to speed up freeing and allocation of blocks, respectively.
+      free_inum *finum = new free_inum(inum + i, !dip->type);
+      freeinum_bitmap.inum_vector.push_back(finum);
+    }
+  }
+
+  // Distribute the inums among the CPUs and add the free inums to the per-CPU
+  // freelists.
+
+  // TODO: Remove this assert and handle cases where multiple CPUs have to share
+  // the same inode blocks.
+  static_assert(NINODES/IPB >= NCPU, "No. of inode blocks < NCPU\n");
+
+  u32 ninodeblocks = sb.ninodes/IPB;
+  u32 inodeblocks_per_cpu = ninodeblocks/NCPU;
+  u32 inums_per_cpu = inodeblocks_per_cpu * IPB;
+
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    auto list_lock = freeinum_bitmap.freelists[cpu].list_lock.guard();
+
+    if (VERBOSE)
+      cprintf("Per-CPU inode allocator: CPU %d   inodes [%u - %u]\n",
+              cpu, cpu * inums_per_cpu, ((cpu+1) * inums_per_cpu) - 1);
+
+    for (u32 inum = cpu * inums_per_cpu; inum < (cpu+1) * inums_per_cpu; inum++) {
+      if (!inum)
+        continue; // inum 0 is not used, so don't add it to any freelist.
+
+      auto finum = freeinum_bitmap.inum_vector.at(inum);
+      finum->cpu = cpu;
+      if (finum->is_free)
+        freeinum_bitmap.freelists[cpu].inum_freelist.push_back(finum);
+    }
+  }
+
+  // Build a global reserve pool of free inums using whatever is remaining,
+  // to be used when a per-CPU freelist runs out, before stealing free inums
+  // from other CPUs' freelists.
+  if (NCPU * inodeblocks_per_cpu < ninodeblocks) {
+    auto list_lock = freeinum_bitmap.reserve_freelist.list_lock.guard();
+    for (u32 inum = NCPU * inums_per_cpu; inum < sb.ninodes; inum++) {
+      if (!inum)
+        continue; // inum 0 is not used, so don't add it to any freelist.
+
+      auto finum = freeinum_bitmap.inum_vector.at(inum);
+      finum->cpu = NCPU; // Invalid CPU number to denote reserve pool.
+      if (finum->is_free)
+        freeinum_bitmap.reserve_freelist.inum_freelist.push_back(finum);
+    }
+  }
+}
+
 void
 initinode(void)
 {
@@ -231,6 +310,8 @@ initinode(void)
   if (!ins->insert(make_pair(the_root->dev, the_root->inum), the_root.get()))
     panic("initinode: Failed to insert the root inode into the cache\n");
   the_root->init();
+
+  initialize_freeinum_bitmap();
 }
 
 // Returns an inode locked for write, on success.
