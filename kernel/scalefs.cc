@@ -328,7 +328,7 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
   if (!target->nlink()) {
     u64 mnum;
     sref<mnode> m = mnode_lookup(target->inum, &mnum);
-    if (m && m->get_consistent() > 1) {
+    if (m && m->get_consistent() > 2) {
       // It looks like userspace still has open file descriptors referring to
       // this mnode, so it is not safe to delete its on-disk inode just yet.
       // So mark it for deletion and postpone it until reboot.
@@ -416,12 +416,18 @@ mfs_interface::process_metadata_log_and_flush()
   // such as create and unlink of the same mnode, and absorb them).
 
   // Invoke process_metadata_log() on every dirty mnode.
-  std::vector<sref<mnode>> mnode_list;
+  std::vector<u64> mnum_list;
   metadata_log_htab->enumerate([&](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
 
     sref<mnode> m = root_fs->mget(mnum);
-    if (m && m->is_dirty())
-      mnode_list.push_back(m);
+    if (m && m->is_dirty()) {
+      // In process_metadata_log(), we make decisions based on the mnode's
+      // refcount (i.e., whether to free the on-disk inode or postpone it until
+      // reboot). So to avoid interference with the refcount, we store the mnode
+      // numbers here, and not references to the mnodes themselves (which would
+      // have bumped up the refcount inadvertently!).
+      mnum_list.push_back(mnum);
+    }
 
       // We call process_metadata_log() outside enumerate() because it does a
       // lookup on metadata_log_htab itself, which causes weird interactions.
@@ -429,8 +435,9 @@ mfs_interface::process_metadata_log_and_flush()
     return false;
   });
 
-  for (auto &m : mnode_list) {
-    if (m->is_dirty())
+  for (auto &mnum : mnum_list) {
+    sref<mnode> m = root_fs->mget(mnum);
+    if (m && m->is_dirty())
       process_metadata_log(get_tsc(), m->mnum_, m->type() == mnode::types::dir);
   }
 
@@ -719,6 +726,10 @@ mfs_interface::process_ops_from_oplog(
           // Already processed.
           dirunlink_stack.pop_back();
           unlink_mnum_list.push_back(mnum);
+          // Mark the directory as clean now that it has been flushed.
+          sref<mnode> m = root_fs->mget(mnum);
+          if (m && m->is_dirty())
+            m->dirty(false);
           add_op_to_transaction_queue(*it);
           it = mfs_log->operation_vec.erase(it);
           continue;
