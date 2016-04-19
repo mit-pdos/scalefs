@@ -1664,7 +1664,11 @@ mfs_interface::free_block(u32 bno)
 void
 mfs_interface::print_free_blocks(print_stream *s)
 {
-  u32 count = 0;
+  percpu<u32> count;
+  u32 total_count = 0, reserve_pool_count = 0;
+
+  for (int cpu = 0; cpu < NCPU; cpu++)
+    count[cpu] = 0;
 
   // Traversing the bit_freelist would be faster because they contain only blocks
   // that are actually free. However, to do that we would have to acquire the
@@ -1675,13 +1679,24 @@ mfs_interface::print_free_blocks(print_stream *s)
     if (b->is_free) {
       // No need to re-confirm that it is free with the lock held, since this
       // count is approximate (like a snapshot) anyway.
-      count++;
+      if (b->cpu < NCPU)
+        count[b->cpu]++;
+      else
+        reserve_pool_count++;
+      total_count++;
     }
   }
 
   s->println();
-  s->print("Num free blocks: ", count);
+  s->print("Total num free blocks: ", total_count);
   s->print(" / ", freeblock_bitmap.bit_vector.size());
+  s->println();
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    s->print("Num free blocks (CPU ", cpu, "): ", count[cpu]);
+    s->println();
+  }
+  s->println();
+  s->print("Num free blocks (Reserve Pool): ", reserve_pool_count);
   s->println();
 }
 
