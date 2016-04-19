@@ -440,7 +440,6 @@ class mfs_interface
     typedef struct free_bit {
       u32 bno_;
       bool is_free;
-      sleeplock write_lock;
       ilink<free_bit> link;
 
       free_bit(u32 bno, bool f): bno_(bno), is_free(f) {}

@@ -1565,13 +1565,10 @@ mfs_interface::alloc_block()
   if (!free_bit_freelist.empty()) {
 
     auto it = free_bit_freelist.begin();
-    auto lock = it->write_lock.guard();
-
-    assert(it->is_free == true);
+    assert(it->is_free);
     it->is_free = false;
     bno = it->bno_;
     free_bit_freelist.erase(it);
-
     return bno;
   }
 
@@ -1587,19 +1584,10 @@ mfs_interface::free_block(u32 bno)
   // O(1) time (by optimizing the blocknumber-to-free_bit lookup).
   free_bit *bit = free_bit_vector.at(bno);
 
-  if (bit->is_free)
-    panic("freeing free block %u\n", bno);
-
-  {
-    auto lock = bit->write_lock.guard();
-    bit->is_free = true;
-  }
-
-  // Drop the write_lock before taking the freelist_lock, to avoid a
-  // potential ABBA deadlock with alloc_block().
-
   // Add it to the free_bit_freelist.
   auto list_lock = freelist_lock.guard();
+  assert(!bit->is_free);
+  bit->is_free = true;
   free_bit_freelist.push_front(bit);
 }
 
