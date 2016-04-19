@@ -298,6 +298,82 @@ initialize_freeinum_bitmap(void)
   }
 }
 
+// Allocate an inode number from the freeinum_bitmap.
+static u32
+alloc_inode_number(void)
+{
+  u32 inum;
+  int cpu = myid();
+  static bool warned_once = false;
+
+  // Use the linked-list representation of the free-inums to perform inum
+  // allocation in O(1) time. This list only contains the inums that are
+  // actually free, so we can allocate any one of them.
+
+  {
+    auto list_lock = freeinum_bitmap.freelists[cpu].list_lock.guard();
+
+    if (!freeinum_bitmap.freelists[cpu].inum_freelist.empty()) {
+      auto it = freeinum_bitmap.freelists[cpu].inum_freelist.begin();
+      assert(it->is_free);
+      it->is_free = false;
+      inum = it->inum_;
+      freeinum_bitmap.freelists[cpu].inum_freelist.erase(it);
+      return inum;
+    }
+  }
+
+  // If we run out of inums in our local CPU's freelist, tap into the global
+  // reserve pool first.
+  if (VERBOSE && !warned_once) {
+    cprintf("WARNING: alloc_inum(): CPU %d allocating inums from the global "
+            "reserve pool.\nThis could be a sign that inums are getting "
+            "leaked!\n", cpu);
+    warned_once = true;
+  }
+
+  {
+    auto list_lock = freeinum_bitmap.reserve_freelist.list_lock.guard();
+
+    if (!freeinum_bitmap.reserve_freelist.inum_freelist.empty()) {
+      auto it = freeinum_bitmap.reserve_freelist.inum_freelist.begin();
+      assert(it->is_free);
+      it->is_free = false;
+      inum = it->inum_;
+      freeinum_bitmap.reserve_freelist.inum_freelist.erase(it);
+      return inum;
+    }
+  }
+
+  // TODO: We failed to allocate even from the reserve pool. So steal
+  // free inums from other CPUs.
+  panic("alloc_inum(): Out of inums on CPU %d\n", cpu);
+  return 0; // out of inode numbers
+}
+
+// Mark an inode number as free in the freeinum_bitmap.
+static void
+free_inode_number(u32 inum)
+{
+  // Use the vector representation of the free-inums to free the inum in
+  // O(1) time (by optimizing the blocknumber-to-free_inum lookup).
+  free_inum *finum = freeinum_bitmap.inum_vector.at(inum);
+
+  int cpu = finum->cpu;
+  if (cpu < NCPU) {
+    auto list_lock = freeinum_bitmap.freelists[cpu].list_lock.guard();
+    assert(!finum->is_free);
+    finum->is_free = true;
+    freeinum_bitmap.freelists[cpu].inum_freelist.push_front(finum);
+  } else {
+    // This inum belongs to the global reserve pool.
+    auto list_lock = freeinum_bitmap.reserve_freelist.list_lock.guard();
+    assert(!finum->is_free);
+    finum->is_free = true;
+    freeinum_bitmap.reserve_freelist.inum_freelist.push_front(finum);
+  }
+}
+
 void
 initinode(void)
 {
@@ -329,10 +405,6 @@ try_ialloc(u32 inum, u32 dev, short type)
   return ip;
 }
 
-// Note down the last inode allocated by each CPU, so that we can try to
-// allocate the subsequent inode number next.
-DEFINE_PERCPU(int, last_inode);
-
 // Allocate a new inode with the given type on device dev.
 // Returns an inode locked for write, on success.
 sref<inode>
@@ -341,45 +413,11 @@ ialloc(u32 dev, short type)
   scoped_gc_epoch e;
   sref<inode> ip;
 
-#if 0
-  // TODO: Partitioning inodes by CPU number this way is great for scalability,
-  // but it doesn't do a good job of handling situations that need a single CPU
-  // to allocate a large number of inodes, well beyond IPB (especially when the
-  // total number of inodes is limited). Fix that, and also use the last_inode[]
-  // scheme.
-  for (int k = myid()*IPB; k < sb_root.ninodes; k += (NCPU*IPB)) {
-    for (inum = k; inum < k+IPB && inum < sb_root.ninodes; inum++) {
-      if (inum == 0)
-        continue;
-      ip = try_ialloc(inum, dev, type);
-      if (ip) {
-        last_inode[myid()] = inum;
-        return ip;
-      }
-    }
-  }
-#endif
-
-  // search through all inodes
-
-  bool all_scanned = false;
-  for (int inum = (last_inode[myid()] + 1) % sb_root.ninodes;
-       inum < sb_root.ninodes; inum++) {
-
-    if (inum == 0)
-      continue;
-
+  u32 inum = alloc_inode_number();
+  if (inum) {
     ip = try_ialloc(inum, dev, type);
-    if (ip) {
-      last_inode[myid()] = inum;
+    if (ip)
       return ip;
-    }
-
-    if (inum == sb_root.ninodes - 1 && !all_scanned) {
-      inum = 0;
-      all_scanned = true;
-      continue;
-    }
   }
 
   cprintf("ialloc: 0/%u inodes\n", sb_root.ninodes);
