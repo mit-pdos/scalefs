@@ -452,6 +452,26 @@ class mfs_interface
       free_bit(free_bit&&) = default;
     } free_bit;
 
+    // The free block bitmap in memory. All block allocations (in transactions)
+    // are performed using this in-memory data-structure. Blocks freed by a
+    // transaction are freed in this bitmap *after* the transaction commits.
+    // This helps us guarantee that the blocks freed by a transaction are not
+    // reused until it successfully commits to disk.
+    struct freeblock_bitmap {
+      // We maintain the bitmap as both a vector and a linked-list so that we
+      // can perform both allocations and frees in O(1) time. The bit_vector
+      // contains entries for all blocks, whereas the bit_freelist contains
+      // entries only for blocks that are actually free. The allocator consumes
+      // items from the bit_freelist in O(1) time; the free code locates the
+      // free_bit data-structure corresponding to the block being freed in O(1)
+      // time using the bit_vector and inserts it into the bit_freelist (also
+      // in O(1) time). Items are never removed from the bit_vector so as to
+      // enable the O(1) lookups.
+      std::vector<free_bit*> bit_vector;
+      ilist<free_bit, &free_bit::link> bit_freelist;
+      spinlock list_lock; // Guards modifications to the bit_freelist
+    } freeblock_bitmap;
+
     NEW_DELETE_OPS(mfs_interface);
     mfs_interface();
 
@@ -533,8 +553,8 @@ class mfs_interface
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
     void defer_inode_reclaim(u32 inum);
 
-    // Block free bit vector functions
-    void initialize_free_bit_vector();
+    // Block allocator functionality
+    void initialize_freeblock_bitmap();
     u32  alloc_block();
     void free_block(u32 bno);
     void print_free_blocks(print_stream *s);
@@ -585,16 +605,6 @@ class mfs_interface
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
     sref<inode> sv6_journal;
-
-    // The free block bitmap in memory. Transactions marking a block free or not
-    // free on the bitmap on disk make the corresponding changes in this vector
-    // first. (Essential for reverting changes in case an fsync(file) fails.)
-    std::vector<free_bit*> free_bit_vector;
-
-    // A linked-list of bits (in the free_bit_vector) that are actually free.
-    // Used to speed up block allocation and make it O(1).
-    ilist<free_bit, &free_bit::link> free_bit_freelist;
-    sleeplock freelist_lock; // Synchronizes access to free_bit_freelist.
 
     sleeplock inode_reclaim_lock;
 

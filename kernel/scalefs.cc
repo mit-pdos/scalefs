@@ -1508,9 +1508,9 @@ mfs_interface::load_root()
   return m;
 }
 
-// Initialize the free bit vector from the disk when the system boots.
+// Initialize the freeblock_bitmap from the disk when the system boots.
 void
-mfs_interface::initialize_free_bit_vector()
+mfs_interface::initialize_freeblock_bitmap()
 {
   sref<buf> bp;
   int b, bi, nbits;
@@ -1519,9 +1519,9 @@ mfs_interface::initialize_free_bit_vector()
 
   get_superblock(&sb, false);
 
-  // Allocate the memory for free_bit_vector in one shot, instead of doing it
+  // Allocate the memory for the bit_vector in one shot, instead of doing it
   // piecemeal using .emplace_back() in a loop.
-  free_bit_vector.reserve(sb.size);
+  freeblock_bitmap.bit_vector.reserve(sb.size);
 
   for (b = 0; b < sb.size; b += BPB) {
     blocknum = BBLOCK(b, sb.ninodes);
@@ -1537,19 +1537,19 @@ mfs_interface::initialize_free_bit_vector()
       // Maintain a vector as well as a linked-list representation of the
       // free-bits, to speed up freeing and allocation of blocks, respectively.
       free_bit *bit = new free_bit(b + bi, f);
-      free_bit_vector.emplace_back(bit);
+      freeblock_bitmap.bit_vector.emplace_back(bit);
 
       if (!f)
         continue;
 
       // Add the block to the freelist if it is actually free.
-      auto list_lock = freelist_lock.guard();
-      free_bit_freelist.push_back(bit);
+      auto list_lock = freeblock_bitmap.list_lock.guard();
+      freeblock_bitmap.bit_freelist.push_back(bit);
     }
   }
 }
 
-// Return the block number of a free block in the free_bit_vector.
+// Allocate a block from the freeblock_bitmap.
 u32
 mfs_interface::alloc_block()
 {
@@ -1560,15 +1560,15 @@ mfs_interface::alloc_block()
   // allocation in O(1) time. This list only contains the blocks that are
   // actually free, so we can allocate any one of them.
 
-  auto list_lock = freelist_lock.guard();
+  auto list_lock = freeblock_bitmap.list_lock.guard();
 
-  if (!free_bit_freelist.empty()) {
+  if (!freeblock_bitmap.bit_freelist.empty()) {
 
-    auto it = free_bit_freelist.begin();
+    auto it = freeblock_bitmap.bit_freelist.begin();
     assert(it->is_free);
     it->is_free = false;
     bno = it->bno_;
-    free_bit_freelist.erase(it);
+    freeblock_bitmap.bit_freelist.erase(it);
     return bno;
   }
 
@@ -1576,19 +1576,18 @@ mfs_interface::alloc_block()
   return sb.size; // out of blocks
 }
 
-// Mark a block as free in the free_bit_vector.
+// Mark a block as free in the freeblock_bitmap.
 void
 mfs_interface::free_block(u32 bno)
 {
   // Use the vector representation of the free-bits to free the block in
   // O(1) time (by optimizing the blocknumber-to-free_bit lookup).
-  free_bit *bit = free_bit_vector.at(bno);
+  free_bit *bit = freeblock_bitmap.bit_vector.at(bno);
 
-  // Add it to the free_bit_freelist.
-  auto list_lock = freelist_lock.guard();
+  auto list_lock = freeblock_bitmap.list_lock.guard();
   assert(!bit->is_free);
   bit->is_free = true;
-  free_bit_freelist.push_front(bit);
+  freeblock_bitmap.bit_freelist.push_front(bit);
 }
 
 void
@@ -1596,14 +1595,13 @@ mfs_interface::print_free_blocks(print_stream *s)
 {
   u32 count = 0;
 
-  // Traversing the free_bit_freelist would be faster because they contain
-  // only blocks that are actually free. However, to do that we would have
-  // to acquire the freelist_lock, which would prevent concurrent allocations.
-  // Hence go through the free_bit_vector instead.
-  for (auto it = free_bit_vector.begin(); it != free_bit_vector.end();
-       it++) {
+  // Traversing the bit_freelist would be faster because they contain only blocks
+  // that are actually free. However, to do that we would have to acquire the
+  // list_lock, which would prevent concurrent allocations and frees. So go through
+  // the bit_vector instead.
 
-    if ((*it)->is_free) {
+  for (auto &b : freeblock_bitmap.bit_vector) {
+    if (b->is_free) {
       // No need to re-confirm that it is free with the lock held, since this
       // count is approximate (like a snapshot) anyway.
       count++;
@@ -1612,7 +1610,7 @@ mfs_interface::print_free_blocks(print_stream *s)
 
   s->println();
   s->print("Num free blocks: ", count);
-  s->print(" / ", free_bit_vector.size());
+  s->print(" / ", freeblock_bitmap.bit_vector.size());
   s->println();
 }
 
@@ -1772,7 +1770,7 @@ initfs()
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
   // bitmap blocks too!
-  rootfs_interface->initialize_free_bit_vector();
+  rootfs_interface->initialize_freeblock_bitmap();
 
   // If a file or directory is unlinked but userspace still holds open file
   // descriptors to it at the time of fsync, its inode cannot be deleted from
