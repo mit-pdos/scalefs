@@ -241,6 +241,11 @@ class transaction {
       free_block_list.push_back(bno);
     }
 
+    void add_free_inum(u32 inum)
+    {
+      free_inum_list.push_back(inum);
+    }
+
     void deduplicate_blocks()
     {
       // Sort the diskblocks in increasing timestamp order.
@@ -329,6 +334,10 @@ class transaction {
     // Block numbers of blocks freed within this transaction. These blocks have
     // not been marked as free on the disk yet.
     std::vector<u32> free_block_list;
+
+    // Inode numbers of inodes freed by this transaction. They will be made
+    // available for reuse only after this transaction commits successfully.
+    std::vector<u32> free_inum_list;
 
     // Set of inode-block and bitmap-block locks that this transaction owns.
     std::vector<sleeplock*> inodebitmap_locks;

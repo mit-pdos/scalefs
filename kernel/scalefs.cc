@@ -1021,9 +1021,12 @@ mfs_interface::post_process_transaction(transaction *tr)
 {
   // Now that the transaction has been committed, mark the freed blocks as
   // free in the in-memory free-bit-vector.
-  for (auto f = tr->free_block_list.begin();
-       f != tr->free_block_list.end(); f++)
-    free_block(*f);
+  for (auto &f : tr->free_block_list)
+    free_block(f);
+
+  // Make the freed inode numbers available again for reuse.
+  for (auto &inum : tr->free_inum_list)
+    free_inode_number(inum);
 }
 
 void

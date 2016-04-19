@@ -101,6 +101,7 @@ int             load_image(proc *p, const char *path, const char * const *argv,
 // fs.c
 sref<inode>     dirlookup(sref<inode>, char*);
 sref<inode>     ialloc(u32, short);
+void            free_inode_number(u32 inum);
 void            free_inode(sref<inode>, transaction *trans = NULL);
 sref<inode>     namei(sref<inode> cwd, const char*);
 sref<inode>     iget(u32 dev, u32 inum);

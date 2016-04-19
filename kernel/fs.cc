@@ -352,7 +352,7 @@ alloc_inode_number(void)
 }
 
 // Mark an inode number as free in the freeinum_bitmap.
-static void
+void
 free_inode_number(u32 inum)
 {
   // Use the vector representation of the free-inums to free the inum in
@@ -429,6 +429,8 @@ free_inode(sref<inode> ip, transaction *tr)
 {
   ilock(ip, WRITELOCK);
   assert(ip->nlink() == 0);
+  // Postpone reusing this inode number until transaction commit.
+  tr->add_free_inum(ip->inum);
   // Release the inode on the disk.
   ip->type = 0;
   iupdate(ip, tr);
