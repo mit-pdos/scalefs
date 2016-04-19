@@ -13,7 +13,7 @@
 #define BSIZE 4096  // block size
 // total number of disk blocks in fs.img, see tools/mkfs.c
 #define BLKS_PER_MEG 256
-#define NMEGS 4096 // 4 GB
+#define NMEGS 16384 // 16 GB
 
 
 // File system super block
