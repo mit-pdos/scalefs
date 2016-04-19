@@ -1568,9 +1568,18 @@ mfs_interface::initialize_freeblock_bitmap()
     }
   }
 
-  // TODO: Build a small global reserve pool of free blocks, to be used when a
-  // per-CPU freelist runs out, before stealing free blocks from other CPUs'
-  // freelists.
+  // Build a global reserve pool of free blocks using whatever is remaining,
+  // to be used when a per-CPU freelist runs out, before stealing free blocks
+  // from other CPUs' freelists.
+  if (NCPU * bitblocks_per_cpu < nbitblocks) {
+    auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
+    for (u32 bno = NCPU * bits_per_cpu; bno < sb.size; bno++) {
+      auto bit = freeblock_bitmap.bit_vector.at(bno);
+      bit->cpu = NCPU; // Invalid CPU number to denote reserve pool.
+      if (bit->is_free)
+        freeblock_bitmap.reserve_freelist.bit_freelist.push_back(bit);
+    }
+  }
 }
 
 // Allocate a block from the freeblock_bitmap.
@@ -1580,25 +1589,49 @@ mfs_interface::alloc_block()
   u32 bno;
   superblock sb;
   int cpu = myid();
+  static bool warned_once = false;
 
   // Use the linked-list representation of the free-bits to perform block
   // allocation in O(1) time. This list only contains the blocks that are
   // actually free, so we can allocate any one of them.
 
-  auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
+  {
+    auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
 
-  if (!freeblock_bitmap.freelists[cpu].bit_freelist.empty()) {
-
-    auto it = freeblock_bitmap.freelists[cpu].bit_freelist.begin();
-    assert(it->is_free);
-    it->is_free = false;
-    bno = it->bno_;
-    freeblock_bitmap.freelists[cpu].bit_freelist.erase(it);
-    return bno;
+    if (!freeblock_bitmap.freelists[cpu].bit_freelist.empty()) {
+      auto it = freeblock_bitmap.freelists[cpu].bit_freelist.begin();
+      assert(it->is_free);
+      it->is_free = false;
+      bno = it->bno_;
+      freeblock_bitmap.freelists[cpu].bit_freelist.erase(it);
+      return bno;
+    }
   }
 
-  // TODO: Fallback to other CPUs' free blocks if we run out of free blocks
-  // on our CPU.
+  // If we run out of blocks in our local CPU's freelist, tap into the global
+  // reserve pool first.
+  if (VERBOSE && !warned_once) {
+    cprintf("WARNING: alloc_block(): CPU %d allocating blocks from the global "
+             "reserve pool.\nThis could be a sign that blocks are getting "
+             "leaked!\n", cpu);
+    warned_once = true;
+  }
+
+  {
+    auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
+
+    if (!freeblock_bitmap.reserve_freelist.bit_freelist.empty()) {
+      auto it = freeblock_bitmap.reserve_freelist.bit_freelist.begin();
+      assert(it->is_free);
+      it->is_free = false;
+      bno = it->bno_;
+      freeblock_bitmap.reserve_freelist.bit_freelist.erase(it);
+      return bno;
+    }
+  }
+
+  // TODO: We failed to allocate even from the reserve pool. So steal
+  // free blocks from other CPUs.
   panic("alloc_block(): Out of blocks on CPU %d\n", cpu);
 
   get_superblock(&sb, false);
@@ -1614,10 +1647,18 @@ mfs_interface::free_block(u32 bno)
   free_bit *bit = freeblock_bitmap.bit_vector.at(bno);
 
   int cpu = bit->cpu;
-  auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
-  assert(!bit->is_free);
-  bit->is_free = true;
-  freeblock_bitmap.freelists[cpu].bit_freelist.push_front(bit);
+  if (cpu < NCPU) {
+    auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
+    assert(!bit->is_free);
+    bit->is_free = true;
+    freeblock_bitmap.freelists[cpu].bit_freelist.push_front(bit);
+  } else {
+    // This block belongs to the global reserve pool.
+    auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
+    assert(!bit->is_free);
+    bit->is_free = true;
+    freeblock_bitmap.reserve_freelist.bit_freelist.push_front(bit);
+  }
 }
 
 void

@@ -478,6 +478,7 @@ class mfs_interface
       // We maintain per-CPU freelists for scalability. The bit_vector is
       // read-only after initialization, so a single one will suffice.
       percpu<struct freelist> freelists;
+      struct freelist reserve_freelist; // Global reserve pool of free blocks.
     } freeblock_bitmap;
 
     NEW_DELETE_OPS(mfs_interface);
