@@ -104,14 +104,15 @@ writebuf(int c, void *arg)
 int
 vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
 {
-  int r;
+  // FIXME: Get the correct return value from vprintfmt.
+  int r = n;
   struct bufstate bs = { buf, buf+n-1 };
-  r = vprintfmt(writebuf, (void*) &bs, fmt, ap);
+  vprintfmt(writebuf, (void*) &bs, fmt, ap);
   bs.p[0] = '\0';
   return r;
 }
 
-u32
+int
 snprintf(char *buf, u32 n, const char *fmt, ...)
 {
   va_list ap;
