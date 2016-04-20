@@ -345,8 +345,25 @@ alloc_inode_number(void)
     }
   }
 
-  // TODO: We failed to allocate even from the reserve pool. So steal
-  // free inums from other CPUs.
+  // We failed to allocate even from the reserve pool. So steal free inums
+  // from other CPUs. Each CPU starts its fallback-search at a different
+  // point, in order to avoid hotspots. Note that these inums are only
+  // borrowed temporarily and are prompty returned to the original CPU's
+  // freelists upon being freed.
+  for (int fallback_cpu = cpu + 1; fallback_cpu % NCPU != cpu; fallback_cpu++) {
+    int fcpu = fallback_cpu % NCPU;
+    auto list_lock = freeinum_bitmap.freelists[fcpu].list_lock.guard();
+
+    if (!freeinum_bitmap.freelists[fcpu].inum_freelist.empty()) {
+      auto it = freeinum_bitmap.freelists[fcpu].inum_freelist.begin();
+      assert(it->is_free);
+      it->is_free = false;
+      inum = it->inum_;
+      freeinum_bitmap.freelists[fcpu].inum_freelist.erase(it);
+      return inum;
+    }
+  }
+
   panic("alloc_inum(): Out of inums on CPU %d\n", cpu);
   return 0; // out of inode numbers
 }
