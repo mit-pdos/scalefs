@@ -1644,8 +1644,25 @@ mfs_interface::alloc_block()
     }
   }
 
-  // TODO: We failed to allocate even from the reserve pool. So steal
-  // free blocks from other CPUs.
+  // We failed to allocate even from the reserve pool. So steal free blocks
+  // from other CPUs. Each CPU starts its fallback-search at a different
+  // point, in order to avoid hotspots. Note that these blocks are only
+  // borrowed temporarily and are prompty returned to the original CPU's
+  // freelists upon being freed.
+  for (int fallback_cpu = cpu + 1; fallback_cpu % NCPU != cpu; fallback_cpu++) {
+    int fcpu = fallback_cpu % NCPU;
+    auto list_lock = freeblock_bitmap.freelists[fcpu].list_lock.guard();
+
+    if (!freeblock_bitmap.freelists[fcpu].bit_freelist.empty()) {
+      auto it = freeblock_bitmap.freelists[fcpu].bit_freelist.begin();
+      assert(it->is_free);
+      it->is_free = false;
+      bno = it->bno_;
+      freeblock_bitmap.freelists[fcpu].bit_freelist.erase(it);
+      return bno;
+    }
+  }
+
   panic("alloc_block(): Out of blocks on CPU %d\n", cpu);
 
   get_superblock(&sb, false);
