@@ -1124,7 +1124,7 @@ mfs_interface::flush_journal_locked(int cpu)
 
   {
     auto it = fs_journal[cpu]->transaction_queue.begin();
-    prolog_timestamp = (*it)->timestamp_;
+    prolog_timestamp = (*it)->enq_tsc;
 
     ilock(sv6_journal[cpu], WRITELOCK);
     write_journal_trans_prolog(prolog_timestamp, trans, cpu);
@@ -1133,11 +1133,18 @@ mfs_interface::flush_journal_locked(int cpu)
   for (auto it = fs_journal[cpu]->transaction_queue.begin();
        it != fs_journal[cpu]->transaction_queue.end(); it++) {
 
-    timestamp = (*it)->timestamp_;
+    timestamp = (*it)->enq_tsc;
 
     retry:
 
-    if (fits_in_journal((*it)->blocks.size(), cpu)) {
+    // To avoid deadlocks, we allow only the head transaction in any batch to
+    // have cross-queue (i.e., cross-journal) dependencies. If we encounter a
+    // later transaction with a cross-queue dependency, we close the batching
+    // window first, flush the existing batch of transactions and then create
+    // a new batch for the other transaction and its successors. See the
+    // commit's changelog for details about deadlocks.
+    if (((*it)->dependent_txq.empty() || processed_trans_vec.empty())
+        && fits_in_journal((*it)->blocks.size(), cpu)) {
 
       prune_trans->add_blocks(std::move((*it)->blocks));
 
