@@ -11,7 +11,9 @@
 
 mfs_interface::mfs_interface()
 {
-  fs_journal = new journal();
+  for (int cpu = 0; cpu < NCPU; cpu++)
+    fs_journal[cpu] = new journal();
+
   inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
@@ -628,7 +630,7 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, int cpu,
   pre_process_transaction(tr);
 
   if (!skip_add) {
-    fs_journal->enqueue_transaction(tr);
+    fs_journal[cpu]->enqueue_transaction(tr);
     release_inodebitmap_locks(tr);
   }
 
@@ -1050,7 +1052,7 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_jrnl, int cpu)
 {
   pre_process_transaction(tr);
-  fs_journal->enqueue_transaction(tr);
+  fs_journal[cpu]->enqueue_transaction(tr);
   release_inodebitmap_locks(tr);
 
   if (flush_jrnl)
@@ -1069,7 +1071,7 @@ mfs_interface::flush_journal_locked(int cpu)
   // (post-processed).
   std::vector<transaction*> processed_trans_vec;
 
-  if (fs_journal->transaction_queue.empty())
+  if (fs_journal[cpu]->transaction_queue.empty())
     return; // Nothing to do.
 
   trans = new transaction(0);
@@ -1080,15 +1082,15 @@ mfs_interface::flush_journal_locked(int cpu)
   prune_trans = new transaction(0);
 
   {
-    auto it = fs_journal->transaction_queue.begin();
+    auto it = fs_journal[cpu]->transaction_queue.begin();
     prolog_timestamp = (*it)->timestamp_;
 
     ilock(sv6_journal, WRITELOCK);
     write_journal_trans_prolog(prolog_timestamp, trans, cpu);
   }
 
-  for (auto it = fs_journal->transaction_queue.begin();
-       it != fs_journal->transaction_queue.end(); it++) {
+  for (auto it = fs_journal[cpu]->transaction_queue.begin();
+       it != fs_journal[cpu]->transaction_queue.end(); it++) {
 
     timestamp = (*it)->timestamp_;
 
@@ -1179,19 +1181,19 @@ mfs_interface::flush_journal_locked(int cpu)
 
   delete prune_trans;
 
-  for (auto it = fs_journal->transaction_queue.begin();
-       it != fs_journal->transaction_queue.end(); it++) {
+  for (auto it = fs_journal[cpu]->transaction_queue.begin();
+       it != fs_journal[cpu]->transaction_queue.end(); it++) {
 
     delete (*it);
   }
 
-  fs_journal->transaction_queue.clear();
+  fs_journal[cpu]->transaction_queue.clear();
 }
 
 void
 mfs_interface::flush_journal(int cpu)
 {
-  auto journal_lock = fs_journal->lock.guard();
+  auto journal_lock = fs_journal[cpu]->lock.guard();
   flush_journal_locked(cpu);
 }
 
@@ -1201,7 +1203,7 @@ mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
 {
   size_t data_size = BSIZE;
   size_t hdr_size = sizeof(journal_block_header);
-  u32 offset = fs_journal->current_offset();
+  u32 offset = fs_journal[cpu]->current_offset();
 
   if (writei(sv6_journal, header, offset, hdr_size, tr) != hdr_size)
     panic("Journal write (header block) failed\n");
@@ -1213,7 +1215,7 @@ mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
 
   offset += data_size;
 
-  fs_journal->update_offset(offset);
+  fs_journal[cpu]->update_offset(offset);
 }
 
 void
@@ -1253,7 +1255,7 @@ mfs_interface::fits_in_journal(size_t num_trans_blocks, int cpu)
 
   u64 trans_size;
   size_t hdr_size = sizeof(journal_block_header);
-  u32 offset = fs_journal->current_offset();
+  u32 offset = fs_journal[cpu]->current_offset();
 
   // The start block for this transaction has already been written to the
   // journal. So we now need space to write num_trans_blocks disk blocks
@@ -1423,7 +1425,7 @@ mfs_interface::reset_journal(int cpu)
   tr->write_to_disk_raw();
   delete tr;
 
-  fs_journal->update_offset(0);
+  fs_journal[cpu]->update_offset(0);
 }
 
 sref<mnode>
@@ -1911,7 +1913,7 @@ initfs()
 
       free_inode(ip, tr);
       rootfs_interface->pre_process_transaction(tr);
-      rootfs_interface->fs_journal->enqueue_transaction(tr);
+      rootfs_interface->fs_journal[cpu]->enqueue_transaction(tr);
       rootfs_interface->release_inodebitmap_locks(tr); // This seems unnecessary.
       sb.reclaim_inodes[i] = 0;
     }

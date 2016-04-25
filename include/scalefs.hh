@@ -611,7 +611,7 @@ class mfs_interface
     linearhash<u64, mfs_op_idx> *prune_trans_log;
 
   public:
-    journal *fs_journal;            // The physical journal
+    percpu<journal*> fs_journal;
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
     sref<inode> sv6_journal;
