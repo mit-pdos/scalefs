@@ -357,21 +357,10 @@ class journal {
     }
 
     // Add a new transaction to the journal's transaction queue.
-    void enqueue_transaction_locked(transaction *tr)
+    void enqueue_transaction(transaction *tr)
     {
+      auto l = lock.guard();
       transaction_queue.push_back(tr);
-    }
-
-    lock_guard<sleeplock> prepare_for_commit()
-    {
-      auto l = write_lock.guard();
-
-      // The transactions are present in the transaction log in the order in
-      // which the metadata operations were applied. This corresponds to the
-      // correct linearization of the memfs operations. So the transactions are
-      // logged in the correct order.
-
-      return std::move(l);
     }
 
     // comparison function to order journal transactions in timestamp order
@@ -385,7 +374,7 @@ class journal {
 
   private:
     std::vector<transaction*> transaction_queue;
-    sleeplock write_lock; // Guards updates to the transaction queue
+    sleeplock lock; // Guards updates to the transaction queue
     // Current size of flushed out transactions on the disk
     u32 current_off;
 };

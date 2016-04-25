@@ -441,7 +441,7 @@ mfs_interface::process_metadata_log_and_flush()
       process_metadata_log(get_tsc(), m->mnum_, m->type() == mnode::types::dir);
   }
 
-  auto journal_lock = fs_journal->prepare_for_commit();
+  auto journal_lock = fs_journal->lock.guard();
   flush_journal_locked();
 }
 
@@ -628,10 +628,7 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, transaction *tr,
   pre_process_transaction(tr);
 
   if (!skip_add) {
-    {
-      auto journal_lock = fs_journal->prepare_for_commit();
-      fs_journal->enqueue_transaction_locked(tr);
-    }
+    fs_journal->enqueue_transaction(tr);
     release_inodebitmap_locks(tr);
   }
 
@@ -918,7 +915,7 @@ void
 mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir)
 {
   process_metadata_log(max_tsc, mnum, isdir);
-  auto journal_lock = fs_journal->prepare_for_commit();
+  auto journal_lock = fs_journal->lock.guard();
   flush_journal_locked();
 }
 
@@ -1054,16 +1051,11 @@ void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
 {
   pre_process_transaction(tr);
-
-  {
-    auto journal_lock = fs_journal->prepare_for_commit();
-    fs_journal->enqueue_transaction_locked(tr);
-  }
-
+  fs_journal->enqueue_transaction(tr);
   release_inodebitmap_locks(tr);
 
   if (flush_journal) {
-    auto journal_lock = fs_journal->prepare_for_commit();
+    auto journal_lock = fs_journal->lock.guard();
     flush_journal_locked();
   }
 }
@@ -1200,7 +1192,7 @@ mfs_interface::flush_journal_locked()
 void
 mfs_interface::flush_journal(void)
 {
-  auto journal_lock = fs_journal->prepare_for_commit();
+  auto journal_lock = fs_journal->lock.guard();
   flush_journal_locked();
 }
 
@@ -1916,16 +1908,13 @@ initfs()
 
       free_inode(ip, tr);
       rootfs_interface->pre_process_transaction(tr);
-      {
-        auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
-        rootfs_interface->fs_journal->enqueue_transaction_locked(tr);
-      }
+      rootfs_interface->fs_journal->enqueue_transaction(tr);
       rootfs_interface->release_inodebitmap_locks(tr); // This seems unnecessary.
       sb.reclaim_inodes[i] = 0;
     }
 
     {
-      auto journal_lock = rootfs_interface->fs_journal->prepare_for_commit();
+      auto journal_lock = rootfs_interface->fs_journal->lock.guard();
       rootfs_interface->flush_journal_locked();
     }
 
