@@ -374,7 +374,7 @@ class journal {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal() : current_off(0) {}
+    journal() : current_off(0), applied_trans_tsc(0) {}
 
     ~journal()
     {
@@ -396,11 +396,33 @@ class journal {
     u32 current_offset() { return current_off; }
     void update_offset(u32 new_off) { current_off = new_off; }
 
+    void wait(u64 upto_enq_tsc) {
+      scoped_acquire a(&cv_lock_);
+      while (applied_trans_tsc < upto_enq_tsc)
+        cv_.sleep(&cv_lock_);
+    }
+
+    void notify(u64 applied_tsc) {
+      scoped_acquire a(&cv_lock_);
+      applied_trans_tsc = applied_tsc;
+      cv_.wake_all();
+    }
+
+    u64 get_applied_tsc() {
+      scoped_acquire a(&cv_lock_);
+      return applied_trans_tsc;
+    }
+
   private:
     std::vector<transaction*> transaction_queue;
     sleeplock lock; // Guards updates to the transaction queue
     // Current size of flushed out transactions on the disk
     u32 current_off;
+    // The timestamp of the last transaction that was applied (not merely
+    // committed) to the on-disk filesystem via this journal.
+    u64 applied_trans_tsc;
+    spinlock cv_lock_;
+    condvar cv_;
 };
 
 // This class acts as an interfacing layer between the in-memory representation

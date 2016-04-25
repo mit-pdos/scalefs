@@ -1175,11 +1175,26 @@ mfs_interface::flush_journal_locked(int cpu)
 
       }
 
+      // Postpone applying this batch of transactions until all the dependent
+      // transactions in other queues have been applied to the disk. It is
+      // sufficient to look at the first transaction in the batch, since that's
+      // the only transaction allowed to have any cross-queue dependencies.
+      for (auto dep_txn : processed_trans_vec.front()->dependent_txq) {
+        while (fs_journal[dep_txn.id_]->get_applied_tsc() < dep_txn.timestamp_)
+          fs_journal[dep_txn.id_]->wait(dep_txn.timestamp_);
+      }
+
       apply_trans_on_disk(prune_trans);
       ideflush();
 
       for (auto &tr : processed_trans_vec)
         tr->dependent_txq.clear();
+
+      // Notify transactions (in other journal queues) which were waiting for
+      // this particular batch of transactions to get applied to the on-disk
+      // filesystem.
+      u64 latest_tsc = processed_trans_vec.back()->enq_tsc;
+      fs_journal[cpu]->notify(latest_tsc);
 
       processed_trans_vec.clear();
       ilock(sv6_journal[cpu], WRITELOCK);
@@ -1222,11 +1237,26 @@ mfs_interface::flush_journal_locked(int cpu)
 
   }
 
+  // Postpone applying this batch of transactions until all the dependent
+  // transactions in other queues have been applied to the disk. It is
+  // sufficient to look at the first transaction in the batch, since that's
+  // the only transaction allowed to have any cross-queue dependencies.
+  for (auto dep_txn : processed_trans_vec.front()->dependent_txq) {
+    while (fs_journal[dep_txn.id_]->get_applied_tsc() < dep_txn.timestamp_)
+      fs_journal[dep_txn.id_]->wait(dep_txn.timestamp_);
+  }
+
   apply_trans_on_disk(prune_trans);
   ideflush();
 
   for (auto &tr : processed_trans_vec)
     tr->dependent_txq.clear();
+
+  // Notify transactions (in other journal queues) which were waiting for
+  // this particular batch of transactions to get applied to the on-disk
+  // filesystem.
+  u64 latest_tsc = processed_trans_vec.back()->enq_tsc;
+  fs_journal[cpu]->notify(latest_tsc);
 
   processed_trans_vec.clear();
   ilock(sv6_journal[cpu], WRITELOCK);
