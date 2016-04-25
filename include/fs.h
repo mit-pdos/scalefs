@@ -103,6 +103,10 @@ struct dinode {
 // A prime number larger than NINODES
 #define NINODES_PRIME	1010003
 
+// A prime number larger than the total number of inode and bitmap blocks.
+// (They are currently around 15000 for a 16GB filesystem).
+#define NINODEBITMAP_BLKS_PRIME	30011
+
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 

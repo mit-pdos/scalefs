@@ -19,6 +19,7 @@ mfs_interface::mfs_interface()
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   mnum_to_name = new chainhash<u64, strbuf<DIRSIZ>>(NINODES_PRIME); // Debug
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
+  blocknum_to_queue = new chainhash<u32, tx_queue_info>(NINODEBITMAP_BLKS_PRIME);
 }
 
 bool
@@ -1012,6 +1013,12 @@ mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
     // queue for this journal.
     tr->enq_tsc = get_tsc();
     tr->txq_id = cpu;
+
+    tx_queue_info txq(tr->txq_id, tr->enq_tsc);
+
+    for (auto &blknum : tr->inodebitmap_blk_list)
+     blocknum_to_queue->insert(blknum, txq);
+
     fs_journal[cpu]->enqueue_transaction(tr);
   }
 

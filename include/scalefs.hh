@@ -23,6 +23,20 @@ typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
 typedef struct transaction_diskblock transaction_diskblock;
 
+struct tx_queue_info {
+  int id_;		// ID of the transaction queue
+  u64 timestamp_;	// The enqueue timestamp of the transaction.
+
+  tx_queue_info() : id_(0), timestamp_(0) {}
+  tx_queue_info(int id, u64 timestamp) : id_(id), timestamp_(timestamp) {}
+
+  tx_queue_info& operator=(const tx_queue_info&) = default;
+  tx_queue_info(const tx_queue_info&) = default;
+
+  tx_queue_info& operator=(tx_queue_info&&) = default;
+  tx_queue_info(tx_queue_info&&) = default;
+};
+
 // A single disk block that was updated as the result of a transaction. All
 // diskblocks that were written to during the transaction are stored as a linked
 // list in the transaction object.
@@ -619,6 +633,12 @@ class mfs_interface
   public:
     percpu<journal*> fs_journal;
     percpu<sref<inode> > sv6_journal;
+
+    // A hash-table to track the last transaction(*) that modified a given
+    // inode-block or bitmap-block. (* = specifically, which journal's
+    // transaction-queue that transaction went into and at what timestamp).
+    chainhash<u32, tx_queue_info> *blocknum_to_queue;
+
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
 
