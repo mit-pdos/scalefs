@@ -441,8 +441,7 @@ mfs_interface::process_metadata_log_and_flush()
       process_metadata_log(get_tsc(), m->mnum_, m->type() == mnode::types::dir);
   }
 
-  auto journal_lock = fs_journal->lock.guard();
-  flush_journal_locked();
+  flush_journal();
 }
 
 void
@@ -915,8 +914,7 @@ void
 mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir)
 {
   process_metadata_log(max_tsc, mnum, isdir);
-  auto journal_lock = fs_journal->lock.guard();
-  flush_journal_locked();
+  flush_journal();
 }
 
 // Create operation
@@ -1048,16 +1046,14 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 // Logs a transaction in the disk journal and then applies it to the disk,
 // if flush_journal is set to true.
 void
-mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_journal)
+mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_jrnl)
 {
   pre_process_transaction(tr);
   fs_journal->enqueue_transaction(tr);
   release_inodebitmap_locks(tr);
 
-  if (flush_journal) {
-    auto journal_lock = fs_journal->lock.guard();
-    flush_journal_locked();
-  }
+  if (flush_jrnl)
+    flush_journal();
 }
 
 // Writes out the physical journal to the disk, and applies the committed
@@ -1913,10 +1909,7 @@ initfs()
       sb.reclaim_inodes[i] = 0;
     }
 
-    {
-      auto journal_lock = rootfs_interface->fs_journal->lock.guard();
-      rootfs_interface->flush_journal_locked();
-    }
+    rootfs_interface->flush_journal();
 
     // Reset the reclaim_inodes[] list in the on-disk superblock.
     sb.num_reclaim_inodes = 0;
