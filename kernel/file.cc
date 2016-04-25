@@ -15,13 +15,14 @@ file_mnode::fsync() {
   if (!m)
     return -1;
 
+  int cpu = myid();
   u64 fsync_tsc = get_tsc();
-  rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_);
+  rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, cpu);
 
   if (m->type() == mnode::types::file)
-    m->as_file()->sync_file(true);
+    m->as_file()->sync_file(true, cpu);
   else if (m->type() == mnode::types::dir)
-    m->as_dir()->sync_dir();
+    m->as_dir()->sync_dir(cpu);
 
   return 0;
 }

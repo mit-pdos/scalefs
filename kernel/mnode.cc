@@ -313,7 +313,7 @@ mfile::drop_pagecache()
 // immediately flushed to the disk. (The caller might choose to set this to
 // false in order to do a single flush covering many transactions, later on).
 void
-mfile::sync_file(bool flush_journal)
+mfile::sync_file(bool flush_journal, int cpu)
 {
   if (!is_dirty())
     return;
@@ -366,7 +366,7 @@ mfile::sync_file(bool flush_journal)
 
   // Add the fsync transaction to the journal and possibly flush the journal
   // to disk.
-  rootfs_interface->add_fsync_to_journal(trans, flush_journal);
+  rootfs_interface->add_fsync_to_journal(trans, flush_journal, cpu);
 
   // flush_journal_locked() (invoked by add_fsync_to_journal()) deletes trans,
   // so we don't have to delete it here.
@@ -375,7 +375,7 @@ mfile::sync_file(bool flush_journal)
 }
 
 void
-mdir::sync_dir()
+mdir::sync_dir(int cpu)
 {
   if (!is_dirty())
     return;

@@ -410,7 +410,7 @@ mfs_interface::add_to_metadata_log(u64 mnum, int cpu, mfs_operation *op)
 
 // Applies all metadata operations logged in the logical logs. Called on sync.
 void
-mfs_interface::process_metadata_log_and_flush()
+mfs_interface::process_metadata_log_and_flush(int cpu)
 {
   // TODO: Implement absorption (detect operations that cancel each other,
   // such as create and unlink of the same mnode, and absorb them).
@@ -438,24 +438,24 @@ mfs_interface::process_metadata_log_and_flush()
   for (auto &mnum : mnum_list) {
     sref<mnode> m = root_fs->mget(mnum);
     if (m && m->is_dirty())
-      process_metadata_log(get_tsc(), m->mnum_);
+      process_metadata_log(get_tsc(), m->mnum_, cpu);
   }
 
-  flush_journal();
+  flush_journal(cpu);
 }
 
 void
-mfs_interface::sync_dirty_files_and_dirs()
+mfs_interface::sync_dirty_files_and_dirs(int cpu)
 {
   // Invoke sync_file() on every dirty mnode.
-  metadata_log_htab->enumerate([](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
+  metadata_log_htab->enumerate([&](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
 
     sref<mnode> m = root_fs->mget(mnum);
     if (m && m->is_dirty()) {
       if (m->type() == mnode::types::file)
-        m->as_file()->sync_file(false);
+        m->as_file()->sync_file(false, cpu);
       else if (m->type() == mnode::types::dir)
-        m->as_dir()->sync_dir();
+        m->as_dir()->sync_dir(cpu);
     }
 
     return false;
@@ -533,7 +533,8 @@ evict_caches(mdev*, const char *buf, u32 n)
 }
 
 void
-mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
+mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack,
+                                 int cpu)
 {
   // The top two operations on the rename stack form a pair.
 
@@ -596,8 +597,8 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
 
     // Set 'skip_add' to true, to avoid adding the transaction to the journal's
     // transaction queue before it is fully formed.
-    add_op_to_transaction_queue(link_op, tr, true);
-    add_op_to_transaction_queue(unlink_op, tr);
+    add_op_to_transaction_queue(link_op, cpu, tr, true);
+    add_op_to_transaction_queue(unlink_op, cpu, tr);
 
     // Now we need to delete these two sub-operations from their oplogs.
     // Luckily, we know that as of this moment, both these rename sub-
@@ -617,8 +618,8 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack)
 }
 
 void
-mfs_interface::add_op_to_transaction_queue(mfs_operation *op, transaction *tr,
-                                           bool skip_add)
+mfs_interface::add_op_to_transaction_queue(mfs_operation *op, int cpu,
+                                           transaction *tr, bool skip_add)
 {
   if (!tr)
     tr = new transaction(op->timestamp);
@@ -669,7 +670,7 @@ enum {
 // The return values are described above.
 int
 mfs_interface::process_ops_from_oplog(
-                    mfs_logical_log *mfs_log, u64 max_tsc, int count,
+                    mfs_logical_log *mfs_log, u64 max_tsc, int count, int cpu,
                     std::vector<pending_metadata> &pending_stack,
                     std::vector<u64> &unlink_mnum_list,
                     std::vector<dirunlink_metadata> &dirunlink_stack,
@@ -698,7 +699,7 @@ mfs_interface::process_ops_from_oplog(
       assert(count == 1);
       auto create_op = dynamic_cast<mfs_operation_create*>(*it);
       if (create_op) {
-        add_op_to_transaction_queue(*it);
+        add_op_to_transaction_queue(*it, cpu);
         mfs_log->operation_vec.erase(it);
       }
       return RET_DONE;
@@ -726,7 +727,7 @@ mfs_interface::process_ops_from_oplog(
           sref<mnode> m = root_fs->mget(mnum);
           if (m && m->is_dirty())
             m->dirty(false);
-          add_op_to_transaction_queue(*it);
+          add_op_to_transaction_queue(*it, cpu);
           it = mfs_log->operation_vec.erase(it);
           continue;
         }
@@ -787,7 +788,7 @@ mfs_interface::process_ops_from_oplog(
 
         // Set 'skip_add' to true, to avoid adding the transaction to the journal
         // before it is fully formed.
-        add_op_to_transaction_queue(rename_link_op, tr, true);
+        add_op_to_transaction_queue(rename_link_op, cpu, tr, true);
         it = mfs_log->operation_vec.erase(it);
 
         // The very next operation in this oplog *has* to be the corresponding
@@ -796,7 +797,7 @@ mfs_interface::process_ops_from_oplog(
         assert(r_unlink_op && r_unlink_op->timestamp == rename_link_op->timestamp
                && r_unlink_op->src_parent_mnum == r_unlink_op->dst_parent_mnum);
 
-        add_op_to_transaction_queue(r_unlink_op, tr);
+        add_op_to_transaction_queue(r_unlink_op, cpu, tr);
         it = mfs_log->operation_vec.erase(it);
         continue;
       }
@@ -833,7 +834,7 @@ mfs_interface::process_ops_from_oplog(
       return RET_RENAME_SUBOP;
     }
 
-    add_op_to_transaction_queue(*it);
+    add_op_to_transaction_queue(*it, cpu);
     it = mfs_log->operation_vec.erase(it);
   }
 
@@ -843,7 +844,7 @@ mfs_interface::process_ops_from_oplog(
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void
-mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum)
+mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
 {
   std::vector<pending_metadata> pending_stack;
   std::vector<u64> unlink_mnum_list;
@@ -861,7 +862,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum)
     assert(metadata_log_htab->lookup(pm.mnum, &mfs_log));
 
     mfs_log->lock.acquire();
-    ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, pending_stack,
+    ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, cpu, pending_stack,
                                  unlink_mnum_list, dirunlink_stack, rename_stack,
                                  rename_barrier_stack);
     mfs_log->lock.release();
@@ -881,7 +882,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum)
     // Now that we got the complete rename pair, acquire the necessary locks
     // and apply both parts of the rename atomically using a single transaction.
     case RET_RENAME_PAIR:
-      apply_rename_pair(rename_stack);
+      apply_rename_pair(rename_stack, cpu);
       // Since the rename sub-operations got paired up and were applied, we
       // don't have to process the other directory any further for this fsync
       // call. So pop it off the pending stack.
@@ -911,10 +912,10 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum)
 }
 
 void
-mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum)
+mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum, int cpu)
 {
-  process_metadata_log(max_tsc, mnum);
-  flush_journal();
+  process_metadata_log(max_tsc, mnum, cpu);
+  flush_journal(cpu);
 }
 
 // Create operation
@@ -1046,20 +1047,20 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 // Logs a transaction in the disk journal and then applies it to the disk,
 // if flush_journal is set to true.
 void
-mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_jrnl)
+mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_jrnl, int cpu)
 {
   pre_process_transaction(tr);
   fs_journal->enqueue_transaction(tr);
   release_inodebitmap_locks(tr);
 
   if (flush_jrnl)
-    flush_journal();
+    flush_journal(cpu);
 }
 
 // Writes out the physical journal to the disk, and applies the committed
 // transactions to the disk filesystem.
 void
-mfs_interface::flush_journal_locked()
+mfs_interface::flush_journal_locked(int cpu)
 {
   u64 timestamp = 0, prolog_timestamp = 0;
   transaction *trans, *prune_trans;
@@ -1083,7 +1084,7 @@ mfs_interface::flush_journal_locked()
     prolog_timestamp = (*it)->timestamp_;
 
     ilock(sv6_journal, WRITELOCK);
-    write_journal_trans_prolog(prolog_timestamp, trans);
+    write_journal_trans_prolog(prolog_timestamp, trans, cpu);
   }
 
   for (auto it = fs_journal->transaction_queue.begin();
@@ -1093,7 +1094,7 @@ mfs_interface::flush_journal_locked()
 
     retry:
 
-    if (fits_in_journal((*it)->blocks.size())) {
+    if (fits_in_journal((*it)->blocks.size(), cpu)) {
 
       prune_trans->add_blocks(std::move((*it)->blocks));
 
@@ -1109,9 +1110,10 @@ mfs_interface::flush_journal_locked()
 
       // Write out the transaction blocks to the disk journal in timestamp order.
       write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
-                                       trans);
+                                       trans, cpu);
 
-      write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
+      // This also deletes the trans.
+      write_journal_trans_epilog(prolog_timestamp, trans, cpu);
       iunlock(sv6_journal);
 
       // Apply all the committed sub-transactions to their final destinations
@@ -1128,7 +1130,7 @@ mfs_interface::flush_journal_locked()
 
       processed_trans_vec.clear();
       ilock(sv6_journal, WRITELOCK);
-      reset_journal();
+      reset_journal(cpu);
       iunlock(sv6_journal);
 
       // Retry this sub-transaction, since we couldn't write it to the journal.
@@ -1137,7 +1139,7 @@ mfs_interface::flush_journal_locked()
       trans = new transaction(0);
       prolog_timestamp = timestamp;
       ilock(sv6_journal, WRITELOCK);
-      write_journal_trans_prolog(prolog_timestamp, trans);
+      write_journal_trans_prolog(prolog_timestamp, trans, cpu);
       goto retry;
     }
 
@@ -1151,10 +1153,11 @@ mfs_interface::flush_journal_locked()
 
       // Write out the transaction blocks to the disk journal in timestamp order.
       write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
-                                       trans);
+                                       trans, cpu);
   }
 
-  write_journal_trans_epilog(prolog_timestamp, trans); // This also deletes trans.
+  // This also deletes the trans.
+  write_journal_trans_epilog(prolog_timestamp, trans, cpu);
   iunlock(sv6_journal);
 
   // Apply all the committed sub-transactions to their final destinations on
@@ -1171,7 +1174,7 @@ mfs_interface::flush_journal_locked()
 
   processed_trans_vec.clear();
   ilock(sv6_journal, WRITELOCK);
-  reset_journal();
+  reset_journal(cpu);
   iunlock(sv6_journal);
 
   delete prune_trans;
@@ -1186,15 +1189,15 @@ mfs_interface::flush_journal_locked()
 }
 
 void
-mfs_interface::flush_journal(void)
+mfs_interface::flush_journal(int cpu)
 {
   auto journal_lock = fs_journal->lock.guard();
-  flush_journal_locked();
+  flush_journal_locked(cpu);
 }
 
 void
 mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
-                                      transaction *tr)
+                                      transaction *tr, int cpu)
 {
   size_t data_size = BSIZE;
   size_t hdr_size = sizeof(journal_block_header);
@@ -1215,7 +1218,7 @@ mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
 
 void
 mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
-                                    transaction *trans)
+                                    transaction *trans, int cpu)
 {
   char databuf[BSIZE];
   char buf[sizeof(journal_block_header)];
@@ -1229,12 +1232,12 @@ mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
   switch (hdr_type) {
     case jrnl_start:
       memmove(buf, (void *) &hdstart, sizeof(hdstart));
-      write_journal_hdrblock(buf, databuf, trans);
+      write_journal_hdrblock(buf, databuf, trans, cpu);
       break;
 
     case jrnl_commit:
       memmove(buf, (void *) &hdcommit, sizeof(hdcommit));
-      write_journal_hdrblock(buf, databuf, trans);
+      write_journal_hdrblock(buf, databuf, trans, cpu);
       break;
 
     default:
@@ -1244,7 +1247,7 @@ mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
 }
 
 bool
-mfs_interface::fits_in_journal(size_t num_trans_blocks)
+mfs_interface::fits_in_journal(size_t num_trans_blocks, int cpu)
 {
   // Estimate the space requirements of this transaction in the journal.
 
@@ -1268,10 +1271,11 @@ mfs_interface::fits_in_journal(size_t num_trans_blocks)
 
 // Caller must hold ilock for write on sv6_journal.
 void
-mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
+mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans,
+                                          int cpu)
 {
   // A transaction begins with a start block.
-  write_journal_header(jrnl_start, timestamp, trans);
+  write_journal_header(jrnl_start, timestamp, trans, cpu);
 }
 
 // Write a transaction's disk blocks to the journal in memory. Don't write
@@ -1280,7 +1284,7 @@ mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans)
 void
 mfs_interface::write_journal_transaction_blocks(
     const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
-    const u64 timestamp, transaction *trans)
+    const u64 timestamp, transaction *trans, int cpu)
 {
   assert(sv6_journal);
 
@@ -1293,13 +1297,14 @@ mfs_interface::write_journal_transaction_blocks(
     journal_block_header hddata(timestamp, (*it)->blocknum, jrnl_data);
 
     memmove(buf, (void *) &hddata, sizeof(hddata));
-    write_journal_hdrblock(buf, (*it)->blockdata, trans);
+    write_journal_hdrblock(buf, (*it)->blockdata, trans, cpu);
   }
 }
 
 // Caller must hold ilock for write on sv6_journal.
 void
-mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
+mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans,
+                                          int cpu)
 {
   // Write out the disk blocks in the transaction to stable storage before
   // committing the transaction.
@@ -1310,7 +1315,7 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
   // The transaction ends with a commit block.
   trans = new transaction(0);
 
-  write_journal_header(jrnl_commit, timestamp, trans);
+  write_journal_header(jrnl_commit, timestamp, trans, cpu);
 
   trans->write_to_disk();
   ideflush();
@@ -1319,7 +1324,7 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans)
 
 // Called on reboot after a crash. Applies committed transactions.
 void
-mfs_interface::process_journal()
+mfs_interface::process_journal(int cpu)
 {
   u32 offset = 0;
   u64 current_transaction = 0;
@@ -1384,7 +1389,7 @@ mfs_interface::process_journal()
     }
   }
 
-  reset_journal();
+  reset_journal(cpu);
   iunlock(sv6_journal);
 
   if (!jrnl_error)
@@ -1403,7 +1408,7 @@ mfs_interface::process_journal()
 //
 // Caller must hold the journal lock and also ilock for write on sv6_journal.
 void
-mfs_interface::reset_journal()
+mfs_interface::reset_journal(int cpu)
 {
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
@@ -1869,8 +1874,10 @@ initfs()
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
 
+  int cpu = myid();
+
   // Check the journal and reapply committed transactions
-  rootfs_interface->process_journal();
+  rootfs_interface->process_journal(cpu);
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
@@ -1909,7 +1916,7 @@ initfs()
       sb.reclaim_inodes[i] = 0;
     }
 
-    rootfs_interface->flush_journal();
+    rootfs_interface->flush_journal(cpu);
 
     // Reset the reclaim_inodes[] list in the on-disk superblock.
     sb.num_reclaim_inodes = 0;

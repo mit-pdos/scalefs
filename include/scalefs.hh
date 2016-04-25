@@ -514,20 +514,21 @@ class mfs_interface
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
     void apply_trans_on_disk(transaction *tr);
-    void add_fsync_to_journal(transaction *tr, bool flush_journal);
-    void flush_journal_locked();
-    void flush_journal();
+    void add_fsync_to_journal(transaction *tr, bool flush_journal, int cpu);
+    void flush_journal_locked(int cpu);
+    void flush_journal(int cpu);
     void write_journal_hdrblock(const char *header, const char *datablock,
-                                transaction *tr);
-    void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr);
-    bool fits_in_journal(size_t num_trans_blocks);
-    void write_journal_trans_prolog(u64 timestamp, transaction *tr);
+                                transaction *tr, int cpu);
+    void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr,
+                              int cpu);
+    bool fits_in_journal(size_t num_trans_blocks, int cpu);
+    void write_journal_trans_prolog(u64 timestamp, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
-    transaction *tr);
-    void write_journal_trans_epilog(u64 timestamp, transaction *tr);
-    void process_journal();
-    void reset_journal();
+    transaction *tr, int cpu);
+    void write_journal_trans_epilog(u64 timestamp, transaction *tr, int cpu);
+    void process_journal(int cpu);
+    void reset_journal(int cpu);
 
     // Metadata functions
     void alloc_mnode_lock(u64 mnum);
@@ -538,21 +539,23 @@ class mfs_interface
     void metadata_op_start(u64 mnum, int cpu, u64 tsc_val);
     void metadata_op_end(u64 mnum, int cpu, u64 tsc_val);
     void add_to_metadata_log(u64 mnum, int cpu, mfs_operation *op);
-    void sync_dirty_files_and_dirs();
+    void sync_dirty_files_and_dirs(int cpu);
     void evict_bufcache();
     void evict_pagecache();
-    void process_metadata_log_and_flush();
-    void process_metadata_log(u64 max_tsc, u64 mnode_mnum);
-    void process_metadata_log_and_flush(u64 max_tsc, u64 mnum);
-    void add_op_to_transaction_queue(mfs_operation *op, transaction *tr = nullptr,
+    void process_metadata_log_and_flush(int cpu);
+    void process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu);
+    void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, int cpu);
+    void add_op_to_transaction_queue(mfs_operation *op, int cpu,
+                                     transaction *tr = nullptr,
                                      bool skip_add = false);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
+                  int cpu,
                   std::vector<pending_metadata> &pending_stack,
                   std::vector<u64> &unlink_mnum_list,
                   std::vector<dirunlink_metadata> &dirunlink_stack,
                   std::vector<rename_metadata> &rename_stack,
                   std::vector<rename_barrier_metadata> &rename_barrier_stack);
-    void apply_rename_pair(std::vector<rename_metadata> &rename_stack);
+    void apply_rename_pair(std::vector<rename_metadata> &rename_stack, int cpu);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
