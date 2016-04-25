@@ -612,9 +612,9 @@ class mfs_interface
 
   public:
     percpu<journal*> fs_journal;
+    percpu<sref<inode> > sv6_journal;
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
-    sref<inode> sv6_journal;
 
     sleeplock inode_reclaim_lock;
 

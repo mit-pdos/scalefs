@@ -1085,7 +1085,7 @@ mfs_interface::flush_journal_locked(int cpu)
     auto it = fs_journal[cpu]->transaction_queue.begin();
     prolog_timestamp = (*it)->timestamp_;
 
-    ilock(sv6_journal, WRITELOCK);
+    ilock(sv6_journal[cpu], WRITELOCK);
     write_journal_trans_prolog(prolog_timestamp, trans, cpu);
   }
 
@@ -1116,7 +1116,7 @@ mfs_interface::flush_journal_locked(int cpu)
 
       // This also deletes the trans.
       write_journal_trans_epilog(prolog_timestamp, trans, cpu);
-      iunlock(sv6_journal);
+      iunlock(sv6_journal[cpu]);
 
       // Apply all the committed sub-transactions to their final destinations
       // on the disk.
@@ -1131,16 +1131,16 @@ mfs_interface::flush_journal_locked(int cpu)
       ideflush();
 
       processed_trans_vec.clear();
-      ilock(sv6_journal, WRITELOCK);
+      ilock(sv6_journal[cpu], WRITELOCK);
       reset_journal(cpu);
-      iunlock(sv6_journal);
+      iunlock(sv6_journal[cpu]);
 
       // Retry this sub-transaction, since we couldn't write it to the journal.
       delete prune_trans;
       prune_trans = new transaction(0);
       trans = new transaction(0);
       prolog_timestamp = timestamp;
-      ilock(sv6_journal, WRITELOCK);
+      ilock(sv6_journal[cpu], WRITELOCK);
       write_journal_trans_prolog(prolog_timestamp, trans, cpu);
       goto retry;
     }
@@ -1160,7 +1160,7 @@ mfs_interface::flush_journal_locked(int cpu)
 
   // This also deletes the trans.
   write_journal_trans_epilog(prolog_timestamp, trans, cpu);
-  iunlock(sv6_journal);
+  iunlock(sv6_journal[cpu]);
 
   // Apply all the committed sub-transactions to their final destinations on
   // the disk.
@@ -1175,9 +1175,9 @@ mfs_interface::flush_journal_locked(int cpu)
   ideflush();
 
   processed_trans_vec.clear();
-  ilock(sv6_journal, WRITELOCK);
+  ilock(sv6_journal[cpu], WRITELOCK);
   reset_journal(cpu);
-  iunlock(sv6_journal);
+  iunlock(sv6_journal[cpu]);
 
   delete prune_trans;
 
@@ -1205,12 +1205,12 @@ mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
   size_t hdr_size = sizeof(journal_block_header);
   u32 offset = fs_journal[cpu]->current_offset();
 
-  if (writei(sv6_journal, header, offset, hdr_size, tr) != hdr_size)
+  if (writei(sv6_journal[cpu], header, offset, hdr_size, tr) != hdr_size)
     panic("Journal write (header block) failed\n");
 
   offset += hdr_size;
 
-  if (writei(sv6_journal, datablock, offset, data_size, tr) != data_size)
+  if (writei(sv6_journal[cpu], datablock, offset, data_size, tr) != data_size)
     panic("Journal write (data block) failed\n");
 
   offset += data_size;
@@ -1288,7 +1288,7 @@ mfs_interface::write_journal_transaction_blocks(
     const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
     const u64 timestamp, transaction *trans, int cpu)
 {
-  assert(sv6_journal);
+  assert(sv6_journal[cpu]);
 
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
@@ -1341,14 +1341,16 @@ mfs_interface::process_journal(int cpu)
 
   memset(&hdcmp, 0, sizeof(hdcmp));
 
-  sv6_journal = namei(sref<inode>(), "/sv6journal");
-  assert(sv6_journal);
+  char jrnl_name[32];
+  snprintf(jrnl_name, sizeof(jrnl_name), "/sv6journal%d", cpu);
+  sv6_journal[cpu] = namei(sref<inode>(), jrnl_name);
+  assert(sv6_journal[cpu]);
 
-  ilock(sv6_journal, WRITELOCK);
+  ilock(sv6_journal[cpu], WRITELOCK);
 
   while (!jrnl_error) {
 
-    if (readi(sv6_journal, hdbuf, offset, hdr_size) != hdr_size)
+    if (readi(sv6_journal[cpu], hdbuf, offset, hdr_size) != hdr_size)
       break;
 
     if (!memcmp(hdcmp, hdbuf, hdr_size))
@@ -1356,7 +1358,7 @@ mfs_interface::process_journal(int cpu)
 
     offset += hdr_size;
 
-    if (readi(sv6_journal, databuf, offset, BSIZE) != BSIZE)
+    if (readi(sv6_journal[cpu], databuf, offset, BSIZE) != BSIZE)
       break;
 
     offset += BSIZE;
@@ -1392,7 +1394,7 @@ mfs_interface::process_journal(int cpu)
   }
 
   reset_journal(cpu);
-  iunlock(sv6_journal);
+  iunlock(sv6_journal[cpu]);
 
   if (!jrnl_error)
     trans->write_to_disk_update_bufcache();
@@ -1419,7 +1421,7 @@ mfs_interface::reset_journal(int cpu)
 
   transaction *tr = new transaction(0);
 
-  if (writei(sv6_journal, buf, 0 /* offset */, hdr_size, tr) != hdr_size)
+  if (writei(sv6_journal[cpu], buf, 0 /* offset */, hdr_size, tr) != hdr_size)
     panic("reset_journal() failed\n");
 
   tr->write_to_disk_raw();
@@ -1876,10 +1878,9 @@ initfs()
   anon_fs = new mfs();
   rootfs_interface = new mfs_interface();
 
-  int cpu = myid();
-
-  // Check the journal and reapply committed transactions
-  rootfs_interface->process_journal(cpu);
+  // Check all the journals and reapply committed transactions
+  for (int cpu = 0; cpu < NCPU; cpu++)
+    rootfs_interface->process_journal(cpu);
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
@@ -1898,6 +1899,7 @@ initfs()
 
   if (sb.num_reclaim_inodes) {
 
+    int cpu = myid();
     for (int i = 0; i < sb.num_reclaim_inodes; i++) {
       if (!(inum = sb.reclaim_inodes[i]))
         continue;
