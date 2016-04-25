@@ -388,9 +388,9 @@ class journal {
     }
 
     // comparison function to order journal transactions in timestamp order
-    static bool compare_timestamp_tr(transaction *t1, transaction *t2)
+    static bool compare_txn_tsc(transaction *t1, transaction *t2)
     {
-      return (t1->timestamp_ < t2->timestamp_);
+      return t1->enq_tsc < t2->enq_tsc;
     }
 
     u32 current_offset() { return current_off; }
@@ -574,7 +574,7 @@ class mfs_interface
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr, int cpu);
     void write_journal_trans_epilog(u64 timestamp, transaction *tr, int cpu);
-    void process_journal(int cpu);
+    transaction* process_journal(int cpu);
     void reset_journal(int cpu);
 
     // Metadata functions

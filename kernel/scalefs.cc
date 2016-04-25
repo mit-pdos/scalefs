@@ -1408,8 +1408,9 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans,
   delete trans;
 }
 
-// Called on reboot after a crash. Applies committed transactions.
-void
+// Called on reboot after a crash. Returns the transaction last committed
+// to this journal (but perhaps not yet applied to the disk filesystem).
+transaction*
 mfs_interface::process_journal(int cpu)
 {
   u32 offset = 0;
@@ -1480,9 +1481,12 @@ mfs_interface::process_journal(int cpu)
   reset_journal(cpu);
   iunlock(sv6_journal[cpu]);
 
-  if (!jrnl_error)
-    trans->write_to_disk_update_bufcache();
-  delete trans;
+  if (!jrnl_error) {
+    trans->enq_tsc = current_transaction;
+    return trans;
+  }
+
+  return nullptr;
 }
 
 // Reset the journal so that we can start writing to it again, from the
@@ -1965,8 +1969,24 @@ initfs()
   rootfs_interface = new mfs_interface();
 
   // Check all the journals and reapply committed transactions
-  for (int cpu = 0; cpu < NCPU; cpu++)
-    rootfs_interface->process_journal(cpu);
+  transaction *tr;
+  std::vector<transaction*> txns_to_apply;
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    if ((tr = rootfs_interface->process_journal(cpu)) && tr)
+      txns_to_apply.push_back(tr);
+  }
+
+  if (!txns_to_apply.empty()) {
+    std::sort(txns_to_apply.begin(), txns_to_apply.end(),
+              journal::compare_txn_tsc);
+
+    for (auto &tr : txns_to_apply) {
+      tr->write_to_disk_update_bufcache();
+      delete tr;
+    }
+
+    txns_to_apply.clear();
+  }
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
