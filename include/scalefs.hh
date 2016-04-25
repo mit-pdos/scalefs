@@ -511,6 +511,7 @@ class mfs_interface
     sref<mnode> load_root();
 
     // Journal functions
+    void add_transaction_to_queue(transaction *tr, int cpu);
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
     void apply_trans_on_disk(transaction *tr);

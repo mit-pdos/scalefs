@@ -628,11 +628,8 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, int cpu,
 
   op->apply(tr);
 
-  if (!skip_add) {
-    pre_process_transaction(tr);
-    fs_journal[cpu]->enqueue_transaction(tr);
-    release_inodebitmap_locks(tr);
-  }
+  if (!skip_add)
+    add_transaction_to_queue(tr, cpu);
 
   delete op;
 }
@@ -1004,6 +1001,14 @@ mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *t
 }
 
 void
+mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
+{
+  pre_process_transaction(tr);
+  fs_journal[cpu]->enqueue_transaction(tr);
+  release_inodebitmap_locks(tr);
+}
+
+void
 mfs_interface::pre_process_transaction(transaction *tr)
 {
   std::sort(tr->allocated_block_list.begin(), tr->allocated_block_list.end());
@@ -1051,9 +1056,7 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 void
 mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_jrnl, int cpu)
 {
-  pre_process_transaction(tr);
-  fs_journal[cpu]->enqueue_transaction(tr);
-  release_inodebitmap_locks(tr);
+  add_transaction_to_queue(tr, cpu);
 
   if (flush_jrnl)
     flush_journal(cpu);
@@ -1914,9 +1917,7 @@ initfs()
       iunlock(ip);
 
       free_inode(ip, tr);
-      rootfs_interface->pre_process_transaction(tr);
-      rootfs_interface->fs_journal[cpu]->enqueue_transaction(tr);
-      rootfs_interface->release_inodebitmap_locks(tr); // This seems unnecessary.
+      rootfs_interface->add_transaction_to_queue(tr, cpu);
       sb.reclaim_inodes[i] = 0;
     }
 
