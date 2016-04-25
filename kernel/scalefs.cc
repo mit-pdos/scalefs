@@ -627,9 +627,9 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, int cpu,
     tr = new transaction(op->timestamp);
 
   op->apply(tr);
-  pre_process_transaction(tr);
 
   if (!skip_add) {
+    pre_process_transaction(tr);
     fs_journal[cpu]->enqueue_transaction(tr);
     release_inodebitmap_locks(tr);
   }
