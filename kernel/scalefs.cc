@@ -1004,7 +1004,19 @@ void
 mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
 {
   pre_process_transaction(tr);
-  fs_journal[cpu]->enqueue_transaction(tr);
+  {
+    auto l = fs_journal[cpu]->lock.guard();
+
+    // As of this moment, we hold all the locks we need: all the 2-Phase inode-
+    // block and bitmap-block locks and the lock protecting the transaction
+    // queue for this journal.
+    fs_journal[cpu]->enqueue_transaction(tr);
+  }
+
+  // Phase 2 of the 2-Phase locking. Enqueuing the transaction in the journal's
+  // transaction queue is sufficient to help us preserve the ordering between
+  // dependent operations. So it is safe to execute phase 2 and release the
+  // locks here.
   release_inodebitmap_locks(tr);
 }
 
@@ -1020,6 +1032,7 @@ mfs_interface::pre_process_transaction(transaction *tr)
   for (auto &b : tr->free_block_list)
     bnum_list.push_back(b);
 
+  // End of Phase 1 of the 2-Phase locking.
   acquire_inodebitmap_locks(bnum_list, BITMAP_BLOCK, tr);
 
   // Update the free bitmap on the disk.

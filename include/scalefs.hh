@@ -359,7 +359,6 @@ class journal {
     // Add a new transaction to the journal's transaction queue.
     void enqueue_transaction(transaction *tr)
     {
-      auto l = lock.guard();
       transaction_queue.push_back(tr);
     }
 
