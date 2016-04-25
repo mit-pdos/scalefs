@@ -334,6 +334,11 @@ class transaction {
     u64 enq_tsc; // Guaranteed to be monotonically increasing, for a given queue.
     int txq_id;
 
+    // List of transaction queues and the transaction timestamps that this
+    // transaction depends on. Applying this transaction to the disk must be
+    // postponed until all these dependent transactions are applied.
+    std::vector<tx_queue_info> dependent_txq;
+
   private:
     // List of updated diskblocks
     std::vector<std::unique_ptr<transaction_diskblock> > blocks;

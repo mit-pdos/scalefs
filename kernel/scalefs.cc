@@ -1014,10 +1014,26 @@ mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
     tr->enq_tsc = get_tsc();
     tr->txq_id = cpu;
 
-    tx_queue_info txq(tr->txq_id, tr->enq_tsc);
+    tx_queue_info my_txq(tr->txq_id, tr->enq_tsc);
 
-    for (auto &blknum : tr->inodebitmap_blk_list)
-     blocknum_to_queue->insert(blknum, txq);
+    for (auto &blknum : tr->inodebitmap_blk_list) {
+      tx_queue_info other_txq;
+
+      // Note down the last transaction that modified a common disk block,
+      // if it got added to a different queue. (If it went to the same queue
+      // that we are going to, the ordering will be automatically preserved).
+      if (blocknum_to_queue->lookup(blknum, &other_txq)) {
+        if (other_txq.id_ != tr->txq_id)
+          tr->dependent_txq.push_back(other_txq);
+
+        blocknum_to_queue->remove(blknum);
+      }
+
+      // The insert has to succeed because we are holding all the relevant
+      // 2-Phase locks; so no other CPU can be inserting to the same blocknum
+      // concurrently.
+      assert(blocknum_to_queue->insert(blknum, my_txq));
+    }
 
     fs_journal[cpu]->enqueue_transaction(tr);
   }
@@ -1155,6 +1171,9 @@ mfs_interface::flush_journal_locked(int cpu)
       apply_trans_on_disk(prune_trans);
       ideflush();
 
+      for (auto &tr : processed_trans_vec)
+        tr->dependent_txq.clear();
+
       processed_trans_vec.clear();
       ilock(sv6_journal[cpu], WRITELOCK);
       reset_journal(cpu);
@@ -1198,6 +1217,9 @@ mfs_interface::flush_journal_locked(int cpu)
 
   apply_trans_on_disk(prune_trans);
   ideflush();
+
+  for (auto &tr : processed_trans_vec)
+    tr->dependent_txq.clear();
 
   processed_trans_vec.clear();
   ilock(sv6_journal[cpu], WRITELOCK);
