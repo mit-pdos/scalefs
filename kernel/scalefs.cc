@@ -438,7 +438,7 @@ mfs_interface::process_metadata_log_and_flush()
   for (auto &mnum : mnum_list) {
     sref<mnode> m = root_fs->mget(mnum);
     if (m && m->is_dirty())
-      process_metadata_log(get_tsc(), m->mnum_, m->type() == mnode::types::dir);
+      process_metadata_log(get_tsc(), m->mnum_);
   }
 
   flush_journal();
@@ -843,7 +843,7 @@ mfs_interface::process_ops_from_oplog(
 // Applies metadata operations logged in the logical journal. Called on
 // fsync to resolve any metadata dependencies.
 void
-mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
+mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum)
 {
   std::vector<pending_metadata> pending_stack;
   std::vector<u64> unlink_mnum_list;
@@ -911,9 +911,9 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir)
 }
 
 void
-mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir)
+mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum)
 {
-  process_metadata_log(max_tsc, mnum, isdir);
+  process_metadata_log(max_tsc, mnum);
   flush_journal();
 }
 

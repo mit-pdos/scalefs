@@ -542,8 +542,8 @@ class mfs_interface
     void evict_bufcache();
     void evict_pagecache();
     void process_metadata_log_and_flush();
-    void process_metadata_log(u64 max_tsc, u64 mnode_mnum, bool isdir);
-    void process_metadata_log_and_flush(u64 max_tsc, u64 mnum, bool isdir);
+    void process_metadata_log(u64 max_tsc, u64 mnode_mnum);
+    void process_metadata_log_and_flush(u64 max_tsc, u64 mnum);
     void add_op_to_transaction_queue(mfs_operation *op, transaction *tr = nullptr,
                                      bool skip_add = false);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,

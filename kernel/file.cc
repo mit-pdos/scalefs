@@ -16,25 +16,13 @@ file_mnode::fsync() {
     return -1;
 
   u64 fsync_tsc = get_tsc();
+  rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_);
 
-  if (m->type() == mnode::types::file) {
-
-    // Apply pending metadata operations to the disk filesystem first.
-    // This takes care of any dependencies.
-    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, false);
+  if (m->type() == mnode::types::file)
     m->as_file()->sync_file(true);
-
-  } else if (m->type() == mnode::types::dir) {
-
-    // Apply pending metadata operations to the disk filesystem first.
-    // This takes care of any dependencies.
-    // Flush out the physical journal to disk. The directory entries do not need
-    // to be flushed explicitly. If there were any operations on the directory
-    // they will have been applied when the logical log was processed. This means
-    // that the fsync will not block any operations on the mdir.
-    rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, true);
+  else if (m->type() == mnode::types::dir)
     m->as_dir()->sync_dir();
-  }
+
   return 0;
 }
 
