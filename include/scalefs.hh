@@ -315,6 +315,11 @@ class transaction {
     // have been logged in the journal in timestamp order.
     const u64 timestamp_;
 
+    // Timestamp at which this transaction was enqueued to a journal's
+    // transaction queue, and the queue's id.
+    u64 enq_tsc; // Guaranteed to be monotonically increasing, for a given queue.
+    int txq_id;
+
   private:
     // List of updated diskblocks
     std::vector<std::unique_ptr<transaction_diskblock> > blocks;
@@ -340,6 +345,7 @@ class transaction {
     std::vector<u32> free_inum_list;
 
     // Set of inode-block and bitmap-block locks that this transaction owns.
+    std::vector<u32> inodebitmap_blk_list;
     std::vector<sleeplock*> inodebitmap_locks;
 };
 

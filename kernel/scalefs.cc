@@ -1010,6 +1010,8 @@ mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
     // As of this moment, we hold all the locks we need: all the 2-Phase inode-
     // block and bitmap-block locks and the lock protecting the transaction
     // queue for this journal.
+    tr->enq_tsc = get_tsc();
+    tr->txq_id = cpu;
     fs_journal[cpu]->enqueue_transaction(tr);
   }
 
@@ -1874,6 +1876,7 @@ mfs_interface::acquire_inodebitmap_locks(std::vector<u64> &num_list, int type,
     sleeplock *sl = inodebitmap_locks.at(blknum);
     sl->acquire();
     tr->inodebitmap_locks.push_back(sl);
+    tr->inodebitmap_blk_list.push_back(blknum);
   }
 }
 
@@ -1885,6 +1888,7 @@ mfs_interface::release_inodebitmap_locks(transaction *tr)
     sl->release();
 
   tr->inodebitmap_locks.clear();
+  tr->inodebitmap_blk_list.clear();
 }
 
 void
