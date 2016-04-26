@@ -1162,13 +1162,25 @@ mfs_interface::flush_journal_locked(int cpu)
       write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
                                        trans, cpu);
 
+      // Postpone committing this batch of transactions until all the dependent
+      // transactions in other queues have been committed to the disk. It is
+      // sufficient to look at the first transaction in the batch, since that's
+      // the only transaction allowed to have any cross-queue dependencies.
+      for (auto dep_txn : processed_trans_vec.front()->dependent_txq) {
+        while (fs_journal[dep_txn.id_]->get_committed_tsc() < dep_txn.timestamp_)
+          fs_journal[dep_txn.id_]->wait_for_commit(dep_txn.timestamp_);
+      }
+
       // Commit the transaction by writing the commit record to the on-disk
       // journal with the given timestamp.
       write_journal_trans_epilog(prolog_timestamp, cpu);
       iunlock(sv6_journal[cpu]);
 
-      // Apply all the committed sub-transactions to their final destinations
-      // on the disk.
+      // Notify transactions (in other journal queues) which were waiting for
+      // this particular batch of transactions to get committed.
+      u64 latest_commit_tsc = processed_trans_vec.back()->enq_tsc;
+      fs_journal[cpu]->notify_commit(latest_commit_tsc);
+
       for (auto t = processed_trans_vec.begin();
            t != processed_trans_vec.end(); t++) {
 
@@ -1182,9 +1194,11 @@ mfs_interface::flush_journal_locked(int cpu)
       // the only transaction allowed to have any cross-queue dependencies.
       for (auto dep_txn : processed_trans_vec.front()->dependent_txq) {
         while (fs_journal[dep_txn.id_]->get_applied_tsc() < dep_txn.timestamp_)
-          fs_journal[dep_txn.id_]->wait(dep_txn.timestamp_);
+          fs_journal[dep_txn.id_]->wait_for_apply(dep_txn.timestamp_);
       }
 
+      // Apply all the committed sub-transactions to their final destinations
+      // on the disk.
       apply_trans_on_disk(prune_trans);
       ideflush();
 
@@ -1194,8 +1208,8 @@ mfs_interface::flush_journal_locked(int cpu)
       // Notify transactions (in other journal queues) which were waiting for
       // this particular batch of transactions to get applied to the on-disk
       // filesystem.
-      u64 latest_tsc = processed_trans_vec.back()->enq_tsc;
-      fs_journal[cpu]->notify(latest_tsc);
+      u64 latest_apply_tsc = processed_trans_vec.back()->enq_tsc;
+      fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
       processed_trans_vec.clear();
       ilock(sv6_journal[cpu], WRITELOCK);
@@ -1225,13 +1239,25 @@ mfs_interface::flush_journal_locked(int cpu)
                                      trans, cpu);
   }
 
+  // Postpone committing this batch of transactions until all the dependent
+  // transactions in other queues have been committed to the disk. It is
+  // sufficient to look at the first transaction in the batch, since that's
+  // the only transaction allowed to have any cross-queue dependencies.
+  for (auto dep_txn : processed_trans_vec.front()->dependent_txq) {
+    while (fs_journal[dep_txn.id_]->get_committed_tsc() < dep_txn.timestamp_)
+      fs_journal[dep_txn.id_]->wait_for_commit(dep_txn.timestamp_);
+  }
+
   // Commit the transaction by writing the commit record to the on-disk journal
   // with the given timestamp.
   write_journal_trans_epilog(prolog_timestamp, cpu);
   iunlock(sv6_journal[cpu]);
 
-  // Apply all the committed sub-transactions to their final destinations on
-  // the disk.
+  // Notify transactions (in other journal queues) which were waiting for
+  // this particular batch of transactions to get committed.
+  u64 latest_commit_tsc = processed_trans_vec.back()->enq_tsc;
+  fs_journal[cpu]->notify_commit(latest_commit_tsc);
+
   for (auto t = processed_trans_vec.begin();
        t != processed_trans_vec.end(); t++) {
 
@@ -1245,9 +1271,11 @@ mfs_interface::flush_journal_locked(int cpu)
   // the only transaction allowed to have any cross-queue dependencies.
   for (auto dep_txn : processed_trans_vec.front()->dependent_txq) {
     while (fs_journal[dep_txn.id_]->get_applied_tsc() < dep_txn.timestamp_)
-      fs_journal[dep_txn.id_]->wait(dep_txn.timestamp_);
+      fs_journal[dep_txn.id_]->wait_for_apply(dep_txn.timestamp_);
   }
 
+  // Apply all the committed sub-transactions to their final destinations on
+  // the disk.
   apply_trans_on_disk(prune_trans);
   ideflush();
 
@@ -1257,8 +1285,8 @@ mfs_interface::flush_journal_locked(int cpu)
   // Notify transactions (in other journal queues) which were waiting for
   // this particular batch of transactions to get applied to the on-disk
   // filesystem.
-  u64 latest_tsc = processed_trans_vec.back()->enq_tsc;
-  fs_journal[cpu]->notify(latest_tsc);
+  u64 latest_apply_tsc = processed_trans_vec.back()->enq_tsc;
+  fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
   processed_trans_vec.clear();
   ilock(sv6_journal[cpu], WRITELOCK);

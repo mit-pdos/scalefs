@@ -374,7 +374,7 @@ class journal {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal() : current_off(0), applied_trans_tsc(0) {}
+    journal() : current_off(0), committed_trans_tsc(0), applied_trans_tsc(0) {}
 
     ~journal()
     {
@@ -396,20 +396,37 @@ class journal {
     u32 current_offset() { return current_off; }
     void update_offset(u32 new_off) { current_off = new_off; }
 
-    void wait(u64 upto_enq_tsc) {
-      scoped_acquire a(&cv_lock_);
-      while (applied_trans_tsc < upto_enq_tsc)
-        cv_.sleep(&cv_lock_);
+    void wait_for_commit(u64 upto_enq_tsc) {
+      scoped_acquire a(&commit_cv_lock_);
+      while (committed_trans_tsc < upto_enq_tsc)
+        commit_cv_.sleep(&commit_cv_lock_);
     }
 
-    void notify(u64 applied_tsc) {
-      scoped_acquire a(&cv_lock_);
+    void wait_for_apply(u64 upto_enq_tsc) {
+      scoped_acquire a(&apply_cv_lock_);
+      while (applied_trans_tsc < upto_enq_tsc)
+        apply_cv_.sleep(&apply_cv_lock_);
+    }
+
+    void notify_commit(u64 committed_tsc) {
+      scoped_acquire a(&commit_cv_lock_);
+      committed_trans_tsc = committed_tsc;
+      commit_cv_.wake_all();
+    }
+
+    void notify_apply(u64 applied_tsc) {
+      scoped_acquire a(&apply_cv_lock_);
       applied_trans_tsc = applied_tsc;
-      cv_.wake_all();
+      apply_cv_.wake_all();
+    }
+
+    u64 get_committed_tsc() {
+      scoped_acquire a(&commit_cv_lock_);
+      return committed_trans_tsc;
     }
 
     u64 get_applied_tsc() {
-      scoped_acquire a(&cv_lock_);
+      scoped_acquire a(&apply_cv_lock_);
       return applied_trans_tsc;
     }
 
@@ -418,11 +435,14 @@ class journal {
     sleeplock lock; // Guards updates to the transaction queue
     // Current size of flushed out transactions on the disk
     u32 current_off;
-    // The timestamp of the last transaction that was applied (not merely
-    // committed) to the on-disk filesystem via this journal.
+    // The timestamp of the last transaction that was committed to the on-disk
+    // filesystem via this journal.
+    u64 committed_trans_tsc;
+    // The timestamp of the last transaction that was applied to the on-disk
+    // filesystem via this journal.
     u64 applied_trans_tsc;
-    spinlock cv_lock_;
-    condvar cv_;
+    spinlock commit_cv_lock_, apply_cv_lock_;
+    condvar commit_cv_, apply_cv_;
 };
 
 // This class acts as an interfacing layer between the in-memory representation
