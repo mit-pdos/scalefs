@@ -358,7 +358,12 @@ alloc_inode_number(void)
     warned_once = true;
   }
 
+  // TODO: Allocate from the reserve pool in bulk in order to reduce the
+  // chances of contention even further.
   {
+    if (freeinum_bitmap.reserve_freelist.inum_freelist.empty())
+      goto try_neighbor;
+
     auto list_lock = freeinum_bitmap.reserve_freelist.list_lock.guard();
 
     if (!freeinum_bitmap.reserve_freelist.inum_freelist.empty()) {
@@ -376,8 +381,13 @@ alloc_inode_number(void)
   // point, in order to avoid hotspots. Note that these inums are only
   // borrowed temporarily and are prompty returned to the original CPU's
   // freelists upon being freed.
+try_neighbor:
   for (int fallback_cpu = cpu + 1; fallback_cpu % NCPU != cpu; fallback_cpu++) {
     int fcpu = fallback_cpu % NCPU;
+
+    if (freeinum_bitmap.freelists[fcpu].inum_freelist.empty())
+      continue;
+
     auto list_lock = freeinum_bitmap.freelists[fcpu].list_lock.guard();
 
     if (!freeinum_bitmap.freelists[fcpu].inum_freelist.empty()) {

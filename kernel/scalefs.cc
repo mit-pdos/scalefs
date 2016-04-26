@@ -1739,7 +1739,12 @@ mfs_interface::alloc_block()
     warned_once = true;
   }
 
+  // TODO: Allocate from the reserve pool in bulk in order to reduce the
+  // chances of contention even further.
   {
+    if (freeblock_bitmap.reserve_freelist.bit_freelist.empty())
+      goto try_neighbor;
+
     auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
 
     if (!freeblock_bitmap.reserve_freelist.bit_freelist.empty()) {
@@ -1757,8 +1762,13 @@ mfs_interface::alloc_block()
   // point, in order to avoid hotspots. Note that these blocks are only
   // borrowed temporarily and are prompty returned to the original CPU's
   // freelists upon being freed.
+try_neighbor:
   for (int fallback_cpu = cpu + 1; fallback_cpu % NCPU != cpu; fallback_cpu++) {
     int fcpu = fallback_cpu % NCPU;
+
+    if (freeblock_bitmap.freelists[fcpu].bit_freelist.empty())
+      continue;
+
     auto list_lock = freeblock_bitmap.freelists[fcpu].list_lock.guard();
 
     if (!freeblock_bitmap.freelists[fcpu].bit_freelist.empty()) {
