@@ -229,6 +229,7 @@ initialize_freeinum_bitmap(void)
   sref<buf> bp;
   superblock sb;
   int ninums;
+  u32 first_free_inodeblock_inum = 0;
 
   get_superblock(&sb, false);
 
@@ -249,6 +250,14 @@ initialize_freeinum_bitmap(void)
       // inums, to speed up freeing and allocation of blocks, respectively.
       free_inum *finum = new free_inum(inum + i, !dip->type);
       freeinum_bitmap.inum_vector.push_back(finum);
+
+      // Make note of the first inode block (inum) that starts with a free inum
+      // (which is an approximation that, that entire inode block (and all
+      // the subsequent ones) contains only free inums). That's where we'll
+      // start allocating per-CPU resources from (further down in the code),
+      // in order to avoid initializing CPU0 with nearly no free inums.
+      if (!first_free_inodeblock_inum && !dip->type && i == 0)
+        first_free_inodeblock_inum = inum;
     }
   }
 
@@ -259,7 +268,7 @@ initialize_freeinum_bitmap(void)
   // the same inode blocks.
   static_assert(NINODES/IPB >= NCPU, "No. of inode blocks < NCPU\n");
 
-  u32 ninodeblocks = sb.ninodes/IPB;
+  u32 ninodeblocks = sb.ninodes/IPB - first_free_inodeblock_inum/IPB;
   u32 inodeblocks_per_cpu = ninodeblocks/NCPU;
   u32 inums_per_cpu = inodeblocks_per_cpu * IPB;
 
@@ -268,13 +277,15 @@ initialize_freeinum_bitmap(void)
 
     if (VERBOSE)
       cprintf("Per-CPU inode allocator: CPU %d   inodes [%u - %u]\n",
-              cpu, cpu * inums_per_cpu, ((cpu+1) * inums_per_cpu) - 1);
+              cpu, first_free_inodeblock_inum + cpu * inums_per_cpu,
+              first_free_inodeblock_inum + ((cpu+1) * inums_per_cpu) - 1);
 
     for (u32 inum = cpu * inums_per_cpu; inum < (cpu+1) * inums_per_cpu; inum++) {
       if (!inum)
         continue; // inum 0 is not used, so don't add it to any freelist.
 
-      auto finum = freeinum_bitmap.inum_vector.at(inum);
+      auto finum = freeinum_bitmap.inum_vector.at(inum +
+                                                  first_free_inodeblock_inum);
       finum->cpu = cpu;
       if (finum->is_free)
         freeinum_bitmap.freelists[cpu].inum_freelist.push_back(finum);
@@ -286,10 +297,25 @@ initialize_freeinum_bitmap(void)
   // from other CPUs' freelists.
   if (NCPU * inodeblocks_per_cpu < ninodeblocks) {
     auto list_lock = freeinum_bitmap.reserve_freelist.list_lock.guard();
-    for (u32 inum = NCPU * inums_per_cpu; inum < sb.ninodes; inum++) {
+    for (u32 inum = NCPU * inums_per_cpu;
+         inum + first_free_inodeblock_inum < sb.ninodes; inum++) {
       if (!inum)
         continue; // inum 0 is not used, so don't add it to any freelist.
 
+      auto finum = freeinum_bitmap.inum_vector.at(inum +
+                                                  first_free_inodeblock_inum);
+      finum->cpu = NCPU; // Invalid CPU number to denote reserve pool.
+      if (finum->is_free)
+        freeinum_bitmap.reserve_freelist.inum_freelist.push_back(finum);
+    }
+  }
+
+  // Any other leftover free inums from [1 to first_free_inodeblock_inum) also
+  // go to the reserve pool. Also make sure to set the CPU number for those
+  // free-inums irrespective of whether they are free.
+  {
+    auto list_lock = freeinum_bitmap.reserve_freelist.list_lock.guard();
+    for (u32 inum = 1; inum < first_free_inodeblock_inum; inum++) {
       auto finum = freeinum_bitmap.inum_vector.at(inum);
       finum->cpu = NCPU; // Invalid CPU number to denote reserve pool.
       if (finum->is_free)
