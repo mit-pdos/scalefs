@@ -1613,8 +1613,8 @@ mfs_interface::initialize_freeblock_bitmap()
 {
   sref<buf> bp;
   int b, bi, nbits;
-  u32 blocknum;
   superblock sb;
+  u32 blocknum, first_free_bblock_bit = 0;
 
   get_superblock(&sb, false);
 
@@ -1637,6 +1637,14 @@ mfs_interface::initialize_freeblock_bitmap()
       // free-bits, to speed up freeing and allocation of blocks, respectively.
       free_bit *bit = new free_bit(b + bi, f);
       freeblock_bitmap.bit_vector.push_back(bit);
+
+      // Make note of the first bitmap block (bit) that starts with a free bit
+      // (which is an approximation that, that entire bitmap block (and all
+      // the subsequent ones) contains only free bits). That's where we'll
+      // start allocating per-CPU resources from (further down in the code),
+      // in order to avoid initializing CPU0 with nearly no free bits.
+      if (!first_free_bblock_bit && f && bi == 0)
+        first_free_bblock_bit = b;
     }
   }
 
@@ -1648,7 +1656,7 @@ mfs_interface::initialize_freeblock_bitmap()
   static_assert((NMEGS * BLKS_PER_MEG) / BPB >= NCPU,
                 "No. of bitmap-blocks < NCPU\n");
 
-  u32 nbitblocks = sb.size/BPB;
+  u32 nbitblocks = sb.size/BPB - first_free_bblock_bit/BPB;
   u32 bitblocks_per_cpu = nbitblocks/NCPU;
   u32 bits_per_cpu = bitblocks_per_cpu * BPB;
 
@@ -1657,10 +1665,11 @@ mfs_interface::initialize_freeblock_bitmap()
 
     if (VERBOSE)
       cprintf("Per-CPU block allocator: CPU %d   blocks [%u - %u]\n",
-              cpu, cpu * bits_per_cpu, ((cpu+1) * bits_per_cpu) - 1);
+              cpu, first_free_bblock_bit + cpu * bits_per_cpu,
+              first_free_bblock_bit + ((cpu+1) * bits_per_cpu) - 1);
 
     for (u32 bno = cpu * bits_per_cpu; bno < (cpu+1) * bits_per_cpu; bno++) {
-      auto bit = freeblock_bitmap.bit_vector.at(bno);
+      auto bit = freeblock_bitmap.bit_vector.at(bno + first_free_bblock_bit);
       bit->cpu = cpu;
       if (bit->is_free)
         freeblock_bitmap.freelists[cpu].bit_freelist.push_back(bit);
@@ -1672,7 +1681,21 @@ mfs_interface::initialize_freeblock_bitmap()
   // from other CPUs' freelists.
   if (NCPU * bitblocks_per_cpu < nbitblocks) {
     auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
-    for (u32 bno = NCPU * bits_per_cpu; bno < sb.size; bno++) {
+    for (u32 bno = NCPU * bits_per_cpu; bno + first_free_bblock_bit < sb.size;
+         bno++) {
+      auto bit = freeblock_bitmap.bit_vector.at(bno + first_free_bblock_bit);
+      bit->cpu = NCPU; // Invalid CPU number to denote reserve pool.
+      if (bit->is_free)
+        freeblock_bitmap.reserve_freelist.bit_freelist.push_back(bit);
+    }
+  }
+
+  // Any other leftover free bits from [0 to first_free_bblock_bit) also go
+  // to the reserve pool. Also make sure to set the CPU number for those bits
+  // irrespective of whether they are free.
+  {
+    auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
+    for (u32 bno = 0; bno < first_free_bblock_bit; bno++) {
       auto bit = freeblock_bitmap.bit_vector.at(bno);
       bit->cpu = NCPU; // Invalid CPU number to denote reserve pool.
       if (bit->is_free)
