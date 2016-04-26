@@ -573,7 +573,7 @@ class mfs_interface
     void write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr, int cpu);
-    void write_journal_trans_epilog(u64 timestamp, transaction *tr, int cpu);
+    void write_journal_trans_epilog(u64 timestamp, int cpu);
     transaction* process_journal(int cpu);
     void reset_journal(int cpu);
 

@@ -1158,12 +1158,13 @@ mfs_interface::flush_journal_locked(int cpu)
 
       prune_trans->deduplicate_blocks();
 
-      // Write out the transaction blocks to the disk journal in timestamp order.
+      // Write out the transaction blocks to the on-disk journal and delete trans.
       write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
                                        trans, cpu);
 
-      // This also deletes the trans.
-      write_journal_trans_epilog(prolog_timestamp, trans, cpu);
+      // Commit the transaction by writing the commit record to the on-disk
+      // journal with the given timestamp.
+      write_journal_trans_epilog(prolog_timestamp, cpu);
       iunlock(sv6_journal[cpu]);
 
       // Apply all the committed sub-transactions to their final destinations
@@ -1217,15 +1218,16 @@ mfs_interface::flush_journal_locked(int cpu)
 
   if (!processed_trans_vec.empty()) {
 
-      prune_trans->deduplicate_blocks();
+    prune_trans->deduplicate_blocks();
 
-      // Write out the transaction blocks to the disk journal in timestamp order.
-      write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
-                                       trans, cpu);
+    // Write out the transaction blocks to the on-disk journal and delete trans.
+    write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
+                                     trans, cpu);
   }
 
-  // This also deletes the trans.
-  write_journal_trans_epilog(prolog_timestamp, trans, cpu);
+  // Commit the transaction by writing the commit record to the on-disk journal
+  // with the given timestamp.
+  write_journal_trans_epilog(prolog_timestamp, cpu);
   iunlock(sv6_journal[cpu]);
 
   // Apply all the committed sub-transactions to their final destinations on
@@ -1364,8 +1366,9 @@ mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans,
   write_journal_header(jrnl_start, timestamp, trans, cpu);
 }
 
-// Write a transaction's disk blocks to the journal in memory. Don't write
-// or flush it to the disk yet.
+// Write a transaction's disk blocks to the on-disk journal. The only thing
+// remaining to write to the journal on the disk after this function returns,
+// would be the commit record.
 // Caller must hold ilock for write on sv6_journal.
 void
 mfs_interface::write_journal_transaction_blocks(
@@ -1377,7 +1380,7 @@ mfs_interface::write_journal_transaction_blocks(
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
 
-  // Write out the transaction diskblocks.
+  // Write out the transaction diskblocks to the journal in memory.
   for (auto it = vec.begin(); it != vec.end(); it++) {
 
     journal_block_header hddata(timestamp, (*it)->blocknum, jrnl_data);
@@ -1385,21 +1388,19 @@ mfs_interface::write_journal_transaction_blocks(
     memmove(buf, (void *) &hddata, sizeof(hddata));
     write_journal_hdrblock(buf, (*it)->blockdata, trans, cpu);
   }
+
+  // Write out the disk blocks in the transaction to stable storage (disk).
+  trans->write_to_disk();
+  ideflush();
+  delete trans;
 }
 
 // Caller must hold ilock for write on sv6_journal.
 void
-mfs_interface::write_journal_trans_epilog(u64 timestamp, transaction *trans,
-                                          int cpu)
+mfs_interface::write_journal_trans_epilog(u64 timestamp, int cpu)
 {
-  // Write out the disk blocks in the transaction to stable storage before
-  // committing the transaction.
-  trans->write_to_disk();
-  ideflush();
-  delete trans;
-
   // The transaction ends with a commit block.
-  trans = new transaction(0);
+  transaction *trans = new transaction(0);
 
   write_journal_header(jrnl_commit, timestamp, trans, cpu);
 
