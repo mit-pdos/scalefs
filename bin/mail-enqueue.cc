@@ -54,6 +54,7 @@ public:
     if (fstatx(tmpfd, &st, STAT_OMIT_NLINK) < 0)
       edie("fstat failed");
 
+    fsync(tmpfd);
     close(tmpfd);
 
     // Create envelope
@@ -64,7 +65,16 @@ public:
     if (envfd < 0)
       edie("open %s failed", envname);
     xwrite(envfd, recipient, strlen(recipient));
+    fsync(envfd);
     close(envfd);
+
+    char tododir[256];
+    snprintf(tododir, sizeof tododir, "%s/todo", spooldir_.c_str());
+    int tododirfd = open(tododir, O_RDONLY|O_DIRECTORY);
+    if (tododirfd >= 0) {
+      fsync(tododirfd);
+      close(tododirfd);
+    }
 
     // Move message into spool
     char msgname[256];
@@ -72,6 +82,14 @@ public:
              "%s/mess/%lu", spooldir_.c_str(), (unsigned long)st.st_ino);
     if (rename(tmpname, msgname) < 0)
       edie("rename %s %s failed", tmpname, msgname);
+
+    char messdir[256];
+    snprintf(messdir, sizeof messdir, "%s/mess", spooldir_.c_str());
+    int messdirfd = open(messdir, O_RDONLY|O_DIRECTORY);
+    if (messdirfd >= 0) {
+      fsync(messdirfd);
+      close(messdirfd);
+    }
 
     // Notify queue manager.  We don't need an acknowledgment because
     // we've already "durably" queued the message.

@@ -287,6 +287,8 @@ main(int argc, char **argv)
   xmkdir(mailroot);
   create_maildir(mailroot + "/user");
 
+  sync();
+
   pid_t qman_pid;
   if (START_QMAN) {
     // Start queue manager

@@ -45,6 +45,7 @@ public:
     struct stat st;
     if (fstatx(fd, &st, STAT_OMIT_NLINK) < 0)
       edie("fstat %s failed", tmppath.c_str());
+    fsync(fd);
     close(fd);
 
     // Deliver message
@@ -53,6 +54,14 @@ public:
     newpath.append("/new/").append(unique);
     if (rename(tmppath.c_str(), newpath.c_str()) < 0)
       edie("rename %s %s failed", tmppath.c_str(), newpath.c_str());
+
+    string newdir(maildir_);
+    newdir.append("/new");
+    fd = open(newdir.c_str(), O_RDONLY|O_DIRECTORY);
+    if (fd >= 0) {
+      fsync(fd);
+      close(fd);
+    }
   }
 };
 

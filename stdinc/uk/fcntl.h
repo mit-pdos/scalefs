@@ -14,5 +14,6 @@
 #define O_NONBLOCK 0x4000
 #define O_NDELAY  O_NONBLOCK
 #define O_LARGEFILE 0     // for compatibility with fxmark
+#define O_DIRECTORY 0
 
 #define AT_FDCWD  -100
