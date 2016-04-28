@@ -23,6 +23,20 @@ typedef std::vector<mfs_operation*> mfs_operation_vec;
 typedef std::vector<mfs_operation*>::iterator mfs_operation_iterator;
 typedef struct transaction_diskblock transaction_diskblock;
 
+enum {
+  MFS_OP_CREATE_FILE = 1,
+  MFS_OP_CREATE_DIR,
+  MFS_OP_LINK_FILE,
+  MFS_OP_LINK_DIR,
+  MFS_OP_UNLINK_FILE,
+  MFS_OP_UNLINK_DIR,
+  MFS_OP_RENAME_LINK_FILE,
+  MFS_OP_RENAME_LINK_DIR,
+  MFS_OP_RENAME_UNLINK_FILE,
+  MFS_OP_RENAME_UNLINK_DIR,
+  MFS_OP_RENAME_BARRIER
+};
+
 struct tx_queue_info {
   int id_;		// ID of the transaction queue
   u64 timestamp_;	// The enqueue timestamp of the transaction.
@@ -700,7 +714,8 @@ class mfs_operation
   public:
     NEW_DELETE_OPS(mfs_operation);
 
-    mfs_operation(mfs_interface *p, u64 t): parent_mfs(p), timestamp(t)
+    mfs_operation(mfs_interface *p, u64 t, int op_type)
+      : parent_mfs(p), timestamp(t), operation_type(op_type)
     {
       assert(parent_mfs);
     }
@@ -713,6 +728,7 @@ class mfs_operation
     mfs_interface *parent_mfs;
   public:
     const u64 timestamp;
+    int operation_type; // MFS_OP_CREATE_FILE, MFS_OP_LINK_DIR etc.
 };
 
 class mfs_operation_create: public mfs_operation
@@ -723,7 +739,9 @@ class mfs_operation_create: public mfs_operation
 
     mfs_operation_create(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[],
                          short m_type)
-      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
+      : mfs_operation(p, t, (m_type == T_DIR) ?
+                            MFS_OP_CREATE_DIR : MFS_OP_CREATE_FILE),
+        mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -765,7 +783,9 @@ class mfs_operation_link: public mfs_operation
 
     mfs_operation_link(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[],
                        short m_type)
-      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
+      : mfs_operation(p, t, (m_type == T_DIR) ?
+                            MFS_OP_LINK_DIR : MFS_OP_LINK_FILE),
+        mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -807,7 +827,9 @@ class mfs_operation_unlink: public mfs_operation
 
     mfs_operation_unlink(mfs_interface *p, u64 t, u64 mnum, u64 pt, char nm[],
                          short m_type)
-      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
+      : mfs_operation(p, t, (m_type == T_DIR) ?
+                            MFS_OP_UNLINK_DIR : MFS_OP_UNLINK_FILE),
+        mnode_mnum(mnum), parent_mnum(pt), mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       strncpy(name, nm, DIRSIZ);
@@ -849,8 +871,10 @@ class mfs_operation_rename_link: public mfs_operation
 
     mfs_operation_rename_link(mfs_interface *p, u64 t, char oldnm[], u64 mnum,
                               u64 src_pt, char newnm[], u64 dst_pt, u8 m_type)
-      : mfs_operation(p, t), mnode_mnum(mnum), src_parent_mnum(src_pt),
-        dst_parent_mnum(dst_pt), mnode_type(m_type)
+      : mfs_operation(p, t, (m_type == T_DIR) ?
+                            MFS_OP_RENAME_LINK_DIR : MFS_OP_RENAME_LINK_FILE),
+        mnode_mnum(mnum), src_parent_mnum(src_pt), dst_parent_mnum(dst_pt),
+        mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       newname = new char[DIRSIZ];
@@ -899,8 +923,10 @@ class mfs_operation_rename_unlink: public mfs_operation
 
     mfs_operation_rename_unlink(mfs_interface *p, u64 t, char oldnm[], u64 mnum,
                                 u64 src_pt, char newnm[], u64 dst_pt, u8 m_type)
-      : mfs_operation(p, t), mnode_mnum(mnum), src_parent_mnum(src_pt),
-        dst_parent_mnum(dst_pt), mnode_type(m_type)
+      : mfs_operation(p, t, (m_type == T_DIR) ?
+                            MFS_OP_RENAME_UNLINK_DIR : MFS_OP_RENAME_UNLINK_FILE),
+        mnode_mnum(mnum), src_parent_mnum(src_pt), dst_parent_mnum(dst_pt),
+        mnode_type(m_type)
     {
       name = new char[DIRSIZ];
       newname = new char[DIRSIZ];
@@ -951,8 +977,8 @@ class mfs_operation_rename_barrier: public mfs_operation
 
     mfs_operation_rename_barrier(mfs_interface *p, u64 t, u64 mnum,
                                 u64 parent, u8 m_type)
-      : mfs_operation(p, t), mnode_mnum(mnum), parent_mnum(parent),
-        mnode_type(m_type)
+      : mfs_operation(p, t, MFS_OP_RENAME_BARRIER), mnode_mnum(mnum),
+        parent_mnum(parent), mnode_type(m_type)
     {}
 
     void apply(transaction *tr) override {}
