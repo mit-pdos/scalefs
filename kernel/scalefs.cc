@@ -753,29 +753,23 @@ mfs_interface::process_ops_from_oplog(
     return RET_DONE;
 
   // count == 1 is a special case instruction to process only the 'create'
-  // operation of the mnode.
-  bool process_create = (count == 1) ? true : false;
+  // operation of the mnode. In all other cases, we process all the operations
+  // in the mfs_log (upto and including max_tsc).
+  if (count == 1) {
+    auto it = mfs_log->operation_vec.begin();
+    auto create_op = dynamic_cast<mfs_operation_create*>(*it);
+    if (create_op) {
+      add_op_to_transaction_queue(*it, cpu);
+      mfs_log->operation_vec.erase(it);
+    }
+    return RET_DONE;
+  }
 
-  if (count < 0)
-    count = mfs_log->operation_vec.size();
-
-  if (!process_create && mfs_log->operation_vec.size() > 1)
+  if (mfs_log->operation_vec.size() > 1)
     absorb_file_link_unlink(mfs_log);
 
-  // If count == -1, we process all the operations in the mfs_log (upto
-  // and including max_tsc).
   for (auto it = mfs_log->operation_vec.begin();
-       it != mfs_log->operation_vec.end() && count; count--) {
-
-    if (process_create) {
-      assert(count == 1);
-      auto create_op = dynamic_cast<mfs_operation_create*>(*it);
-      if (create_op) {
-        add_op_to_transaction_queue(*it, cpu);
-        mfs_log->operation_vec.erase(it);
-      }
-      return RET_DONE;
-    }
+       it != mfs_log->operation_vec.end(); ) {
 
     switch ((*it)->operation_type) {
 
@@ -833,7 +827,6 @@ mfs_interface::process_ops_from_oplog(
           if (mfs_log->operation_vec.size() > 1) {
             absorb_file_link_unlink(mfs_log);
             it = mfs_log->operation_vec.begin();
-            count = mfs_log->operation_vec.size() + 1;
           }
           continue;
         }
@@ -854,7 +847,6 @@ mfs_interface::process_ops_from_oplog(
           if (mfs_log->operation_vec.size() > 1) {
             absorb_file_link_unlink(mfs_log);
             it = mfs_log->operation_vec.begin();
-            count = mfs_log->operation_vec.size() + 1;
           }
           continue;
         }
@@ -906,7 +898,6 @@ mfs_interface::process_ops_from_oplog(
           if (mfs_log->operation_vec.size() > 1) {
             absorb_file_link_unlink(mfs_log);
             it = mfs_log->operation_vec.begin();
-            count = mfs_log->operation_vec.size() + 1;
           }
           continue;
         }
