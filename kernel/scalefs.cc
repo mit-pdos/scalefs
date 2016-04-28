@@ -635,6 +635,75 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, int cpu,
   delete op;
 }
 
+// Absorbs file link and unlink operations that cancel each other. Absorption
+// is aborted if renames are encountered (i.e., operations are not cancelled
+// across renames).
+//
+// TODO: Perform absorption across file renames that don't cross directory
+// boundaries.
+//
+// FIXME: Deal with unprocessed 'create' operations (and resources like the
+// mfs_log data structure) of files whose links and unlinks have been
+// completely absorbed.
+//
+// Called with mfs_log's lock and the oplog's sync_lock_ held.
+void
+mfs_interface::absorb_file_link_unlink(mfs_logical_log *mfs_log)
+{
+  std::vector<unsigned long> erase_indices;
+  u64 htable_size = mfs_log->operation_vec.size() * 5;
+  auto linkname_to_index =
+                   new chainhash<strbuf<DIRSIZ>, unsigned long>(htable_size);
+
+  for (auto it = mfs_log->operation_vec.begin();
+       it != mfs_log->operation_vec.end(); it++) {
+
+    switch ((*it)->operation_type) {
+
+    case MFS_OP_LINK_FILE:
+      {
+        auto link_op = dynamic_cast<mfs_operation_link*>(*it);
+        strbuf<DIRSIZ> name(link_op->name);
+        linkname_to_index->insert(name, it - mfs_log->operation_vec.begin());
+      }
+      break;
+
+    case MFS_OP_UNLINK_FILE:
+      {
+        unsigned long index;
+        auto unlink_op = dynamic_cast<mfs_operation_unlink*>(*it);
+        strbuf<DIRSIZ> name(unlink_op->name);
+        if (linkname_to_index->lookup(name, &index)) {
+          // Mark these link and unlink ops for absorption.
+          erase_indices.push_back(it - mfs_log->operation_vec.begin());
+          erase_indices.push_back(index);
+        }
+      }
+      break;
+
+    case MFS_OP_RENAME_LINK_FILE:
+    case MFS_OP_RENAME_LINK_DIR:
+    case MFS_OP_RENAME_UNLINK_FILE:
+    case MFS_OP_RENAME_UNLINK_DIR:
+    case MFS_OP_RENAME_BARRIER:
+      // Don't absorb operations across a rename boundary.
+      goto out;
+
+    default:
+      continue;
+    }
+  }
+
+out:
+  std::sort(erase_indices.begin(), erase_indices.end(),
+            std::greater<unsigned long>());
+
+  for (auto &idx : erase_indices)
+    mfs_log->operation_vec.erase(mfs_log->operation_vec.begin() + idx);
+
+  delete linkname_to_index;
+}
+
 // Return values from process_ops_from_oplog():
 // -------------------------------------------
 enum {
@@ -680,7 +749,7 @@ mfs_interface::process_ops_from_oplog(
   // Synchronize the oplog loggers.
   auto guard = mfs_log->synchronize_upto_tsc(max_tsc);
 
-  if (!mfs_log->operation_vec.size())
+  if (mfs_log->operation_vec.empty())
     return RET_DONE;
 
   // count == 1 is a special case instruction to process only the 'create'
@@ -689,6 +758,9 @@ mfs_interface::process_ops_from_oplog(
 
   if (count < 0)
     count = mfs_log->operation_vec.size();
+
+  if (!process_create && mfs_log->operation_vec.size() > 1)
+    absorb_file_link_unlink(mfs_log);
 
   // If count == -1, we process all the operations in the mfs_log (upto
   // and including max_tsc).
@@ -755,6 +827,14 @@ mfs_interface::process_ops_from_oplog(
         if (rename_barrier_op->mnode_mnum == root_mnum) {
           // Nothing to be done.
           it = mfs_log->operation_vec.erase(it);
+
+          // Retry absorption after processing a rename, if we are not exiting
+          // this function.
+          if (mfs_log->operation_vec.size() > 1) {
+            absorb_file_link_unlink(mfs_log);
+            it = mfs_log->operation_vec.begin();
+            count = mfs_log->operation_vec.size() + 1;
+          }
           continue;
         }
 
@@ -768,6 +848,14 @@ mfs_interface::process_ops_from_oplog(
           // Already processed.
           rename_barrier_stack.pop_back();
           it = mfs_log->operation_vec.erase(it);
+
+          // Retry absorption after processing a rename, if we are not exiting
+          // this function.
+          if (mfs_log->operation_vec.size() > 1) {
+            absorb_file_link_unlink(mfs_log);
+            it = mfs_log->operation_vec.begin();
+            count = mfs_log->operation_vec.size() + 1;
+          }
           continue;
         }
 
@@ -812,6 +900,14 @@ mfs_interface::process_ops_from_oplog(
 
           add_op_to_transaction_queue(r_unlink_op, cpu, tr);
           it = mfs_log->operation_vec.erase(it);
+
+          // Retry absorption after processing a rename, if we are not exiting
+          // this function.
+          if (mfs_log->operation_vec.size() > 1) {
+            absorb_file_link_unlink(mfs_log);
+            it = mfs_log->operation_vec.begin();
+            count = mfs_log->operation_vec.size() + 1;
+          }
           continue;
         }
 
@@ -854,6 +950,7 @@ mfs_interface::process_ops_from_oplog(
     it = mfs_log->operation_vec.erase(it);
   }
 
+  assert(mfs_log->operation_vec.empty());
   return RET_DONE;
 }
 

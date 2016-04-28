@@ -629,6 +629,7 @@ class mfs_interface
     void add_op_to_transaction_queue(mfs_operation *op, int cpu,
                                      transaction *tr = nullptr,
                                      bool skip_add = false);
+    void absorb_file_link_unlink(mfs_logical_log *mfs_log);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
                   int cpu,
                   std::vector<pending_metadata> &pending_stack,
