@@ -712,7 +712,7 @@ mfs_interface::process_ops_from_oplog(
       {
         auto link_op = dynamic_cast<mfs_operation_link*>(*it);
         u64 mnode_inum = 0;
-        if (link_op && !inum_lookup(link_op->mnode_mnum, &mnode_inum)) {
+        if (!inum_lookup(link_op->mnode_mnum, &mnode_inum)) {
           // Add the create operation of the mnode being linked as a dependency.
           pending_stack.push_back({link_op->mnode_mnum, link_op->timestamp, 1});
           return RET_LINK;
@@ -724,29 +724,27 @@ mfs_interface::process_ops_from_oplog(
     case MFS_OP_UNLINK_DIR:
       {
         auto unlink_op = dynamic_cast<mfs_operation_unlink*>(*it);
-        if (unlink_op) {
-          if (unlink_op->mnode_type == mnode::types::dir) {
-            // Flush out all the directory's operations first, before unlinking it.
-            auto mnum = unlink_op->mnode_mnum;
-            if (dirunlink_stack.size() && mnum == dirunlink_stack.back().mnum) {
-              // Already processed.
-              dirunlink_stack.pop_back();
-              unlink_mnum_list.push_back(mnum);
-              // Mark the directory as clean now that it has been flushed.
-              sref<mnode> m = root_fs->mget(mnum);
-              if (m && m->is_dirty())
-                m->dirty(false);
-              add_op_to_transaction_queue(*it, cpu);
-              it = mfs_log->operation_vec.erase(it);
-              continue;
-            }
-
-            dirunlink_stack.push_back({mnum});
-            pending_stack.push_back({mnum, get_tsc(), -1});
-            return RET_DIRUNLINK;
-          } else {
-            unlink_mnum_list.push_back(unlink_op->mnode_mnum);
+        if (unlink_op->mnode_type == mnode::types::dir) {
+          // Flush out all the directory's operations first, before unlinking it.
+          auto mnum = unlink_op->mnode_mnum;
+          if (dirunlink_stack.size() && mnum == dirunlink_stack.back().mnum) {
+            // Already processed.
+            dirunlink_stack.pop_back();
+            unlink_mnum_list.push_back(mnum);
+            // Mark the directory as clean now that it has been flushed.
+            sref<mnode> m = root_fs->mget(mnum);
+            if (m && m->is_dirty())
+              m->dirty(false);
+            add_op_to_transaction_queue(*it, cpu);
+            it = mfs_log->operation_vec.erase(it);
+            continue;
           }
+
+          dirunlink_stack.push_back({mnum});
+          pending_stack.push_back({mnum, get_tsc(), -1});
+          return RET_DIRUNLINK;
+        } else {
+          unlink_mnum_list.push_back(unlink_op->mnode_mnum);
         }
       }
       break;
@@ -754,31 +752,28 @@ mfs_interface::process_ops_from_oplog(
     case MFS_OP_RENAME_BARRIER:
       {
         auto rename_barrier_op = dynamic_cast<mfs_operation_rename_barrier*>(*it);
-
-        if (rename_barrier_op) {
-          if (rename_barrier_op->mnode_mnum == root_mnum) {
-            // Nothing to be done.
-            it = mfs_log->operation_vec.erase(it);
-            continue;
-          }
-
-          auto mnum = rename_barrier_op->mnode_mnum;
-          auto parent_mnum = rename_barrier_op->parent_mnum;
-          auto timestamp = rename_barrier_op->timestamp;
-
-          if (rename_barrier_stack.size() &&
-              mnum == rename_barrier_stack.back().mnode_mnum &&
-              timestamp == rename_barrier_stack.back().timestamp) {
-            // Already processed.
-            rename_barrier_stack.pop_back();
-            it = mfs_log->operation_vec.erase(it);
-            continue;
-          }
-
-          rename_barrier_stack.push_back({mnum, timestamp});
-          pending_stack.push_back({parent_mnum, timestamp, -1});
-          return RET_RENAME_BARRIER;
+        if (rename_barrier_op->mnode_mnum == root_mnum) {
+          // Nothing to be done.
+          it = mfs_log->operation_vec.erase(it);
+          continue;
         }
+
+        auto mnum = rename_barrier_op->mnode_mnum;
+        auto parent_mnum = rename_barrier_op->parent_mnum;
+        auto timestamp = rename_barrier_op->timestamp;
+
+        if (rename_barrier_stack.size() &&
+            mnum == rename_barrier_stack.back().mnode_mnum &&
+            timestamp == rename_barrier_stack.back().timestamp) {
+          // Already processed.
+          rename_barrier_stack.pop_back();
+          it = mfs_log->operation_vec.erase(it);
+          continue;
+        }
+
+        rename_barrier_stack.push_back({mnum, timestamp});
+        pending_stack.push_back({parent_mnum, timestamp, -1});
+        return RET_RENAME_BARRIER;
       }
       break;
 
@@ -790,69 +785,66 @@ mfs_interface::process_ops_from_oplog(
         auto rename_link_op = dynamic_cast<mfs_operation_rename_link*>(*it);
         auto rename_unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(*it);
 
-        if (rename_link_op || rename_unlink_op) {
+        // If this not a cross-directory rename, deal with it separately. If
+        // that's the case indeed, we are guaranteed to find rename-link-op first,
+        // followed by rename-unlink-op.
+        // TODO: Modify apply_rename_pair() to also handle this, instead of treating
+        // it as a special case here.
+        if (rename_link_op &&
+            rename_link_op->src_parent_mnum == rename_link_op->dst_parent_mnum) {
 
-          // If this not a cross-directory rename, deal with it separately. If
-          // that's the case indeed, we are guaranteed to find rename-link-op first,
-          // followed by rename-unlink-op.
-          // TODO: Modify apply_rename_pair() to also handle this, instead of treating
-          // it as a special case here.
-          if (rename_link_op &&
-              rename_link_op->src_parent_mnum == rename_link_op->dst_parent_mnum) {
+          transaction *tr = nullptr;
 
-            transaction *tr = nullptr;
+          // Make sure that both parts of the rename operation are applied within
+          // the same transaction, to preserve atomicity.
+          tr = new transaction(rename_link_op->timestamp);
 
-            // Make sure that both parts of the rename operation are applied within
-            // the same transaction, to preserve atomicity.
-            tr = new transaction(rename_link_op->timestamp);
+          // Set 'skip_add' to true, to avoid adding the transaction to the journal
+          // before it is fully formed.
+          add_op_to_transaction_queue(rename_link_op, cpu, tr, true);
+          it = mfs_log->operation_vec.erase(it);
 
-            // Set 'skip_add' to true, to avoid adding the transaction to the journal
-            // before it is fully formed.
-            add_op_to_transaction_queue(rename_link_op, cpu, tr, true);
-            it = mfs_log->operation_vec.erase(it);
+          // The very next operation in this oplog *has* to be the corresponding
+          // rename_unlink_op.
+          auto r_unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(*it);
+          assert(r_unlink_op && r_unlink_op->timestamp == rename_link_op->timestamp
+                 && r_unlink_op->src_parent_mnum == r_unlink_op->dst_parent_mnum);
 
-            // The very next operation in this oplog *has* to be the corresponding
-            // rename_unlink_op.
-            auto r_unlink_op = dynamic_cast<mfs_operation_rename_unlink*>(*it);
-            assert(r_unlink_op && r_unlink_op->timestamp == rename_link_op->timestamp
-                   && r_unlink_op->src_parent_mnum == r_unlink_op->dst_parent_mnum);
-
-            add_op_to_transaction_queue(r_unlink_op, cpu, tr);
-            it = mfs_log->operation_vec.erase(it);
-            continue;
-          }
-
-          // Cross-directory renames, of both files and directories are handled below.
-
-          // Check if this is the counterpart of the latest rename sub-operation
-          // that we know of.
-
-          u64 rename_timestamp = 0;
-          if (rename_stack.size())
-            rename_timestamp = rename_stack.back().timestamp;
-
-          if (rename_link_op) {
-            rename_stack.push_back({rename_link_op->src_parent_mnum,
-                                    rename_link_op->dst_parent_mnum,
-                                    rename_link_op->timestamp});
-            // We have the link part of the rename, so add the unlink part as a
-            // dependency.
-            pending_stack.push_back({rename_link_op->src_parent_mnum,
-                                     rename_link_op->timestamp, -1});
-          } else if (rename_unlink_op) {
-            rename_stack.push_back({rename_unlink_op->src_parent_mnum,
-                                    rename_unlink_op->dst_parent_mnum,
-                                    rename_unlink_op->timestamp});
-            // We have the unlink part of the rename, so add the link part as a
-            // dependency.
-            pending_stack.push_back({rename_unlink_op->dst_parent_mnum,
-                                     rename_unlink_op->timestamp, -1});
-          }
-
-          if (rename_timestamp && (*it)->timestamp == rename_timestamp)
-            return RET_RENAME_PAIR;
-          return RET_RENAME_SUBOP;
+          add_op_to_transaction_queue(r_unlink_op, cpu, tr);
+          it = mfs_log->operation_vec.erase(it);
+          continue;
         }
+
+        // Cross-directory renames, of both files and directories are handled below.
+
+        // Check if this is the counterpart of the latest rename sub-operation
+        // that we know of.
+
+        u64 rename_timestamp = 0;
+        if (rename_stack.size())
+          rename_timestamp = rename_stack.back().timestamp;
+
+        if (rename_link_op) {
+          rename_stack.push_back({rename_link_op->src_parent_mnum,
+                                  rename_link_op->dst_parent_mnum,
+                                  rename_link_op->timestamp});
+          // We have the link part of the rename, so add the unlink part as a
+          // dependency.
+          pending_stack.push_back({rename_link_op->src_parent_mnum,
+                                   rename_link_op->timestamp, -1});
+        } else if (rename_unlink_op) {
+          rename_stack.push_back({rename_unlink_op->src_parent_mnum,
+                                  rename_unlink_op->dst_parent_mnum,
+                                  rename_unlink_op->timestamp});
+          // We have the unlink part of the rename, so add the link part as a
+          // dependency.
+          pending_stack.push_back({rename_unlink_op->dst_parent_mnum,
+                                   rename_unlink_op->timestamp, -1});
+        }
+
+        if (rename_timestamp && (*it)->timestamp == rename_timestamp)
+          return RET_RENAME_PAIR;
+        return RET_RENAME_SUBOP;
       }
       break;
 
