@@ -2076,10 +2076,51 @@ mfs_interface::revive_unreachable_inode(u32 inum, transaction *tr)
 }
 
 void
-mfs_interface::initialize_inode_reclaim()
+mfs_interface::reclaim_unreachable_inodes()
 {
   sv6_inode_reclaim = namei(sref<inode>(), "/inodereclaim");
   assert(sv6_inode_reclaim);
+
+  sref<inode> sv6_irp = sv6_inode_reclaim;
+
+  if (!sv6_irp->size)
+    return;
+
+  u32 dead_inum = 0;
+  int cpu = myid();
+
+  ilock(sv6_irp, WRITELOCK);
+  for (int offset = 0; offset < sv6_irp->size; offset += sizeof(dead_inum)) {
+    if (readi(sv6_irp, (char *)&dead_inum, offset, sizeof(dead_inum)
+              != sizeof(dead_inum)))
+      panic("reclaim_unreachable_inodes: Call to readi() failed!\n");
+
+    if (dead_inum == 0)
+      continue;  // Invalid inode number; it just indicates an empty slot.
+
+    transaction *tr = new transaction();
+
+    sref<inode> dead_ip = iget(1, dead_inum);
+
+    ilock(dead_ip, WRITELOCK);
+    itrunc(dead_ip, 0, tr);
+    iunlock(dead_ip);
+
+    // TODO: This works fine when deleting files or empty directories, but we
+    // will have to do a recursive unlink/delete when dealing with unreachable
+    // non-empty directories.
+    free_inode(dead_ip, tr);
+    add_transaction_to_queue(tr, cpu);
+  }
+
+  // Reset the inode-reclaim file.
+  transaction *trans = new transaction();
+  sv6_irp->size = 0;
+  iupdate(sv6_irp, trans);
+  add_transaction_to_queue(trans, cpu);
+  iunlock(sv6_irp);
+
+  flush_journal(cpu);
 }
 
 // Allocates a lock for every inode block and every bitmap block.
@@ -2202,18 +2243,22 @@ initfs()
     txns_to_apply.clear();
   }
 
-  rootfs_interface->initialize_inode_reclaim();
+  // If a newly created file (or directory) is fsynced, but its link in the
+  // parent is not flushed (by fsyncing the parent directory), the file is
+  // potentially unreachable on the disk. If we indeed crash without fsyncing
+  // the parent directory, the file (or child directory) must be deleted/
+  // reclaimed during crash-recovery upon reboot. A similar situation arises
+  // if the last link to an on-disk file or directory is removed (unlinked)
+  // but userspace still holds open file descriptors to it at the time of
+  // fsync; in that case, its inode cannot be deleted from the disk at the
+  // time of fsync, but must be postponed until reboot. We reclaim such
+  // dead/unreachable inodes here during reboot.
+  rootfs_interface->reclaim_unreachable_inodes();
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
   // bitmap blocks too!
   rootfs_interface->initialize_freeblock_bitmap();
-
-  // If a file or directory is unlinked but userspace still holds open file
-  // descriptors to it at the time of fsync, its inode cannot be deleted from
-  // the disk. We postpone the deletion in such cases and reclaim those inodes
-  // here during reboot.
-  // TODO: Reimplement this.
 
   rootfs_interface->alloc_inodebitmap_locks();
 

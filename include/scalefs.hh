@@ -671,7 +671,7 @@ class mfs_interface
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
     void mark_unreachable_inode(u32 inum, transaction *tr);
     void revive_unreachable_inode(u32 inum, transaction *tr);
-    void initialize_inode_reclaim();
+    void reclaim_unreachable_inodes();
 
     // Block allocator functionality
     void initialize_freeblock_bitmap();
