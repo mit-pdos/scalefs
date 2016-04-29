@@ -108,7 +108,7 @@ sref<inode>     iget(u32 dev, u32 inum);
 #define		READLOCK	0
 #define		WRITELOCK	1
 void            ilock(sref<inode>, int lock_type);
-void            iupdate(sref<inode>, transaction *trans = NULL);
+void            iupdate(sref<inode>, transaction *trans);
 void            iunlock(sref<inode>);
 void            drop_bufcache(sref<inode> ip);
 void            itrunc(sref<inode>, u32 offset = 0, transaction *trans = NULL);

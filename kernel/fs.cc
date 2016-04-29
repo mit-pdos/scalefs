@@ -519,8 +519,7 @@ iupdate(sref<inode> ip, transaction *trans)
   dip->size = ip->size;
   dip->gen = ip->gen;
   memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
-  if (trans)
-    bp->add_to_transaction(trans);
+  bp->add_to_transaction(trans);
 }
 
 inode::inode(u32 d, u32 i)
