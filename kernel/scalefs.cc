@@ -209,6 +209,16 @@ mfs_interface::create_file(u64 mnum, u8 type, transaction *tr)
   // Buffer-cache updates start here.
   ilock(ip, WRITELOCK);
   iupdate(ip, tr);
+
+  // This file is going to be unreachable on the disk at least until its link in
+  // the parent is flushed by fsyncing the parent directory. So add it to the
+  // inode-reclaim list. Note that if the parent is fsynced first, it will flush
+  // the 'create' operation of the newly created file/sub-directory as a
+  // dependency; so we will always get to execute first and hence there is no
+  // problem with respect to ordering the marking and revival of the inode from
+  // the inode-reclaim list.
+  mark_unreachable_inode(ip->inum, tr);
+
   iunlock(ip);
 }
 
@@ -250,6 +260,20 @@ mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
     iupdate(parent_ip, tr);
     iunlock(parent_ip);
   }
+
+  // This sub-directory is going to be unreachable on the disk at least until
+  // its link in the parent is flushed by fsyncing the parent directory. So add
+  // it to the inode-reclaim list. Note that if the parent is fsynced first, it
+  // will flush the 'create' operation of the newly created file/sub-directory
+  // as a dependency; so we will always get to execute first and hence there is
+  // no problem with respect to ordering the marking and revival of the inode
+  // from the inode-reclaim list.
+  mark_unreachable_inode(subdir_ip->inum, tr);
+
+  // Mark the parent too, if it was also newly created.
+  if (parent_ip)
+    mark_unreachable_inode(parent_ip->inum, tr);
+
   iunlock(subdir_ip);
 }
 
@@ -292,10 +316,17 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 
   sref<inode> dirent_ip = iget(1, dirent_inum);
 
+  // Buffer-cache updates start here.
   ilock(mdir_ip, WRITELOCK);
   ilock(dirent_ip, WRITELOCK);
-  // Buffer-cache updates start here.
   dirlink(mdir_ip, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
+
+  // Revive the inode from the inode-reclaim list, since we are flushing the
+  // link pointing to it in its parent directory. (The parent itself might be
+  // unreachable, in which case the parent will be in the inode-reclaim list
+  // and the crash-recovery code will reclaim all its files and sub-directories
+  // recursively upon reboot).
+  revive_unreachable_inode(dirent_inum, tr);
   iunlock(dirent_ip);
   iunlock(mdir_ip);
 }
@@ -344,6 +375,9 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
       // descriptors have been closed as well). So it is safe to delete its
       // inode from the disk.
       delete_mnum_inode(mnum, tr);
+      // We already deleted the inode, so it doesn't need to be on the
+      // inode-reclaim list anymore.
+      revive_unreachable_inode(target->inum, tr);
     }
   }
 }
