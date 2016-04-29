@@ -671,7 +671,7 @@ class mfs_interface
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
     void mark_unreachable_inode(u32 inum, transaction *tr);
     void revive_unreachable_inode(u32 inum, transaction *tr);
-    void reclaim_unreachable_inodes();
+    void reclaim_unreachable_inodes(int cpu);
 
     // Block allocator functionality
     void initialize_freeblock_bitmap();
@@ -722,14 +722,21 @@ class mfs_interface
 
   public:
     percpu<journal*> fs_journal;
-    inode_reclaim* fs_inode_reclaim;
+    percpu<inode_reclaim*> fs_inode_reclaim;
     percpu<sref<inode> > sv6_journal;
-    sref<inode> sv6_inode_reclaim;
+    percpu<sref<inode> > sv6_inode_reclaim;
 
     // A hash-table to track the last transaction(*) that modified a given
     // inode-block or bitmap-block. (* = specifically, which journal's
     // transaction-queue that transaction went into and at what timestamp).
     chainhash<u32, tx_queue_info> *blocknum_to_queue;
+
+    // Given an (unreachable) inode marked for deletion upon reboot, this
+    // hash-table tells us which per-CPU inode-reclaim file it was marked in.
+    // This helps us revive the inode (i.e., delete it from that inode-reclaim
+    // file) when it becomes reachable again, for example, when we flush a
+    // link to the inode by fsyncing its parent directory.
+    chainhash<u32, int> *deadinum_to_cpu;
 
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log

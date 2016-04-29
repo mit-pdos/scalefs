@@ -11,16 +11,18 @@
 
 mfs_interface::mfs_interface()
 {
-  for (int cpu = 0; cpu < NCPU; cpu++)
+  for (int cpu = 0; cpu < NCPU; cpu++) {
     fs_journal[cpu] = new journal();
+    fs_inode_reclaim[cpu] = new inode_reclaim(NINODES_PRIME);
+  }
 
-  fs_inode_reclaim = new inode_reclaim(NINODES_PRIME);
   inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
   mnum_to_name = new chainhash<u64, strbuf<DIRSIZ>>(NINODES_PRIME); // Debug
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
   blocknum_to_queue = new chainhash<u32, tx_queue_info>(NINODEBITMAP_BLKS_PRIME);
+  deadinum_to_cpu = new chainhash<u32, int>(NINODES_PRIME);
 }
 
 bool
@@ -2026,8 +2028,13 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
 void
 mfs_interface::mark_unreachable_inode(u32 inum, transaction *tr)
 {
-  inode_reclaim* fs_irp = fs_inode_reclaim;
-  sref<inode> sv6_irp = sv6_inode_reclaim;
+  int cpu = myid();
+
+  if (!deadinum_to_cpu->insert(inum, cpu))
+    return; // We must have added it earlier.
+
+  inode_reclaim* fs_irp = fs_inode_reclaim[cpu];
+  sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
 
   assert(fs_irp->insert(inum, fs_irp->next_offset));
 
@@ -2050,12 +2057,23 @@ mfs_interface::mark_unreachable_inode(u32 inum, transaction *tr)
 void
 mfs_interface::revive_unreachable_inode(u32 inum, transaction *tr)
 {
-  inode_reclaim* fs_irp = fs_inode_reclaim;
-  sref<inode> sv6_irp = sv6_inode_reclaim;
+  int cpu;
+
+  if (!deadinum_to_cpu->lookup(inum, &cpu))
+    return; // TODO: Determine whether this is fatal depending on the usage.
+
+  if (!deadinum_to_cpu->remove(inum))
+    return; // Someone else beat us to it.
+
+  // Since we were successful in removing the inode from the hash-table,
+  // we are now responsible to remove it from the appropriate on-disk
+  // inode-reclaim file.
+
+  inode_reclaim* fs_irp = fs_inode_reclaim[cpu];
+  sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
 
   u32 inum_offset;
-  if (!fs_irp->lookup(inum, &inum_offset))
-    return; // TODO: Whether or not this is fatal depends on the usage.
+  assert(fs_irp->lookup(inum, &inum_offset));
 
   ilock(sv6_irp, WRITELOCK);
   assert(fs_irp->remove(inum));
@@ -2076,20 +2094,21 @@ mfs_interface::revive_unreachable_inode(u32 inum, transaction *tr)
 }
 
 void
-mfs_interface::reclaim_unreachable_inodes()
+mfs_interface::reclaim_unreachable_inodes(int cpu)
 {
-  sv6_inode_reclaim = namei(sref<inode>(), "/inodereclaim");
-  assert(sv6_inode_reclaim);
+  char path[32];
+  snprintf(path, sizeof(path), "/inodereclaim%d", cpu);
+  sv6_inode_reclaim[cpu] = namei(sref<inode>(), path);
+  assert(sv6_inode_reclaim[cpu]);
 
-  sref<inode> sv6_irp = sv6_inode_reclaim;
+  sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
 
   if (!sv6_irp->size)
     return;
 
   u32 dead_inum = 0;
-  int cpu = myid();
-
   ilock(sv6_irp, WRITELOCK);
+
   for (int offset = 0; offset < sv6_irp->size; offset += sizeof(dead_inum)) {
     if (readi(sv6_irp, (char *)&dead_inum, offset, sizeof(dead_inum)
               != sizeof(dead_inum)))
@@ -2253,7 +2272,8 @@ initfs()
   // fsync; in that case, its inode cannot be deleted from the disk at the
   // time of fsync, but must be postponed until reboot. We reclaim such
   // dead/unreachable inodes here during reboot.
-  rootfs_interface->reclaim_unreachable_inodes();
+  for (int cpu = 0; cpu < NCPU; cpu++)
+    rootfs_interface->reclaim_unreachable_inodes(cpu);
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
