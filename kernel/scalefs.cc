@@ -14,6 +14,7 @@ mfs_interface::mfs_interface()
   for (int cpu = 0; cpu < NCPU; cpu++)
     fs_journal[cpu] = new journal();
 
+  fs_inode_reclaim = new inode_reclaim(NINODES_PRIME);
   inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_lock = new chainhash<u64, sleeplock*>(NINODES_PRIME);
@@ -335,7 +336,7 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
       // It looks like userspace still has open file descriptors referring to
       // this mnode, so it is not safe to delete its on-disk inode just yet.
       // So mark it for deletion and postpone it until reboot.
-      defer_inode_reclaim(target->inum);
+      mark_unreachable_inode(target->inum, tr);
     } else {
       // The mnode is gone (which also implies that all its open file
       // descriptors have been closed as well). So it is safe to delete its
@@ -2007,10 +2008,78 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
   return s.get_used();
 }
 
+// Locking considerations for mark/revive_unreachable_inode():
+// ----------------------------------------------------------
+// Even though in principle, different transactions can concurrently invoke
+// mark_unreachable_inode() and/or revive_unreachable_inode() to update the
+// on-disk inode-reclaim file, we don't actually need to perform two-phase
+// locking to preserve the order of updates all the way until those transactions
+// commit and apply to disk. That's because, we already do two-phase locking for
+// inode-blocks, and the set of inodes that a transaction might mark for
+// deletion or revival is a subset of the inodes that we do two-phase locking
+// on. So the same two-phase locking will also provide the necessary
+// synchronization between transactions that update the inode-reclaim file and
+// will also preserve their ordering during commit and apply on the disk.
+
+// The caller must have already acquired the appropriate inode-block locks
+// by invoking acquire_inodebitmap_locks().
 void
-mfs_interface::defer_inode_reclaim(u32 inum)
+mfs_interface::mark_unreachable_inode(u32 inum, transaction *tr)
 {
-  // TODO: Reimplement this.
+  inode_reclaim* fs_irp = fs_inode_reclaim;
+  sref<inode> sv6_irp = sv6_inode_reclaim;
+
+  assert(fs_irp->insert(inum, fs_irp->next_offset));
+
+  ilock(sv6_irp, WRITELOCK);
+  if (writei(sv6_irp, (char *)&inum, fs_irp->next_offset, sizeof(inum), tr)
+             != sizeof(inum))
+    panic("mark_unreachable_inode: Call to writei() failed!\n");
+
+  fs_irp->next_offset += sizeof(inum);
+  // We always append new inode numbers without reusing any empty slots, so the
+  // size keeps growing.
+  sv6_irp->size += sizeof(inum);
+  assert(sv6_irp->size <= INODE_RECLAIM_SIZE);
+  iupdate(sv6_irp, tr);
+  iunlock(sv6_irp);
+}
+
+// The caller must have already acquired the appropriate inode-block locks
+// by invoking acquire_inodebitmap_locks().
+void
+mfs_interface::revive_unreachable_inode(u32 inum, transaction *tr)
+{
+  inode_reclaim* fs_irp = fs_inode_reclaim;
+  sref<inode> sv6_irp = sv6_inode_reclaim;
+
+  u32 inum_offset;
+  if (!fs_irp->lookup(inum, &inum_offset))
+    return; // TODO: Whether or not this is fatal depends on the usage.
+
+  ilock(sv6_irp, WRITELOCK);
+  assert(fs_irp->remove(inum));
+  u32 zero_inum = 0;
+  if (writei(sv6_irp, (char *)&zero_inum, inum_offset, sizeof(zero_inum), tr)
+             != sizeof(zero_inum))
+    panic("revive_unreachable_inode: Call to writei() failed!\n");
+
+  // Opportunistically shrink the inode-reclaim file, if we happened to remove
+  // the last entry.
+  if (inum_offset + sizeof(zero_inum) == fs_irp->next_offset) {
+    fs_irp->next_offset -= sizeof(zero_inum);
+    sv6_irp->size -= sizeof(zero_inum);
+  }
+
+  iupdate(sv6_irp, tr);
+  iunlock(sv6_irp);
+}
+
+void
+mfs_interface::initialize_inode_reclaim()
+{
+  sv6_inode_reclaim = namei(sref<inode>(), "/inodereclaim");
+  assert(sv6_inode_reclaim);
 }
 
 // Allocates a lock for every inode block and every bitmap block.
@@ -2132,6 +2201,8 @@ initfs()
 
     txns_to_apply.clear();
   }
+
+  rootfs_interface->initialize_inode_reclaim();
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free

@@ -459,6 +459,32 @@ class journal {
     condvar commit_cv_, apply_cv_;
 };
 
+class inode_reclaim {
+  friend mfs_interface;
+public:
+  NEW_DELETE_OPS(inode_reclaim);
+
+  inode_reclaim(u64 size) : map_(size), next_offset(0) {}
+  ~inode_reclaim() {}
+
+  bool lookup(const u32 inum, u32 *offsetp) {
+    return map_.lookup(inum, offsetp);
+  }
+
+  bool insert(const u32 inum, const u32 offset) {
+    return map_.insert(inum, offset);
+  }
+
+  bool remove(const u32 inum) {
+    return map_.remove(inum);
+  }
+
+private:
+  // Mapping from inode number to its offset in the on-disk inode-reclaim file.
+  chainhash<u32, u32> map_;
+  u32 next_offset; // Points to where we can add the next inum entry.
+};
+
 // This class acts as an interfacing layer between the in-memory representation
 // of the filesystem and the on-disk representation. It provides functions to
 // convert mnode operations to inode operations and vice versa. This also
@@ -643,7 +669,9 @@ class mfs_interface
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
     void mfs_rename_link(mfs_operation_rename_link *op, transaction *tr);
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
-    void defer_inode_reclaim(u32 inum);
+    void mark_unreachable_inode(u32 inum, transaction *tr);
+    void revive_unreachable_inode(u32 inum, transaction *tr);
+    void initialize_inode_reclaim();
 
     // Block allocator functionality
     void initialize_freeblock_bitmap();
@@ -694,7 +722,9 @@ class mfs_interface
 
   public:
     percpu<journal*> fs_journal;
+    inode_reclaim* fs_inode_reclaim;
     percpu<sref<inode> > sv6_journal;
+    sref<inode> sv6_inode_reclaim;
 
     // A hash-table to track the last transaction(*) that modified a given
     // inode-block or bitmap-block. (* = specifically, which journal's
