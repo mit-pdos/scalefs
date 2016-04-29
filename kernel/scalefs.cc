@@ -472,7 +472,7 @@ mfs_interface::evict_bufcache()
 
   cprintf("evict_caches: dropping buffer-cache blocks\n");
 
-  get_superblock(&sb, false);
+  get_superblock(&sb);
 
   for (u64 inum = 0; inum < sb.ninodes; inum++) {
     u64 mnum;
@@ -494,7 +494,7 @@ mfs_interface::evict_pagecache()
 
   cprintf("evict_caches: dropping page-cache pages\n");
 
-  get_superblock(&sb, false);
+  get_superblock(&sb);
 
   for (u64 inum = 0; inum < sb.ninodes; inum++) {
     u64 mnum;
@@ -1749,7 +1749,7 @@ mfs_interface::initialize_freeblock_bitmap()
   superblock sb;
   u32 blocknum, first_free_bblock_bit = 0;
 
-  get_superblock(&sb, false);
+  get_superblock(&sb);
 
   // Allocate the memory for the bit_vector in one shot, instead of doing it
   // piecemeal using .push_back() in a loop.
@@ -1916,7 +1916,7 @@ try_neighbor:
 
   panic("alloc_block(): Out of blocks on CPU %d\n", cpu);
 
-  get_superblock(&sb, false);
+  get_superblock(&sb);
   return sb.size; // out of blocks
 }
 
@@ -2007,31 +2007,10 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
   return s.get_used();
 }
 
-// FIXME: Write back the superblock using the same transaction in whose
-// context this function was invoked.
 void
 mfs_interface::defer_inode_reclaim(u32 inum)
 {
-  // FIXME: This is not scalable because of the global lock, and can hurt
-  // performance if this path is taken very often.
-  auto lock = inode_reclaim_lock.guard();
-
-  superblock sb;
-  get_superblock(&sb, true);
-
-  if (sb.num_reclaim_inodes >= NRECLAIM_INODES) {
-    cprintf("WARNING: No space left to mark inodes for deferred deletion!\n");
-    return;
-  }
-
-  sb.reclaim_inodes[sb.num_reclaim_inodes++] = inum;
-
-  sref<buf> bp = buf::get(1, 1);
-  {
-    auto locked = bp->write();
-    memmove(locked->data, &sb, sizeof(sb));
-  }
-  bp->writeback();
+  // TODO: Reimplement this.
 }
 
 // Allocates a lock for every inode block and every bitmap block.
@@ -2039,7 +2018,7 @@ void
 mfs_interface::alloc_inodebitmap_locks()
 {
   superblock sb;
-  get_superblock(&sb, false);
+  get_superblock(&sb);
 
   // The superblock is immediately followed by the inode blocks, which in turn
   // are immediately followed by the bitmap blocks. So we allocate locks for
@@ -2089,7 +2068,7 @@ mfs_interface::acquire_inodebitmap_locks(std::vector<u64> &num_list, int type,
     break;
 
   case BITMAP_BLOCK:
-    get_superblock(&sb, false);
+    get_superblock(&sb);
 
     for (auto &n : num_list) {
       blocknum = BBLOCK(n, sb.ninodes);
@@ -2163,44 +2142,9 @@ initfs()
   // descriptors to it at the time of fsync, its inode cannot be deleted from
   // the disk. We postpone the deletion in such cases and reclaim those inodes
   // here during reboot.
-  u64 inum;
-  superblock sb;
+  // TODO: Reimplement this.
 
-  get_superblock(&sb, true);
   rootfs_interface->alloc_inodebitmap_locks();
-
-  if (sb.num_reclaim_inodes) {
-
-    int cpu = myid();
-    for (int i = 0; i < sb.num_reclaim_inodes; i++) {
-      if (!(inum = sb.reclaim_inodes[i]))
-        continue;
-
-      u64 tsc = get_tsc();
-      transaction *tr = new transaction(tsc);
-
-      sref<inode> ip = iget(1, inum);
-
-      ilock(ip, WRITELOCK);
-      itrunc(ip, 0, tr);
-      iunlock(ip);
-
-      free_inode(ip, tr);
-      rootfs_interface->add_transaction_to_queue(tr, cpu);
-      sb.reclaim_inodes[i] = 0;
-    }
-
-    rootfs_interface->flush_journal(cpu);
-
-    // Reset the reclaim_inodes[] list in the on-disk superblock.
-    sb.num_reclaim_inodes = 0;
-    sref<buf> bp = buf::get(1, 1);
-    {
-      auto locked = bp->write();
-      memmove(locked->data, &sb, sizeof(sb));
-    }
-    bp->writeback();
-  }
 
   devsw[MAJ_BLKSTATS].pread = blkstatsread;
   devsw[MAJ_EVICTCACHES].write = evict_caches;

@@ -19,13 +19,10 @@
 // File system super block
 // assert(sizeof(superblock) <= BSIZE)
 
-#define NRECLAIM_INODES	1020
 struct superblock {
   u32 size;         // Size of file system image (blocks)
   u32 nblocks;      // Number of data blocks
   u32 ninodes;      // Number of inodes.
-  u32 num_reclaim_inodes; // Marks how many entries have been allocated.
-  u32 reclaim_inodes[NRECLAIM_INODES]; // Inodes to be freed/reclaimed on reboot.
 };
 
 #define NDIRECT 10

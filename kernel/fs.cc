@@ -61,17 +61,11 @@ readsb(int dev, struct superblock *sb)
 }
 
 void
-get_superblock(struct superblock *sb, bool get_reclaim_inodes)
+get_superblock(struct superblock *sb)
 {
   sb->size = sb_root.size;
   sb->ninodes = sb_root.ninodes;
   sb->nblocks = sb_root.nblocks;
-
-  if (get_reclaim_inodes) {
-    sb->num_reclaim_inodes = sb_root.num_reclaim_inodes;
-    for (int i = 0; i < sb_root.num_reclaim_inodes; i++)
-      sb->reclaim_inodes[i] = sb_root.reclaim_inodes[i];
-  }
 }
 
 // Zero the in-memory buffer-cache block corresponding to a disk block.
@@ -231,7 +225,7 @@ initialize_freeinum_bitmap(void)
   int ninums;
   u32 first_free_inodeblock_inum = 0;
 
-  get_superblock(&sb, false);
+  get_superblock(&sb);
 
   // Allocate the memory for the inum_vector in one shot, instead of doing it
   // piecemeal using .push_back() in a loop.
