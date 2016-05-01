@@ -2070,6 +2070,7 @@ mfs_interface::mark_unreachable_inode(u32 inum, transaction *tr)
   inode_reclaim* fs_irp = fs_inode_reclaim[cpu];
   sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
 
+  assert(fs_irp->next_offset + sizeof(inum) <= INODE_RECLAIM_SIZE);
   assert(fs_irp->insert(inum, fs_irp->next_offset));
 
   ilock(sv6_irp, WRITELOCK);
@@ -2078,11 +2079,6 @@ mfs_interface::mark_unreachable_inode(u32 inum, transaction *tr)
     panic("mark_unreachable_inode: Call to writei() failed!\n");
 
   fs_irp->next_offset += sizeof(inum);
-  // We always append new inode numbers without reusing any empty slots, so the
-  // size keeps growing.
-  sv6_irp->size += sizeof(inum);
-  assert(sv6_irp->size <= INODE_RECLAIM_SIZE);
-  iupdate(sv6_irp, tr);
   iunlock(sv6_irp);
 }
 
@@ -2118,12 +2114,9 @@ mfs_interface::revive_unreachable_inode(u32 inum, transaction *tr)
 
   // Opportunistically shrink the inode-reclaim file, if we happened to remove
   // the last entry.
-  if (inum_offset + sizeof(zero_inum) == fs_irp->next_offset) {
+  if (inum_offset + sizeof(zero_inum) == fs_irp->next_offset)
     fs_irp->next_offset -= sizeof(zero_inum);
-    sv6_irp->size -= sizeof(zero_inum);
-  }
 
-  iupdate(sv6_irp, tr);
   iunlock(sv6_irp);
 }
 
@@ -2131,16 +2124,14 @@ void
 mfs_interface::reclaim_unreachable_inodes(int cpu)
 {
   char path[32];
+  bool do_flush = false;
   snprintf(path, sizeof(path), "/inodereclaim%d", cpu);
   sv6_inode_reclaim[cpu] = namei(sref<inode>(), path);
   assert(sv6_inode_reclaim[cpu]);
 
   sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
 
-  if (!sv6_irp->size)
-    return;
-
-  u32 dead_inum = 0;
+  u32 dead_inum = 0, zero_inum = 0;
   ilock(sv6_irp, WRITELOCK);
 
   for (int offset = 0; offset < sv6_irp->size; offset += sizeof(dead_inum)) {
@@ -2163,17 +2154,19 @@ mfs_interface::reclaim_unreachable_inodes(int cpu)
     // will have to do a recursive unlink/delete when dealing with unreachable
     // non-empty directories.
     free_inode(dead_ip, tr);
+
+    if (writei(sv6_irp, (char *)&zero_inum, offset, sizeof(zero_inum), tr)
+               != sizeof(zero_inum))
+      panic("reclaim_unreachable_inodes: Call to writei() failed!\n");
+
     add_transaction_to_queue(tr, cpu);
+    do_flush = true;
   }
 
-  // Reset the inode-reclaim file.
-  transaction *trans = new transaction();
-  sv6_irp->size = 0;
-  iupdate(sv6_irp, trans);
-  add_transaction_to_queue(trans, cpu);
   iunlock(sv6_irp);
 
-  flush_journal(cpu);
+  if (do_flush)
+    flush_journal(cpu);
 }
 
 // Allocates a lock for every inode block and every bitmap block.
