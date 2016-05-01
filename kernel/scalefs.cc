@@ -65,9 +65,10 @@ void
 mfs_interface::free_mnode_lock(u64 mnum)
 {
   sleeplock *mnode_lock;
-  mnum_to_lock->lookup(mnum, &mnode_lock);
-  mnum_to_lock->remove(mnum);
-  delete mnode_lock;
+  if (mnum_to_lock->lookup(mnum, &mnode_lock)) {
+    mnum_to_lock->remove(mnum);
+    delete mnode_lock;
+  }
 }
 
 void
