@@ -718,6 +718,7 @@ static u32
 bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false)
 {
   scoped_gc_epoch e;
+  bool skip_disk_read = false;
   u32* ap;
 
   if (bn < NDIRECT) {
@@ -729,10 +730,14 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   bn -= NDIRECT;
 
   if (bn < NINDIRECT) {
-    if (ip->addrs[NDIRECT] == 0)
+    if (ip->addrs[NDIRECT] == 0) {
       ip->addrs[NDIRECT] = balloc(ip->dev, trans, true);
+      // We allocated the block just now. So need to read it from the disk.
+      skip_disk_read = true;
+    }
 
-    sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT]);
+    sref<buf> bp = buf::get(ip->dev, ip->addrs[NDIRECT], skip_disk_read);
+    skip_disk_read = false;
     auto locked = bp->write();
     ap = (u32 *)locked->data;
 
@@ -749,22 +754,30 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
   if (bn >= NINDIRECT * NINDIRECT)
     panic("bmap: %d out of range", bn);
 
-  if (ip->addrs[NDIRECT+1] == 0)
+  if (ip->addrs[NDIRECT+1] == 0) {
     ip->addrs[NDIRECT+1] = balloc(ip->dev, trans, true);
+    // We allocated the block just now. So need to read it from the disk.
+    skip_disk_read = true;
+  }
 
   // First-level doubly-indirect block
-  sref<buf> fp = buf::get(ip->dev, ip->addrs[NDIRECT+1]);
+  sref<buf> fp = buf::get(ip->dev, ip->addrs[NDIRECT+1], skip_disk_read);
+  skip_disk_read = false;
   auto flocked = fp->write();
   ap = (u32 *)flocked->data;
 
   if (ap[bn / NINDIRECT] == 0) {
     ap[bn / NINDIRECT] = balloc(ip->dev, trans, true);
+    // We allocated the block just now. So need to read it from the disk.
+    skip_disk_read = true;
+
     if (trans)
       fp->add_to_transaction(trans);
   }
 
   // Second-level doubly-indirect block
-  sref<buf> sp = buf::get(ip->dev, ap[bn / NINDIRECT]);
+  sref<buf> sp = buf::get(ip->dev, ap[bn / NINDIRECT], skip_disk_read);
+  skip_disk_read = false;
   auto slocked = sp->write();
   ap = (u32 *)slocked->data;
 
