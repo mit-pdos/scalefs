@@ -77,12 +77,16 @@ static volatile bool warmup;
 static __padout__ __attribute__((unused));
 
 static void
-timer_thread(void)
+timer_thread(bool do_warmup)
 {
-  warmup = true;
+  warmup = do_warmup;
   bar.join();
-  sleep(warmup_secs);
-  warmup = false;
+
+  if (do_warmup) {
+    sleep(warmup_secs);
+    warmup = false;
+  }
+
   sleep(duration);
   stop = true;
 }
@@ -235,6 +239,7 @@ usage(const char *argv0)
   fprintf(stderr, "     inf    Spool in unbounded batches\n");
   fprintf(stderr, "  -p        Use delivery process pooling\n");
   fprintf(stderr, "  -v        Verbose\n");
+  fprintf(stderr, "  -W        Disable warmup phase\n");
   exit(2);
 }
 
@@ -245,8 +250,9 @@ main(int argc, char **argv)
   size_t batch_size = 0;
   bool verbose = false;
   bool pool = false;
+  bool do_warmup = true;
   int opt;
-  while ((opt = getopt(argc, argv, "a:b:pv")) != -1) {
+  while ((opt = getopt(argc, argv, "a:b:pvW")) != -1) {
     switch (opt) {
     case 'a':
       alt_str = optarg;
@@ -262,6 +268,9 @@ main(int argc, char **argv)
       break;
     case 'v':
       verbose = true;
+      break;
+    case 'W':
+      do_warmup = false;
       break;
     default:
       usage(argv[0]);
@@ -323,7 +332,7 @@ main(int argc, char **argv)
   // Run benchmark
   bar.init(nthreads + 1);
 
-  std::thread timer(timer_thread);
+  std::thread timer(timer_thread, do_warmup);
 
   std::thread *threads = new std::thread[nthreads];
   for (int i = 0; i < nthreads; ++i)
