@@ -79,6 +79,8 @@ void
 write_output(const char *buf, u64 offset, u64 size)
 {
   assert(size == BSIZE);
+  if ((offset/BSIZE) % 100000 == 0)
+    cprintf("Writing block %8lu / %lu\r", offset/BSIZE, _fs_img_size/BSIZE);
   memcpy(_fs_img_start + offset, buf, BSIZE);
 }
 
@@ -98,6 +100,9 @@ initdisk(void)
 
   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
                   _fs_img_size, write_output);
+
+  cprintf("Writing block %8lu / %lu\n", _fs_img_size/BSIZE, _fs_img_size/BSIZE);
+  cprintf("Writing blocks ... done!\n");
 }
 
 #endif  /* MEMIDE */

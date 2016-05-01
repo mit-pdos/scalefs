@@ -24,6 +24,8 @@ write_output(const char *buf, u64 offset, u64 size)
    // early in the boot sequence.
 
    assert(size == BSIZE);
+   if ((offset/BSIZE) % 100000 == 0)
+     cprintf("Writing block %8lu / %lu\r", offset/BSIZE, _fs_img_size/BSIZE);
    idewrite(1, buf, BSIZE, offset);
 }
 
@@ -35,10 +37,13 @@ initidedisk()
 void
 initdisk()
 {
-   cprintf("initdisk: Flashing the filesystem image on the disk(s)\n");
+  cprintf("initdisk: Flashing the filesystem image on the disk(s)\n");
 
-   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
-                   _fs_img_size, write_output);
+  zlib_decompress(_fs_imgz_start, _fs_imgz_size,
+                  _fs_img_size, write_output);
+
+  cprintf("Writing block %8lu / %lu\n", _fs_img_size/BSIZE, _fs_img_size/BSIZE);
+  cprintf("Writing blocks ... done!\n");
 }
 
 #endif
