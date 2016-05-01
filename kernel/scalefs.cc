@@ -1276,6 +1276,8 @@ mfs_interface::flush_journal_locked(int cpu)
 
     timestamp = (*it)->enq_tsc;
 
+    (*it)->deduplicate_blocks();
+
     retry:
 
     // To avoid deadlocks, we allow only the head transaction in any batch to
