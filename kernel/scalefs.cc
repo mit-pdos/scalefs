@@ -407,29 +407,39 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
   // flushed from other directories/oplogs. So this unlink really removes the
   // last link to the inode, making it safe to delete it from the disk (as long
   // as we don't have any open file descriptors referring to that inode).
-  if (!get_mfslog_linkcount(mnum)) {
-    sref<mnode> m = root_fs->mget(mnum);
-    if (m && m->get_consistent() > 2) {
-      // It looks like userspace still has open file descriptors referring to
-      // this mnode, so it is not safe to delete its on-disk inode just yet.
-      // So mark it for deletion and postpone it until reboot.
-      mark_unreachable_inode(target->inum, tr);
-    } else {
-      // The mnode is gone (which also implies that all its open file
-      // descriptors have been closed as well). So it is safe to delete its
-      // inode from the disk.
-      delete_mnum_inode(mnum, tr);
-      // We already deleted the inode, so it doesn't need to be on the
-      // inode-reclaim list anymore.
-      revive_unreachable_inode(target->inum, tr);
-    }
+  if (!get_mfslog_linkcount(mnum))
+    delete_mnum_inode_safe(mnum, tr);
+}
+
+// Delete the inode corresponding to the mnum and its file-contents from the
+// disk, if there are no open file descriptors referring to that inode.
+void
+mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr)
+{
+  u64 inum = 0;
+  assert(inum_lookup(mnum, &inum));
+
+  sref<mnode> m = root_fs->mget(mnum);
+  if (m && m->get_consistent() > 2) {
+    // It looks like userspace still has open file descriptors referring to
+    // this mnode, so it is not safe to delete its on-disk inode just yet.
+    // So mark it for deletion and postpone it until reboot.
+    mark_unreachable_inode(inum, tr);
+  } else {
+    // The mnode is gone (which also implies that all its open file
+    // descriptors have been closed as well). So it is safe to delete its
+    // inode from the disk.
+    __delete_mnum_inode(mnum, tr);
+    // We already deleted the inode, so it doesn't need to be on the
+    // inode-reclaim list anymore.
+    revive_unreachable_inode(inum, tr);
   }
 }
 
 // Deletes the inode corresponding to the mnum and its file-contents from the
 // disk.
 void
-mfs_interface::delete_mnum_inode(u64 mnum, transaction *tr)
+mfs_interface::__delete_mnum_inode(u64 mnum, transaction *tr)
 {
   sref<inode> ip = get_inode(mnum, "delete_mnum_inode");
 
