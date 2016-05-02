@@ -331,7 +331,11 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
   // unreachable, in which case the parent will be in the inode-reclaim list
   // and the crash-recovery code will reclaim all its files and sub-directories
   // recursively upon reboot).
-  revive_unreachable_inode(dirent_inum, tr);
+
+  // The link and unlink are atomic for renames; and put together, they don't
+  // alter the reachability of an inode.
+  if (!rename_link)
+    revive_unreachable_inode(dirent_inum, tr);
   iunlock(dirent_ip);
   iunlock(mdir_ip);
 }
@@ -371,7 +375,10 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
   iunlock(mdir_ip);
 
   assert(target->nlink() >= 0);
-  if (!target->nlink()) {
+
+  // The link and unlink are atomic for renames; and put together, the don't
+  // affect the reachability or the overall link-count of an inode.
+  if (!rename_unlink && !target->nlink()) {
     u64 mnum;
     sref<mnode> m = mnode_lookup(target->inum, &mnum);
     if (m && m->get_consistent() > 2) {
@@ -1144,10 +1151,6 @@ mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *t
   scoped_gc_epoch e;
 
   // Buffer-cache updates start in mfs_rename_link() itself.
-
-  // remove_dir_entry() deletes the inode if its link count drops to zero. So it
-  // is crucial that we add the new link first (via mfs_rename_link()) and only
-  // then remove the old link.
   remove_dir_entry(op->src_parent_mnum, op->name, tr, true);
 }
 
