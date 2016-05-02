@@ -414,10 +414,19 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
 // Delete the inode corresponding to the mnum and its file-contents from the
 // disk, if there are no open file descriptors referring to that inode.
 void
-mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr)
+mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
+                                      bool acquire_locks)
 {
   u64 inum = 0;
   assert(inum_lookup(mnum, &inum));
+
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock() [via __delete_mnum_inode()].
+  if (acquire_locks) {
+    std::vector<u64> inum_list;
+    inum_list.push_back(inum);
+    acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+  }
 
   sref<mnode> m = root_fs->mget(mnum);
   if (m && m->get_consistent() > 2) {
