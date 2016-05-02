@@ -282,9 +282,13 @@ mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
 // representation but not on the disk.
 void
 mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
-		             u8 type, transaction *tr, bool acquire_locks)
+		             u8 type, transaction *tr, bool rename_link)
 {
   sref<inode> mdir_ip = get_inode(mdir_mnum, "add_dir_entry");
+
+  // If add_dir_entry() was invoked in the rename-link path, don't acquire the
+  // inode-bitmap locks.
+  bool acquire_locks = rename_link ? false : true;
 
   u64 dirent_inum = 0;
   assert(inum_lookup(dirent_mnum, &dirent_inum));
@@ -336,12 +340,16 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
 // The file/directory names that are present in the mdir are specified in names_vec.
 void
 mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
-                                bool acquire_locks)
+                                bool rename_unlink)
 {
   sref<inode> mdir_ip = get_inode(mdir_mnum, "remove_dir_entry");
   sref<inode> target = dirlookup(mdir_ip, name);
   if (!target)
     return;
+
+  // If remove_dir_entry() was invoked in the rename-unlink path, don't acquire
+  // the inode-bitmap locks.
+  bool acquire_locks = rename_unlink ? false : true;
 
   // Lock ordering rule: Acquire all inode-block locks before performing any
   // ilock().
@@ -1112,7 +1120,7 @@ mfs_interface::mfs_rename_link(mfs_operation_rename_link *op, transaction *tr)
 
   // Buffer-cache updates start here.
   add_dir_entry(op->dst_parent_mnum, op->newname, op->mnode_mnum,
-                op->mnode_type, tr, false);
+                op->mnode_type, tr, true);
 
   if (op->mnode_type == mnode::types::dir &&
       op->dst_parent_mnum != op->src_parent_mnum) {
@@ -1140,7 +1148,7 @@ mfs_interface::mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *t
   // remove_dir_entry() deletes the inode if its link count drops to zero. So it
   // is crucial that we add the new link first (via mfs_rename_link()) and only
   // then remove the old link.
-  remove_dir_entry(op->src_parent_mnum, op->name, tr, false);
+  remove_dir_entry(op->src_parent_mnum, op->name, tr, true);
 }
 
 void
