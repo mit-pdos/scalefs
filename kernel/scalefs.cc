@@ -751,8 +751,11 @@ out:
   std::sort(erase_indices.begin(), erase_indices.end(),
             std::greater<unsigned long>());
 
-  for (auto &idx : erase_indices)
+  for (auto &idx : erase_indices) {
+    mfs_operation *op = mfs_log->operation_vec.at(idx);
+    delete op;
     mfs_log->operation_vec.erase(mfs_log->operation_vec.begin() + idx);
+  }
 
   delete linkname_to_index;
 }
