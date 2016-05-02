@@ -603,9 +603,9 @@ class mfs_interface
     // Directory functions
     void initialize_dir(sref<mnode> m);
     void add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum, u8 type,
-                       transaction *tr, bool acquire_locks = true);
+                       transaction *tr, bool rename_link = false);
     void remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
-                          bool acquire_locks = true);
+                          bool rename_unlink = false);
     void delete_mnum_inode_safe(u64 mnum, transaction *tr,
                                 bool acquire_locks = false);
     void __delete_mnum_inode(u64 mnum, transaction *tr);
