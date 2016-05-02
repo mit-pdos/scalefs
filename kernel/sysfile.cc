@@ -335,6 +335,7 @@ sys_link(userptr_str old_path, userptr_str new_path)
       new mfs_operation_link(rootfs_interface, tsc, mflink.mn()->mnum_,
                              md->mnum_, name.buf_, mflink.mn()->type());
   rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op);
+  rootfs_interface->inc_mfslog_linkcount(mflink.mn()->mnum_);
   rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
   return 0;
 }
@@ -683,6 +684,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
           op_l = new mfs_operation_link(rootfs_interface, tsc, mf->mnum_,
                                         md->mnum_, name.buf_, type);
           rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_l);
+          rootfs_interface->inc_mfslog_linkcount(mf->mnum_);
 
           tsc_val = get_tsc();
           rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
@@ -717,6 +719,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
         op_l = new mfs_operation_link(rootfs_interface, tsc, mf->mnum_,
                                       md->mnum_, name.buf_, type);
         rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_l);
+        rootfs_interface->inc_mfslog_linkcount(mf->mnum_);
 
         tsc_val = get_tsc();
         rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);

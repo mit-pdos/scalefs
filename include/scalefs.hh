@@ -646,6 +646,9 @@ class mfs_interface
     void metadata_op_start(u64 mnum, int cpu, u64 tsc_val);
     void metadata_op_end(u64 mnum, int cpu, u64 tsc_val);
     void add_to_metadata_log(u64 mnum, int cpu, mfs_operation *op);
+    void inc_mfslog_linkcount(u64 mnum);
+    void dec_mfslog_linkcount(u64 mnum);
+    u64  get_mfslog_linkcount(u64 mnum);
     void sync_dirty_files_and_dirs(int cpu);
     void evict_bufcache();
     void evict_pagecache();
@@ -1094,4 +1097,13 @@ class mfs_logical_log: public mfs_logged_object
   protected:
     mfs_operation_vec operation_vec;
     sleeplock lock;
+
+    // This link-count is used to perform a hand-shake between MemFS and
+    // fsync/sync for accurate zero-detection of file link-counts, which helps
+    // determine when it is safe to delete the inode on the disk.
+    // This counter is incremented every time this mnode is linked in MemFS,
+    // and decremented in the sync/fsync path when an unlink is processed (or
+    // absorbed) corresponding to this mnode(inode).
+    percpu<u64> link_count;
+    percpu<spinlock> link_lock; // Protects the link_count
 };

@@ -74,7 +74,14 @@ mfs_interface::free_mnode_lock(u64 mnum)
 void
 mfs_interface::alloc_metadata_log(u64 mnum)
 {
-  metadata_log_htab->insert(mnum, new mfs_logical_log());
+  mfs_logical_log *mfs_log = new mfs_logical_log();
+
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    scoped_acquire a(&mfs_log->link_lock[cpu]);
+    mfs_log->link_count[cpu] = 0;
+  }
+
+  metadata_log_htab->insert(mnum, mfs_log);
 }
 
 void
@@ -378,9 +385,30 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
 
   // The link and unlink are atomic for renames; and put together, the don't
   // affect the reachability or the overall link-count of an inode.
-  if (!rename_unlink && !target->nlink()) {
-    u64 mnum;
-    sref<mnode> m = mnode_lookup(target->inum, &mnum);
+  if (rename_unlink)
+    return;
+
+  // The global link-count of this inode might not be zero (perhaps there are
+  // pending links to be flushed from other directories). But if flushing this
+  // unlink drops the inode's link count to zero on the disk (even if
+  // temporarily), and we happen to crash right after that, then the remaining
+  // unflushed links won't matter; and the inode will have to be reclaimed on
+  // reboot as it will be unreachable. So tread carefully here and mark it as
+  // unreachable and fix it up later if/when a link is flushed.
+  if (!target->nlink())
+    mark_unreachable_inode(target->inum, tr);
+
+  u64 mnum;
+  assert(inum_to_mnum->lookup(target->inum, &mnum));
+  dec_mfslog_linkcount(mnum);
+
+  // Now check what the global link-count of the inode has to say. If it is
+  // zero, it means that there are no pending links to this inode waiting to be
+  // flushed from other directories/oplogs. So this unlink really removes the
+  // last link to the inode, making it safe to delete it from the disk (as long
+  // as we don't have any open file descriptors referring to that inode).
+  if (!get_mfslog_linkcount(mnum)) {
+    sref<mnode> m = root_fs->mget(mnum);
     if (m && m->get_consistent() > 2) {
       // It looks like userspace still has open file descriptors referring to
       // this mnode, so it is not safe to delete its on-disk inode just yet.
@@ -462,6 +490,49 @@ mfs_interface::add_to_metadata_log(u64 mnum, int cpu, mfs_operation *op)
   mfs_logical_log *mfs_log;
   assert(metadata_log_htab->lookup(mnum, &mfs_log));
   mfs_log->add_operation(op, cpu);
+}
+
+void
+mfs_interface::inc_mfslog_linkcount(u64 mnum)
+{
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnum, &mfs_log));
+  int cpu = myid();
+  scoped_acquire a(&mfs_log->link_lock[cpu]);
+  mfs_log->link_count[cpu]++;
+}
+
+void
+mfs_interface::dec_mfslog_linkcount(u64 mnum)
+{
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnum, &mfs_log));
+  int cpu = myid();
+  scoped_acquire a(&mfs_log->link_lock[cpu]);
+  mfs_log->link_count[cpu]--;
+}
+
+u64
+mfs_interface::get_mfslog_linkcount(u64 mnum)
+{
+  mfs_logical_log *mfs_log;
+  assert(metadata_log_htab->lookup(mnum, &mfs_log));
+
+  u64 count = 0;
+
+  // In order to get a consistent value of the link-count, we need to add up all
+  // the per-CPU counts while holding all the per-CPU locks at once. So go on
+  // acquiring the locks monotonically, without releasing any in between. This
+  // way, adding the counts on-the-go will be equivalent to adding them with all
+  // the locks held.
+  percpu<scoped_acquire> lk;
+
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    lk[cpu] = mfs_log->link_lock[cpu].guard();
+    count += mfs_log->link_count[cpu];
+  }
+
+  return count;
 }
 
 // Applies all metadata operations logged in the logical logs. Called on sync.
@@ -730,6 +801,27 @@ mfs_interface::absorb_file_link_unlink(mfs_logical_log *mfs_log)
           // Mark these link and unlink ops for absorption.
           erase_indices.push_back(it - mfs_log->operation_vec.begin());
           erase_indices.push_back(index);
+
+          dec_mfslog_linkcount(unlink_op->mnode_mnum);
+          if (!get_mfslog_linkcount(unlink_op->mnode_mnum)) {
+
+	    // The global link-count of this inode has dropped to zero, which
+	    // means that this really is the last unlink of that inode; there
+	    // are no other pending links for this inode waiting to be flushed
+	    // from other directories/oplogs.
+
+	    // TODO: We have 2 cases here:
+	    // Case 1. The 'create' operation of the inode has not yet been
+	    // flushed to disk (which means the inode hasn't been persisted on
+	    // the disk yet). So arrange to absorb the 'create' along with this
+	    // link-unlink pair and delete the mfs-log and mnode-lock.
+	    //
+	    // Case 2. The 'create' operation of the inode has been flushed to
+	    // disk already (which means the inode is on the disk). If there are
+	    // no open file descriptors to that inode, delete it from the disk
+	    // (and also free up the mfs-log and mnode-lock) and remove it from
+	    // the inode-reclaim list.
+          }
         }
       }
       break;
