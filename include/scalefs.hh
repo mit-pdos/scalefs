@@ -660,14 +660,18 @@ class mfs_interface
     void add_op_to_transaction_queue(mfs_operation *op, int cpu,
                                      transaction *tr = nullptr,
                                      bool skip_add = false);
-    void absorb_file_link_unlink(mfs_logical_log *mfs_log);
+    void absorb_file_link_unlink(mfs_logical_log *mfs_log,
+                                 std::vector<u64> &absorb_mnum_list);
+    void absorb_delete_inode(mfs_logical_log *mfs_log, u64 mnum, int cpu,
+                             std::vector<u64> &unlink_mnum_list);
     int  process_ops_from_oplog(mfs_logical_log *mfs_log, u64 max_tsc, int count,
                   int cpu,
                   std::vector<pending_metadata> &pending_stack,
                   std::vector<u64> &unlink_mnum_list,
                   std::vector<dirunlink_metadata> &dirunlink_stack,
                   std::vector<rename_metadata> &rename_stack,
-                  std::vector<rename_barrier_metadata> &rename_barrier_stack);
+                  std::vector<rename_barrier_metadata> &rename_barrier_stack,
+                  std::vector<u64> &absorb_mnum_list);
     void apply_rename_pair(std::vector<rename_metadata> &rename_stack, int cpu);
     void mfs_create(mfs_operation_create *op, transaction *tr);
     void mfs_link(mfs_operation_link *op, transaction *tr);

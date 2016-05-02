@@ -450,15 +450,16 @@ mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
 void
 mfs_interface::__delete_mnum_inode(u64 mnum, transaction *tr)
 {
-  sref<inode> ip = get_inode(mnum, "delete_mnum_inode");
+  u64 inum = 0;
+  if (!inum_lookup(mnum, &inum))
+    return; // Somebody already deleted this inode.
+
+  sref<inode> ip = iget(1, inum);
 
   ilock(ip, WRITELOCK);
   itrunc(ip, 0, tr);
   iunlock(ip);
 
-  // TODO: Make sure to free up these data-structures even if we happen to
-  // absorb (cancel-out) the create/link and the unlink operations of this
-  // mnode.
   mnum_to_inum->remove(mnum);
   inum_to_mnum->remove(ip->inum);
   free_inode(ip, tr);
@@ -558,9 +559,6 @@ mfs_interface::get_mfslog_linkcount(u64 mnum)
 void
 mfs_interface::process_metadata_log_and_flush(int cpu)
 {
-  // TODO: Implement absorption (detect operations that cancel each other,
-  // such as create and unlink of the same mnode, and absorb them).
-
   // Invoke process_metadata_log() on every dirty mnode.
   std::vector<u64> mnum_list;
   metadata_log_htab->enumerate([&](const u64 &mnum, mfs_logical_log* &mfs_log)->bool {
@@ -785,13 +783,10 @@ mfs_interface::add_op_to_transaction_queue(mfs_operation *op, int cpu,
 // TODO: Perform absorption across file renames that don't cross directory
 // boundaries.
 //
-// FIXME: Deal with unprocessed 'create' operations (and resources like the
-// mfs_log data structure) of files whose links and unlinks have been
-// completely absorbed.
-//
 // Called with mfs_log's lock and the oplog's sync_lock_ held.
 void
-mfs_interface::absorb_file_link_unlink(mfs_logical_log *mfs_log)
+mfs_interface::absorb_file_link_unlink(mfs_logical_log *mfs_log,
+                                       std::vector<u64> &absorb_mnum_list)
 {
   std::vector<unsigned long> erase_indices;
   u64 htable_size = mfs_log->operation_vec.size() * 5;
@@ -827,19 +822,10 @@ mfs_interface::absorb_file_link_unlink(mfs_logical_log *mfs_log)
 	    // The global link-count of this inode has dropped to zero, which
 	    // means that this really is the last unlink of that inode; there
 	    // are no other pending links for this inode waiting to be flushed
-	    // from other directories/oplogs.
-
-	    // TODO: We have 2 cases here:
-	    // Case 1. The 'create' operation of the inode has not yet been
-	    // flushed to disk (which means the inode hasn't been persisted on
-	    // the disk yet). So arrange to absorb the 'create' along with this
-	    // link-unlink pair and delete the mfs-log and mnode-lock.
-	    //
-	    // Case 2. The 'create' operation of the inode has been flushed to
-	    // disk already (which means the inode is on the disk). If there are
-	    // no open file descriptors to that inode, delete it from the disk
-	    // (and also free up the mfs-log and mnode-lock) and remove it from
-	    // the inode-reclaim list.
+	    // from other directories/oplogs. So absorb its 'create' operation
+	    // if it has not yet been flushed; and delete the inode on the disk
+	    // otherwise.
+            absorb_mnum_list.push_back(unlink_op->mnode_mnum);
           }
         }
       }
@@ -869,6 +855,42 @@ out:
   }
 
   delete linkname_to_index;
+}
+
+
+// Given an mnode whose last link-unlink pair was absorbed, absorb its 'create'
+// operation if it has not yet been flushed, and delete the inode from the disk
+// otherwise.
+void
+mfs_interface::absorb_delete_inode(mfs_logical_log *mfs_log, u64 mnum, int cpu,
+                                   std::vector<u64> &unlink_mnum_list)
+{
+  // Synchronize the oplog loggers.
+  auto guard = mfs_log->synchronize_upto_tsc(get_tsc());
+
+  // TODO: Handle directories properly.
+  if (!mfs_log->operation_vec.empty() &&
+      (mfs_log->operation_vec.front()->operation_type == MFS_OP_CREATE_FILE ||
+       mfs_log->operation_vec.front()->operation_type == MFS_OP_CREATE_DIR)) {
+
+    // Simply absorb the 'create' operation.
+    mfs_operation *op = mfs_log->operation_vec.front();
+    delete op;
+    mfs_log->operation_vec.erase(mfs_log->operation_vec.begin());
+
+    // TODO: If this is a directory, its oplog might not be empty. Deal with
+    // this case properly.
+    assert(mfs_log->operation_vec.empty());
+
+  } else {
+    // The 'create' operation of this mnode was already flushed to the disk.
+    // So we'll have to delete the inode from the disk.
+    transaction *tr = new transaction();
+    delete_mnum_inode_safe(mnum, tr, true);
+    add_transaction_to_queue(tr, cpu);
+  }
+
+  unlink_mnum_list.push_back(mnum);
 }
 
 // Return values from process_ops_from_oplog():
@@ -911,7 +933,8 @@ mfs_interface::process_ops_from_oplog(
                     std::vector<u64> &unlink_mnum_list,
                     std::vector<dirunlink_metadata> &dirunlink_stack,
                     std::vector<rename_metadata> &rename_stack,
-                    std::vector<rename_barrier_metadata> &rename_barrier_stack)
+                    std::vector<rename_barrier_metadata> &rename_barrier_stack,
+                    std::vector<u64> &absorb_mnum_list)
 {
   // Synchronize the oplog loggers.
   auto guard = mfs_log->synchronize_upto_tsc(max_tsc);
@@ -933,7 +956,7 @@ mfs_interface::process_ops_from_oplog(
   }
 
   if (mfs_log->operation_vec.size() > 1)
-    absorb_file_link_unlink(mfs_log);
+    absorb_file_link_unlink(mfs_log, absorb_mnum_list);
 
   for (auto it = mfs_log->operation_vec.begin();
        it != mfs_log->operation_vec.end(); ) {
@@ -992,7 +1015,7 @@ mfs_interface::process_ops_from_oplog(
           // Retry absorption after processing a rename, if we are not exiting
           // this function.
           if (mfs_log->operation_vec.size() > 1) {
-            absorb_file_link_unlink(mfs_log);
+            absorb_file_link_unlink(mfs_log, absorb_mnum_list);
             it = mfs_log->operation_vec.begin();
           }
           continue;
@@ -1012,7 +1035,7 @@ mfs_interface::process_ops_from_oplog(
           // Retry absorption after processing a rename, if we are not exiting
           // this function.
           if (mfs_log->operation_vec.size() > 1) {
-            absorb_file_link_unlink(mfs_log);
+            absorb_file_link_unlink(mfs_log, absorb_mnum_list);
             it = mfs_log->operation_vec.begin();
           }
           continue;
@@ -1063,7 +1086,7 @@ mfs_interface::process_ops_from_oplog(
           // Retry absorption after processing a rename, if we are not exiting
           // this function.
           if (mfs_log->operation_vec.size() > 1) {
-            absorb_file_link_unlink(mfs_log);
+            absorb_file_link_unlink(mfs_log, absorb_mnum_list);
             it = mfs_log->operation_vec.begin();
           }
           continue;
@@ -1122,6 +1145,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
   std::vector<dirunlink_metadata> dirunlink_stack;
   std::vector<rename_metadata> rename_stack;
   std::vector<rename_barrier_metadata> rename_barrier_stack;
+  std::vector<u64> absorb_mnum_list;
   int ret;
 
   pending_stack.push_back({mnode_mnum, max_tsc, -1});
@@ -1135,7 +1159,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
     mfs_log->lock.acquire();
     ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, cpu, pending_stack,
                                  unlink_mnum_list, dirunlink_stack, rename_stack,
-                                 rename_barrier_stack);
+                                 rename_barrier_stack, absorb_mnum_list);
     mfs_log->lock.release();
 
     switch (ret) {
@@ -1167,6 +1191,20 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
 
   assert(!pending_stack.size() && !dirunlink_stack.size() && !rename_stack.size()
          && !rename_barrier_stack.size());
+
+  // absorb_mnum_list contains the list of mnodes whose last link-unlink pair
+  // was absorbed (which means that their on-disk link count is 0 and there are
+  // no more links to those inodes waiting to be flushed from other directories
+  // or oplogs). So if the 'create' operation of those mnodes haven't been
+  // flushed yet, absorb them too. Otherwise, delete those inodes from the disk.
+  for (auto &mnum : absorb_mnum_list) {
+    mfs_logical_log *mfs_log;
+    assert(metadata_log_htab->lookup(mnum, &mfs_log));
+
+    mfs_log->lock.acquire();
+    absorb_delete_inode(mfs_log, mnum, cpu, unlink_mnum_list);
+    mfs_log->lock.release();
+  }
 
   // Release the auxiliary resources of recently deleted mnodes, now that we
   // are sure that we won't need them any more.
