@@ -75,7 +75,9 @@ char *argv[];
     struct timeval dummy;	/* Dummy for use in calibration */
     int usec;			/* Elapsed time for a test (in usec) */
     float sec;			/* Elapsed time for a test (in sec) */
+    float total_sec;
     float throughput;		/* Throughput of a test, expressed in KB/sec */
+    float total_throughput;
     int fd;			/* File descriptor for test file */
     int i;
 
@@ -166,36 +168,51 @@ char *argv[];
     printf ( "Test		Time(sec)	KB/sec\n" );
     printf ( "----		---------	------\n" );
 
+    total_sec = 0;
+    total_throughput = 0;
+
     usec = seq_write ( fd, fileSize, ioSize );
     sec = (float) usec / 1000000.0;
+    total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
+    total_throughput += throughput;
     printf ( "seq_write\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
     usec = seq_read ( fd, fileSize, ioSize );
     sec = (float) usec / 1000000.0;
+    total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
+    total_throughput += throughput;
     printf ( "seq_read\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
     usec = rand_write ( fd, fileSize, ioSize );
     sec = (float) usec / 1000000.0;
+    total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
+    total_throughput += throughput;
     printf ( "rand_write\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
     usec = rand_read ( fd, fileSize, ioSize );
     sec = (float) usec / 1000000.0;
+    total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
+    total_throughput += throughput;
     printf ( "rand_read\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
     usec = seq_read ( fd, fileSize, ioSize );
     sec = (float) usec / 1000000.0;
+    total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
+    total_throughput += throughput;
     printf ( "re-read\t\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
+    printf("\n\n");
+    printf ( "TOTAL\t\t%7.3f\t\t%7.3f\n", total_sec, total_throughput );
     close ( fd );
     exit ( 0 );
 }
