@@ -88,9 +88,10 @@ void
 mfs_interface::free_metadata_log(u64 mnum)
 {
   mfs_logical_log *mfs_log;
-  metadata_log_htab->lookup(mnum, &mfs_log);
-  metadata_log_htab->remove(mnum);
-  delete mfs_log;
+  if (metadata_log_htab->lookup(mnum, &mfs_log)) {
+    metadata_log_htab->remove(mnum);
+    delete mfs_log;
+  }
 }
 
 // Returns an sref to an inode if mnum is mapped to one.
