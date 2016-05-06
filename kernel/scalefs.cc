@@ -1106,17 +1106,19 @@ mfs_interface::process_ops_from_oplog(
                                   rename_link_op->dst_parent_mnum,
                                   rename_link_op->timestamp});
           // We have the link part of the rename, so add the unlink part as a
-          // dependency.
-          pending_stack.push_back({rename_link_op->src_parent_mnum,
-                                   rename_link_op->timestamp, -1});
+          // dependency, if we haven't done so already.
+          if (!(rename_timestamp && (*it)->timestamp == rename_timestamp))
+            pending_stack.push_back({rename_link_op->src_parent_mnum,
+                                     rename_link_op->timestamp, -1});
         } else if (rename_unlink_op) {
           rename_stack.push_back({rename_unlink_op->src_parent_mnum,
                                   rename_unlink_op->dst_parent_mnum,
                                   rename_unlink_op->timestamp});
           // We have the unlink part of the rename, so add the link part as a
-          // dependency.
-          pending_stack.push_back({rename_unlink_op->dst_parent_mnum,
-                                   rename_unlink_op->timestamp, -1});
+          // dependency, if we haven't done so already.
+          if (!(rename_timestamp && (*it)->timestamp == rename_timestamp))
+            pending_stack.push_back({rename_unlink_op->dst_parent_mnum,
+                                     rename_unlink_op->timestamp, -1});
         }
 
         if (rename_timestamp && (*it)->timestamp == rename_timestamp)
@@ -1189,8 +1191,10 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
     }
   }
 
-  assert(!pending_stack.size() && !dirunlink_stack.size() && !rename_stack.size()
-         && !rename_barrier_stack.size());
+  assert(pending_stack.empty());
+  assert(dirunlink_stack.empty());
+  assert(rename_barrier_stack.empty());
+  assert(rename_stack.empty());
 
   // absorb_mnum_list contains the list of mnodes whose last link-unlink pair
   // was absorbed (which means that their on-disk link count is 0 and there are
