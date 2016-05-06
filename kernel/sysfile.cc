@@ -323,13 +323,21 @@ sys_link(userptr_str old_path, userptr_str new_path)
   assert(md->fs_ == root_fs);
 
   int cpu = myid();
-  auto guard = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
-  rootfs_interface->metadata_op_start(md->mnum_, cpu, get_tsc());
+  lock_guard<sleeplock> guard;
+
+  if (mflink.mn()->type() == mnode::types::file) {
+    guard = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+    rootfs_interface->metadata_op_start(md->mnum_, cpu, get_tsc());
+  }
 
   if (!md->as_dir()->insert(name, &mflink, &tsc)) {
-    rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
+    if (mflink.mn()->type() == mnode::types::file)
+      rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
     return -1;
   }
+
+  if (mflink.mn()->type() != mnode::types::file)
+    return 0; // We shouldn't log it in the MemFS oplog.
 
   mfs_operation *op =
       new mfs_operation_link(rootfs_interface, tsc, mflink.mn()->mnum_,
@@ -567,8 +575,12 @@ sys_unlink(userptr_str path)
 
   assert(md->fs_ == root_fs);
   int cpu = myid();
-  auto guard = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
-  rootfs_interface->metadata_op_start(md->mnum_, cpu, get_tsc());
+  lock_guard<sleeplock> guard;
+
+  if (mf->type() == mnode::types::file || mf->type() == mnode::types::dir) {
+    guard = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+    rootfs_interface->metadata_op_start(md->mnum_, cpu, get_tsc());
+  }
 
   if (mf->type() == mnode::types::dir) {
     /*
@@ -597,14 +609,17 @@ sys_unlink(userptr_str path)
   }
 
   if (!md->as_dir()->remove(name, mf, &tsc)) {
-    rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
+    if (mf->type() == mnode::types::file || mf->type() == mnode::types::dir)
+      rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
     return -1;
   }
 
-  mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc, mf->mnum_,
-                                               md->mnum_, name.buf_, mf->type());
-  rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op);
-  rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
+  if (mf->type() == mnode::types::file) {
+    mfs_operation *op = new mfs_operation_unlink(rootfs_interface, tsc, mf->mnum_,
+                                                 md->mnum_, name.buf_, mf->type());
+    rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op);
+    rootfs_interface->metadata_op_end(md->mnum_, cpu, get_tsc());
+  }
   return 0;
 }
 
@@ -646,16 +661,18 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     int cpu = myid();
     lock_guard<sleeplock> l1, l2;
 
-    if (md->mnum_ < mf->mnum_) {
-      l1 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
-      l2 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
-    } else {
-      l1 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
-      l2 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
-    }
+    if (mtype == mnode::types::dir || mtype == mnode::types::file) {
+      if (md->mnum_ < mf->mnum_) {
+        l1 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+        l2 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
+      } else {
+        l1 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
+        l2 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+      }
 
-    rootfs_interface->metadata_op_start(md->mnum_, cpu, tsc_val);
-    rootfs_interface->metadata_op_start(mf->mnum_, cpu, tsc_val);
+      rootfs_interface->metadata_op_start(md->mnum_, cpu, tsc_val);
+      rootfs_interface->metadata_op_start(mf->mnum_, cpu, tsc_val);
+    }
 
     if (mtype == mnode::types::dir) {
       /*
@@ -708,7 +725,7 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       mf->as_dev()->init(major, minor);
 
     if (md->as_dir()->insert(name, &ilink, &tsc)) {
-      if (myproc() != bootproc) {
+      if (myproc() != bootproc && (mtype == mnode::types::file)) {
         rootfs_interface->mnum_name_insert(mf->mnum_, name);
         mfs_operation *op_c, *op_l;
 
@@ -730,8 +747,11 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
 
     /* Failed to insert, retry */
     tsc_val = get_tsc();
-    rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
-    rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
+
+    if (mtype == mnode::types::dir || mtype == mnode::types::file) {
+      rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
+      rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
+    }
   }
 }
 
