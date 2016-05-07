@@ -98,12 +98,25 @@ sys_disktest(void)
   disk_test_all();
 }
 
+// Stripe across all the (four) disks.
+u32 offset_to_dev(u64 offset)
+{
+  return offset % disks.size();
+}
+
+u64 recalc_offset(u64 offset, u32 num_disks)
+{
+  return offset / num_disks;
+}
+
 // compat for a single IDE disk..
 void
 ideread(u32 dev, char* data, u64 count, u64 offset)
 {
   assert(disks.size() > 0);
-  disks[0]->read(data, count, offset);
+  dev = offset_to_dev(offset/BSIZE);
+  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
+  disks[dev]->read(data, count, offset);
 }
 
 void
@@ -111,14 +124,18 @@ ideread_async(u32 dev, char* data, u64 count, u64 offset,
               sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
-  disks[0]->aread(data, count, offset, dc);
+  dev = offset_to_dev(offset/BSIZE);
+  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
+  disks[dev]->aread(data, count, offset, dc);
 }
 
 void
 idewrite(u32 dev, const char* data, u64 count, u64 offset)
 {
   assert(disks.size() > 0);
-  disks[0]->write(data, count, offset);
+  dev = offset_to_dev(offset/BSIZE);
+  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
+  disks[dev]->write(data, count, offset);
 }
 
 void
@@ -126,13 +143,16 @@ idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
                sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
-  disks[0]->awrite(data, count, offset, dc);
+  dev = offset_to_dev(offset/BSIZE);
+  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
+  disks[dev]->awrite(data, count, offset, dc);
 }
 
 void
 ideflush()
 {
   assert(disks.size() > 0);
-  disks[0]->flush();
+  for (int i = 0; i < disks.size(); i++)
+    disks[i]->flush();
 }
 
