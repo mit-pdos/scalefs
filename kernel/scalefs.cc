@@ -455,6 +455,15 @@ mfs_interface::__delete_mnum_inode(u64 mnum, transaction *tr)
   if (!inum_lookup(mnum, &inum))
     return; // Somebody already deleted this inode.
 
+  // If we are deleting the inode corresponding to a file mnode due to
+  // absorption, we must ensure that the mnode is marked clean before deleting
+  // the inode. Otherwise, a later call to sync_file_page() will crash as it
+  // won't find the inode corresponding to the dirty file mnode it is trying to
+  // flush.
+  sref<mnode> m = root_fs->mget(mnum);
+  if (m && m->is_dirty())
+    m->dirty(false);
+
   sref<inode> ip = iget(1, inum);
 
   ilock(ip, WRITELOCK);
