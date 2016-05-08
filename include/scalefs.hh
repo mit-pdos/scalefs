@@ -1054,6 +1054,7 @@ class mfs_logical_log: public mfs_logged_object
 
   public:
     NEW_DELETE_OPS(mfs_logical_log);
+    mfs_logical_log(u64 mnum) : mnode_mnum(mnum) {}
     ~mfs_logical_log()
     {
       for (auto it = operation_vec.begin(); it != operation_vec.end(); it++)
@@ -1103,6 +1104,7 @@ class mfs_logical_log: public mfs_logged_object
   protected:
     mfs_operation_vec operation_vec;
     sleeplock lock;
+    u64 mnode_mnum;
 
     // This link-count is used to perform a hand-shake between MemFS and
     // fsync/sync for accurate zero-detection of file link-counts, which helps

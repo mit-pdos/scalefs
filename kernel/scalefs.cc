@@ -74,7 +74,7 @@ mfs_interface::free_mnode_lock(u64 mnum)
 void
 mfs_interface::alloc_metadata_log(u64 mnum)
 {
-  mfs_logical_log *mfs_log = new mfs_logical_log();
+  mfs_logical_log *mfs_log = new mfs_logical_log(mnum);
 
   for (int cpu = 0; cpu < NCPU; cpu++) {
     scoped_acquire a(&mfs_log->link_lock[cpu]);
