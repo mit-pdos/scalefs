@@ -651,7 +651,7 @@ class mfs_interface
     void inc_mfslog_linkcount(u64 mnum);
     void dec_mfslog_linkcount(u64 mnum);
     u64  get_mfslog_linkcount(u64 mnum);
-    void sync_dirty_files_and_dirs(int cpu);
+    void sync_dirty_files_and_dirs(int cpu, std::vector<u64> &mnum_list);
     void evict_bufcache();
     void evict_pagecache();
     void process_metadata_log_and_flush(int cpu);

@@ -146,10 +146,6 @@ sys_sync(void)
 {
   int cpu = myid();
   rootfs_interface->process_metadata_log_and_flush(cpu);
-  // Add transactions to the journal's transaction log; don't flush them yet.
-  rootfs_interface->sync_dirty_files_and_dirs(cpu);
-  // Flush the journal's transaction log using group commit.
-  rootfs_interface->flush_journal(cpu);
 }
 
 
