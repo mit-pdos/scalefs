@@ -63,7 +63,8 @@ mfs::alloc(u8 type, u64 parent_mnum)
   if (!mnode_cache.insert(make_pair(this, mnum), m.get()))
     panic("mnode_cache insert failed (duplicate mnumber?)");
 
-  if (type == mnode::types::dir || type == mnode::types::file) {
+  if (this == root_fs && (type == mnode::types::dir ||
+                          type == mnode::types::file)) {
     rootfs_interface->alloc_mnode_lock(mnum);
     rootfs_interface->alloc_metadata_log(mnum);
   }
