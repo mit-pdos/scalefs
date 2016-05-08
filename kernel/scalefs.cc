@@ -1772,6 +1772,13 @@ mfs_interface::process_journal(int cpu)
   sv6_journal[cpu] = namei(sref<inode>(), jrnl_name);
   assert(sv6_journal[cpu]);
 
+#if FLASH_FS_AT_BOOT
+  // We don't have to look at the journal files since we just flashed a new
+  // filesystem to the disk/memory. However, make sure to initialize the inode
+  // pointers for the journal files before returning.
+  return nullptr;
+#endif
+
   ilock(sv6_journal[cpu], WRITELOCK);
 
   while (!jrnl_error) {
@@ -2299,6 +2306,13 @@ mfs_interface::reclaim_unreachable_inodes(int cpu)
   snprintf(path, sizeof(path), "/inodereclaim%d", cpu);
   sv6_inode_reclaim[cpu] = namei(sref<inode>(), path);
   assert(sv6_inode_reclaim[cpu]);
+
+#if FLASH_FS_AT_BOOT
+  // We don't have to look at the inode-reclaim files since we just flashed a
+  // new filesystem to the disk/memory. However, make sure to initialize the
+  // inode pointers for the inode-reclaim files before returning.
+  return;
+#endif
 
   sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
 
