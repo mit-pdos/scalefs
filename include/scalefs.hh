@@ -314,6 +314,8 @@ class transaction {
     // Write the blocks in this transaction to disk. Used to write the journal.
     void write_to_disk()
     {
+      deduplicate_blocks();
+
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback_async();
 
@@ -326,6 +328,8 @@ class transaction {
     // early boot before the process is fully setup for scheduling).
     void write_to_disk_raw()
     {
+      deduplicate_blocks();
+
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback();
     }
@@ -335,6 +339,8 @@ class transaction {
     // rebooting after the changes have been applied.
     void write_to_disk_update_bufcache()
     {
+      deduplicate_blocks();
+
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback_through_bufcache();
     }
