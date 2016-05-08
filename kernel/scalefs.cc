@@ -1091,7 +1091,43 @@ mfs_interface::process_ops_from_oplog(
             it = mfs_log->operation_vec.begin();
           }
           continue;
+        } else if (rename_unlink_op &&
+                   rename_unlink_op->src_parent_mnum ==
+                   rename_unlink_op->dst_parent_mnum) {
+
+          // The very next operation in this oplog *has* to be the corresponding
+          // rename_link_op.
+          auto r_link_op = dynamic_cast<mfs_operation_rename_link*>(*(it+1));
+          assert(r_link_op && r_link_op->timestamp == rename_unlink_op->timestamp
+                 && r_link_op->src_parent_mnum == r_link_op->dst_parent_mnum);
+
+          transaction *tr = nullptr;
+
+          // Make sure that both parts of the rename operation are applied within
+          // the same transaction, to preserve atomicity.
+          tr = new transaction(rename_unlink_op->timestamp);
+
+          // Set 'skip_add' to true, to avoid adding the transaction to the journal
+          // before it is fully formed.
+          add_op_to_transaction_queue(r_link_op, cpu, tr, true);
+          add_op_to_transaction_queue(rename_unlink_op, cpu, tr);
+          it = mfs_log->operation_vec.erase(it);
+          it = mfs_log->operation_vec.erase(it);
+
+          // Retry absorption after processing a rename, if we are not exiting
+          // this function.
+          if (mfs_log->operation_vec.size() > 1) {
+            absorb_file_link_unlink(mfs_log, absorb_mnum_list);
+            it = mfs_log->operation_vec.begin();
+          }
+          continue;
         }
+
+        if (rename_link_op)
+          assert(rename_link_op->src_parent_mnum != rename_link_op->dst_parent_mnum);
+
+        if (rename_unlink_op)
+          assert(rename_unlink_op->src_parent_mnum != rename_unlink_op->dst_parent_mnum);
 
         // Cross-directory renames, of both files and directories are handled below.
 
