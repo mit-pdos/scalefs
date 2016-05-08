@@ -1262,6 +1262,12 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
       free_mnode_lock(mnum);
     }
   }
+
+  // If we just processed a directory, mark it clean, since that's all there is
+  // to flushing a directory.
+  sref<mnode> m = root_fs->mget(mnode_mnum);
+  if (m && m->type() == mnode::types::dir && m->is_dirty())
+    m->dirty(false);
 }
 
 void
