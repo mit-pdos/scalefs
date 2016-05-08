@@ -1157,7 +1157,10 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
     pending_metadata pm = pending_stack.back();
 
     mfs_logical_log *mfs_log;
-    assert(metadata_log_htab->lookup(pm.mnum, &mfs_log));
+    if (!metadata_log_htab->lookup(pm.mnum, &mfs_log)) {
+      pending_stack.pop_back();
+      continue;
+    }
 
     mfs_log->lock.acquire();
     ret = process_ops_from_oplog(mfs_log, pm.max_tsc, pm.count, cpu, pending_stack,
