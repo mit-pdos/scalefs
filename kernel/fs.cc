@@ -715,7 +715,8 @@ iunlock(sref<inode> ip)
 // such block, bmap allocates one. The caller must hold ilock() for write if
 // invoking bmap() from writei().
 static u32
-bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false)
+bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = false,
+     bool lazy_trans_update = false)
 {
   scoped_gc_epoch e;
   bool skip_disk_read = false;
@@ -743,8 +744,12 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
 
     if (ap[bn] == 0) {
       ap[bn] = balloc(ip->dev, trans, zero_on_alloc);
-      if (trans)
-        bp->add_to_transaction(trans);
+      if (trans) {
+        if (lazy_trans_update)
+          bp->add_blocknum_to_transaction(trans);
+        else
+          bp->add_to_transaction(trans);
+      }
     }
 
     return ap[bn];
@@ -771,8 +776,12 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
     // We allocated the block just now. So need to read it from the disk.
     skip_disk_read = true;
 
-    if (trans)
-      fp->add_to_transaction(trans);
+    if (trans) {
+      if (lazy_trans_update)
+        fp->add_blocknum_to_transaction(trans);
+      else
+        fp->add_to_transaction(trans);
+    }
   }
 
   // Second-level doubly-indirect block
@@ -783,8 +792,12 @@ bmap(sref<inode> ip, u32 bn, transaction *trans = NULL, bool zero_on_alloc = fal
 
   if (ap[bn % NINDIRECT] == 0) {
     ap[bn % NINDIRECT] = balloc(ip->dev, trans, zero_on_alloc);
-    if (trans)
-      sp->add_to_transaction(trans);
+    if (trans) {
+      if (lazy_trans_update)
+        sp->add_blocknum_to_transaction(trans);
+      else
+        sp->add_to_transaction(trans);
+    }
   }
 
   return ap[bn % NINDIRECT];
@@ -1039,7 +1052,7 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
 // correctness guarantees independent of fsync()'s concurrency strategy.
 int
 writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
-       bool writeback)
+       bool writeback, bool lazy_trans_update)
 {
   scoped_gc_epoch e;
 
@@ -1069,7 +1082,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       if (off % BSIZE == 0 && m == BSIZE)
         skip_disk_read = true;
 
-      blocknum = bmap(ip, off/BSIZE, trans, !skip_disk_read);
+      blocknum = bmap(ip, off/BSIZE, trans, !skip_disk_read, lazy_trans_update);
       bp = buf::get(ip->dev, blocknum, skip_disk_read);
 
     } catch (out_of_blocks& e) {
@@ -1088,8 +1101,12 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       // of the block with the write-lock held, so that we add *this* particular
       // version of the block-contents to the transaction. Also, this placement
       // helps ensure that the buf is marked clean at the right moment.
-      if (!writeback && trans)
-        bp->add_to_transaction(trans);
+      if (!writeback && trans) {
+        if (lazy_trans_update)
+          bp->add_blocknum_to_transaction(trans);
+        else
+          bp->add_to_transaction(trans);
+      }
     }
 
     if (writeback)

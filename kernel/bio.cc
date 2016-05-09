@@ -116,6 +116,12 @@ buf::add_to_transaction(transaction *trans)
 }
 
 void
+buf::add_blocknum_to_transaction(transaction *trans)
+{
+  trans->add_dirty_blocknum(block_);
+}
+
+void
 buf::onzero()
 {
   bufcache.cleanup(weakref_);

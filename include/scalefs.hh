@@ -144,6 +144,11 @@ class transaction {
         delete trans_blocks;
     }
 
+    void add_dirty_blocknum(u32 bno)
+    {
+      dirty_blocknums.push_back(bno);
+    }
+
     // Add a diskblock to the transaction. These diskblocks are not necessarily
     // added in timestamp order. They should be sorted before actually flushing
     // out the changes to disk.
@@ -274,6 +279,41 @@ class transaction {
       free_inum_list.push_back(inum);
     }
 
+    void add_dirty_blocks_lazy()
+    {
+      deduplicate_dirty_blocknums();
+
+      for (auto &bno : dirty_blocknums) {
+        sref<buf> bp = buf::get(1, bno);
+        bp->add_to_transaction(this);
+      }
+
+      dirty_blocknums.clear();
+    }
+
+    void deduplicate_dirty_blocknums()
+    {
+      // Sort the diskblocks in increasing timestamp order.
+      std::sort(dirty_blocknums.begin(), dirty_blocknums.end());
+
+      // Make a list of the most current version of the diskblocks. For each
+      // block number pick the diskblock with the highest timestamp and
+      // discard the rest.
+
+      std::vector<unsigned long> erase_indices;
+      for (auto b = dirty_blocknums.begin(); b != dirty_blocknums.end(); b++) {
+        if ((b+1) != dirty_blocknums.end() && (*b) == (*(b+1))) {
+          erase_indices.push_back(b - dirty_blocknums.begin());
+        }
+      }
+
+      std::sort(erase_indices.begin(), erase_indices.end(),
+                std::greater<unsigned long>());
+
+      for (auto &idx : erase_indices)
+        dirty_blocknums.erase(dirty_blocknums.begin() + idx);
+    }
+
     void deduplicate_blocks()
     {
       // Sort the diskblocks in increasing timestamp order.
@@ -362,6 +402,8 @@ class transaction {
   private:
     // List of updated diskblocks
     std::vector<std::unique_ptr<transaction_diskblock> > blocks;
+
+    std::vector<u32> dirty_blocknums;
 
     // Hash-table of blocks updated within the transaction. Used to ensure that
     // we don't log the same blocks repeatedly in the transaction.
@@ -599,8 +641,10 @@ class mfs_interface
     void update_file_size(u64 mfile_mnum, u32 size, transaction *tr);
     void initialize_file(sref<mnode> m);
     int load_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes);
-    int sync_file_page(u64 mfile_mnum, char *p, size_t pos, size_t nbytes,
+    sref<inode> prepare_sync_file_pages(u64 mfile_mnum, transaction *tr);
+    int sync_file_page(sref<inode> ip, char *p, size_t pos, size_t nbytes,
                        transaction *tr);
+    void finish_sync_file_pages(sref<inode> ip, transaction *tr);
     sref<inode> alloc_inode_for_mnode(u64 mnum, u8 type);
     void create_file(u64 mnum, u8 type, transaction *tr);
     void create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr);

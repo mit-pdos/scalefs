@@ -148,18 +148,33 @@ mfs_interface::update_file_size(u64 mfile_mnum, u32 size, transaction *tr)
   update_size(i, size, tr);
 }
 
-// Flushes out the contents of an in-memory file page to the disk.
-int
-mfs_interface::sync_file_page(u64 mfile_mnum, char *p, size_t pos,
-                              size_t nbytes, transaction *tr)
+sref<inode>
+mfs_interface::prepare_sync_file_pages(u64 mfile_mnum, transaction *tr)
 {
   scoped_gc_epoch e;
   sref<inode> ip = get_inode(mfile_mnum, "sync_file_page");
 
   ilock(ip, WRITELOCK);
-  int ret = writei(ip, p, pos, nbytes, tr, true);
+  return ip;
+}
+
+// Flushes out the contents of an in-memory file page to the disk.
+int
+mfs_interface::sync_file_page(sref<inode> ip, char *p, size_t pos,
+                              size_t nbytes, transaction *tr)
+{
+  scoped_gc_epoch e;
+  // writeback = true, lazy_trans_update = true.
+  return writei(ip, p, pos, nbytes, tr, true, true);
+}
+
+void
+mfs_interface::finish_sync_file_pages(sref<inode> ip, transaction *tr)
+{
+  scoped_gc_epoch e;
+
+  tr->add_dirty_blocks_lazy();
   iunlock(ip);
-  return ret;
 }
 
 // Truncates a file on disk to the specified size (offset).

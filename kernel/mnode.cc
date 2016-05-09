@@ -5,6 +5,7 @@
 #include "atomic_util.hh"
 #include "percpu.hh"
 #include "vm.hh"
+#include "file.hh"
 
 namespace {
   // 32MB mcache (XXX make this proportional to physical RAM)
@@ -327,6 +328,9 @@ mfile::sync_file(bool flush_journal, int cpu)
   u64 mlen = *read_size();
 
   // Flush all in-memory file pages to disk.
+
+  sref<inode> ip = rootfs_interface->prepare_sync_file_pages(mnum_, trans);
+
   auto page_end = pages_.find(PGROUNDUP(mlen) / PGSIZE);
   for (auto it = pages_.begin(); it != page_end; ) {
     // Skip unset spans
@@ -353,11 +357,13 @@ mfile::sync_file(bool flush_journal, int cpu)
     // asynchronous writes]. Since the rest of the bytes in the page are
     // zero anyway, this is harmless; we won't leak any random bytes into the
     // file.
-    assert(PGSIZE == rootfs_interface->sync_file_page(mnum_,
+    assert(PGSIZE == rootfs_interface->sync_file_page(ip,
                     (char*)it->get_page_info()->va(), pos, PGSIZE, trans));
     it->set_dirty_bit(false);
     ++it;
   }
+
+  rootfs_interface->finish_sync_file_pages(ip, trans);
 
   u64 ilen = rootfs_interface->get_file_size(mnum_);
   // If the in-memory file is shorter, truncate the file on the disk.

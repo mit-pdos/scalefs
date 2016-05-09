@@ -45,6 +45,7 @@ struct dwork;
 struct irq;
 class print_stream;
 class mnode;
+class inode;
 class buf;
 class transaction;
 class disk_completion;
@@ -115,7 +116,7 @@ void            itrunc(sref<inode>, u32 offset = 0, transaction *trans = NULL);
 int             readi(sref<inode>, char*, u32, u32);
 void            stati(sref<inode>, struct stat*);
 int             writei(sref<inode>, const char*, u32, u32, transaction *trans = NULL,
-                       bool writeback = false);
+                       bool writeback = false, bool lazy_trans_update = false);
 void            update_size(sref<inode>, u32, transaction *trans = NULL);
 sref<inode>     nameiparent(sref<inode> cwd, const char*, char*);
 int             dirlink(sref<inode>, const char*, u32, bool inc_link, transaction *trans);

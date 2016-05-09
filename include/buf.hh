@@ -23,6 +23,7 @@ public:
   void writeback(bool sync = true);
   void writeback_async();
   void add_to_transaction(transaction *trans);
+  void add_blocknum_to_transaction(transaction *trans);
 
   void async_iowait_init() {
     //inc();
