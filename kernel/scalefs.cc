@@ -1536,7 +1536,8 @@ mfs_interface::flush_journal_locked(int cpu)
     // a new batch for the other transaction and its successors. See the
     // commit's changelog for details about deadlocks.
     if (((*it)->dependent_txq.empty() || processed_trans_vec.empty())
-        && fits_in_journal((*it)->blocks.size(), cpu)) {
+        && fits_in_journal(prune_trans->blocks.size() + (*it)->blocks.size(),
+                           cpu)) {
 
       prune_trans->add_blocks(std::move((*it)->blocks));
 
