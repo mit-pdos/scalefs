@@ -687,7 +687,7 @@ class mfs_interface
     transaction *tr, int cpu);
     void write_journal_trans_epilog(u64 timestamp, int cpu);
     transaction* process_journal(int cpu);
-    void reset_journal(int cpu);
+    void reset_journal(int cpu, bool use_async_io = true);
 
     // Metadata functions
     void alloc_mnode_lock(u64 mnum);

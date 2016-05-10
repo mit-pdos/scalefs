@@ -1897,7 +1897,7 @@ mfs_interface::process_journal(int cpu)
     }
   }
 
-  reset_journal(cpu);
+  reset_journal(cpu, false); // Don't use async I/O.
   iunlock(sv6_journal[cpu]);
 
   if (!jrnl_error) {
@@ -1919,7 +1919,7 @@ mfs_interface::process_journal(int cpu)
 //
 // Caller must hold the journal lock and also ilock for write on sv6_journal.
 void
-mfs_interface::reset_journal(int cpu)
+mfs_interface::reset_journal(int cpu, bool use_async_io)
 {
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
@@ -1931,7 +1931,10 @@ mfs_interface::reset_journal(int cpu)
   if (writei(sv6_journal[cpu], buf, 0 /* offset */, hdr_size, tr) != hdr_size)
     panic("reset_journal() failed\n");
 
-  tr->write_to_disk_raw();
+  if (use_async_io)
+    tr->write_to_disk();
+  else
+    tr->write_to_disk_raw();
   delete tr;
 
   fs_journal[cpu]->update_offset(0);
