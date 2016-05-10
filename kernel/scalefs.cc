@@ -1573,12 +1573,8 @@ mfs_interface::flush_journal_locked(int cpu)
       u64 latest_commit_tsc = processed_trans_vec.back()->enq_tsc;
       fs_journal[cpu]->notify_commit(latest_commit_tsc);
 
-      for (auto t = processed_trans_vec.begin();
-           t != processed_trans_vec.end(); t++) {
-
-        post_process_transaction(*t);
-
-      }
+      for (auto &tr : processed_trans_vec)
+        post_process_transaction(tr);
 
       // Postpone applying this batch of transactions until all the dependent
       // transactions in other queues have been applied to the disk. It is
@@ -1603,7 +1599,11 @@ mfs_interface::flush_journal_locked(int cpu)
       u64 latest_apply_tsc = processed_trans_vec.back()->enq_tsc;
       fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
+      for (auto &tr : processed_trans_vec)
+        delete (tr);
+
       processed_trans_vec.clear();
+
       ilock(sv6_journal[cpu], WRITELOCK);
       reset_journal(cpu);
       iunlock(sv6_journal[cpu]);
@@ -1648,12 +1648,8 @@ mfs_interface::flush_journal_locked(int cpu)
   u64 latest_commit_tsc = processed_trans_vec.back()->enq_tsc;
   fs_journal[cpu]->notify_commit(latest_commit_tsc);
 
-  for (auto t = processed_trans_vec.begin();
-       t != processed_trans_vec.end(); t++) {
-
-    post_process_transaction(*t);
-
-  }
+  for (auto &tr : processed_trans_vec)
+    post_process_transaction(tr);
 
   // Postpone applying this batch of transactions until all the dependent
   // transactions in other queues have been applied to the disk. It is
@@ -1678,18 +1674,15 @@ mfs_interface::flush_journal_locked(int cpu)
   u64 latest_apply_tsc = processed_trans_vec.back()->enq_tsc;
   fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
+  for (auto &tr : processed_trans_vec)
+    delete (tr);
+
   processed_trans_vec.clear();
+
   ilock(sv6_journal[cpu], WRITELOCK);
   reset_journal(cpu);
   iunlock(sv6_journal[cpu]);
-
   delete prune_trans;
-
-  for (auto it = fs_journal[cpu]->transaction_queue.begin();
-       it != fs_journal[cpu]->transaction_queue.end(); it++) {
-
-    delete (*it);
-  }
 
   fs_journal[cpu]->transaction_queue.clear();
 }
