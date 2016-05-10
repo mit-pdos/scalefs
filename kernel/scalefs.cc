@@ -1540,6 +1540,7 @@ mfs_interface::flush_journal_locked(int cpu)
                            cpu)) {
 
       prune_trans->add_blocks(std::move((*it)->blocks));
+      prune_trans->deduplicate_blocks();
 
       processed_trans_vec.push_back(*it);
 
@@ -1548,8 +1549,6 @@ mfs_interface::flush_journal_locked(int cpu)
       // No space left in the journal to accommodate this sub-transaction.
       // So commit and apply all the earlier sub-transactions, to make space
       // for the remaining sub-transactions.
-
-      prune_trans->deduplicate_blocks();
 
       // Write out the transaction blocks to the on-disk journal and delete trans.
       write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
@@ -1624,8 +1623,6 @@ mfs_interface::flush_journal_locked(int cpu)
   // Finalize and flush out any remaining transactions from the journal.
 
   if (!processed_trans_vec.empty()) {
-
-    prune_trans->deduplicate_blocks();
 
     // Write out the transaction blocks to the on-disk journal and delete trans.
     write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
