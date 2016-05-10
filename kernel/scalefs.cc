@@ -154,6 +154,13 @@ mfs_interface::prepare_sync_file_pages(u64 mfile_mnum, transaction *tr)
   scoped_gc_epoch e;
   sref<inode> ip = get_inode(mfile_mnum, "sync_file_page");
 
+  std::vector<u64> inum_list;
+  inum_list.push_back(ip->inum);
+
+  // Lock ordering rule: Acquire all inode-block locks before performing any
+  // ilock().
+  acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
+
   ilock(ip, WRITELOCK);
   return ip;
 }
