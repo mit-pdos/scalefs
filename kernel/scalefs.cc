@@ -1496,7 +1496,7 @@ void
 mfs_interface::flush_journal_locked(int cpu)
 {
   u64 timestamp = 0, prolog_timestamp = 0;
-  transaction *trans, *prune_trans;
+  transaction *jrnl_trans, *prune_trans;
 
   // A vector of processed transactions, which need to be applied later
   // (post-processed).
@@ -1505,7 +1505,7 @@ mfs_interface::flush_journal_locked(int cpu)
   if (fs_journal[cpu]->transaction_queue.empty())
     return; // Nothing to do.
 
-  trans = new transaction(0);
+  jrnl_trans = new transaction(0);
 
   // A transaction to prune out multiple updates to the same disk block
   // from multiple sub-transactions. It merges all of them into 1 disk
@@ -1517,7 +1517,7 @@ mfs_interface::flush_journal_locked(int cpu)
     prolog_timestamp = (*it)->enq_tsc;
 
     ilock(sv6_journal[cpu], WRITELOCK);
-    write_journal_trans_prolog(prolog_timestamp, trans, cpu);
+    write_journal_trans_prolog(prolog_timestamp, jrnl_trans, cpu);
   }
 
   for (auto it = fs_journal[cpu]->transaction_queue.begin();
@@ -1550,9 +1550,10 @@ mfs_interface::flush_journal_locked(int cpu)
       // So commit and apply all the earlier sub-transactions, to make space
       // for the remaining sub-transactions.
 
-      // Write out the transaction blocks to the on-disk journal and delete trans.
+      // Write out the transaction blocks to the on-disk journal and delete
+      // jrnl_trans.
       write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
-                                       trans, cpu);
+                                       jrnl_trans, cpu);
 
       // Postpone committing this batch of transactions until all the dependent
       // transactions in other queues have been committed to the disk. It is
@@ -1600,7 +1601,7 @@ mfs_interface::flush_journal_locked(int cpu)
       fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
       for (auto &tr : processed_trans_vec)
-        delete (tr);
+        delete tr;
 
       processed_trans_vec.clear();
 
@@ -1611,10 +1612,10 @@ mfs_interface::flush_journal_locked(int cpu)
       // Retry this sub-transaction, since we couldn't write it to the journal.
       delete prune_trans;
       prune_trans = new transaction(0);
-      trans = new transaction(0);
+      jrnl_trans = new transaction(0);
       prolog_timestamp = timestamp;
       ilock(sv6_journal[cpu], WRITELOCK);
-      write_journal_trans_prolog(prolog_timestamp, trans, cpu);
+      write_journal_trans_prolog(prolog_timestamp, jrnl_trans, cpu);
       goto retry;
     }
 
@@ -1624,9 +1625,10 @@ mfs_interface::flush_journal_locked(int cpu)
 
   if (!processed_trans_vec.empty()) {
 
-    // Write out the transaction blocks to the on-disk journal and delete trans.
+    // Write out the transaction blocks to the on-disk journal and delete
+    // jrnl_trans.
     write_journal_transaction_blocks(prune_trans->blocks, prolog_timestamp,
-                                     trans, cpu);
+                                     jrnl_trans, cpu);
   }
 
   // Postpone committing this batch of transactions until all the dependent
@@ -1675,7 +1677,7 @@ mfs_interface::flush_journal_locked(int cpu)
   fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
   for (auto &tr : processed_trans_vec)
-    delete (tr);
+    delete tr;
 
   processed_trans_vec.clear();
 
