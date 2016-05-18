@@ -102,5 +102,5 @@ struct ahci_cmd_table {
   u8 cfis[0x40];		/* command FIS */
   u8 acmd[0x10];		/* ATAPI command */
   u8 reserved[0x30];
-  ahci_prd prdt[DISK_REQMAX / PGSIZE + 1];
+  ahci_prd prdt[DISK_REQMAX];
 };

@@ -210,7 +210,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   // Round up the size to make it an integral multiple of PGSIZE.
   // Crashes on boot otherwise.
   size_t portmem_size = (sizeof(ahci_port_mem) + PGSIZE-1) & ~(PGSIZE-1);
-  portmem = (ahci_port_mem*) kalloc("ahci_port_mem", portmem_size);
+  portmem = (ahci_port_mem*) kmalloc(portmem_size, "ahci_port_mem");
   assert(portmem && portmem_size >= sizeof(ahci_port_mem));
   memset(portmem, 0, portmem_size);
 
@@ -349,14 +349,6 @@ ahci_port::alloc_cmdslot(sref<disk_completion> dc)
     bool all_scanned = false;
     for (int cmdslot = (last_cmdslot + 1) % hba->ncs; cmdslot < hba->ncs;
          cmdslot++) {
-
-      if (cmdslot % 8 != 0) {
-        if (cmdslot == hba->ncs - 1 && !all_scanned) {
-          cmdslot = -1;
-          all_scanned = true;
-        }
-        continue;
-      }
 
       if (!cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot)) &&
           !(preg->sact & (1 << cmdslot))) {
