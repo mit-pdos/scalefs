@@ -1575,73 +1575,53 @@ mfs_interface::apply_transactions(std::vector<transaction*> &tx_queue,
 void
 mfs_interface::flush_journal_locked(int cpu)
 {
-  if (fs_journal[cpu]->transaction_queue.empty())
-    return; // Nothing to do.
-
-  transaction *dedup_trans = new transaction();
+  transaction *dedup_trans;
   std::vector<transaction*> processed_trans_vec;
 
-  for (auto it = fs_journal[cpu]->transaction_queue.begin();
-       it != fs_journal[cpu]->transaction_queue.end(); it++) {
+  while (!fs_journal[cpu]->transaction_queue.empty()) {
+    dedup_trans = new transaction();
 
-    (*it)->deduplicate_blocks();
+    for (auto it = fs_journal[cpu]->transaction_queue.begin();
+         it != fs_journal[cpu]->transaction_queue.end(); ) {
 
-    retry:
+      (*it)->deduplicate_blocks();
 
-    // To avoid deadlocks, we allow only the head transaction in any batch to
-    // have cross-queue (i.e., cross-journal) dependencies. If we encounter a
-    // later transaction with a cross-queue dependency, we close the batching
-    // window first, flush the existing batch of transactions and then create
-    // a new batch for the other transaction and its successors. See the
-    // commit's changelog for details about deadlocks.
-    if (((*it)->dependent_txq.empty() || processed_trans_vec.empty())
-        && fits_in_journal(dedup_trans->blocks.size() + (*it)->blocks.size(),
-                           cpu)) {
+      // To avoid deadlocks, we allow only the head transaction in any batch to
+      // have cross-queue (i.e., cross-journal) dependencies. If we encounter a
+      // later transaction with a cross-queue dependency, we close the batching
+      // window first, flush the existing batch of transactions and then create
+      // a new batch for the other transaction and its successors. See the
+      // commit's changelog for details about deadlocks.
+      if (((*it)->dependent_txq.empty() || processed_trans_vec.empty())
+          && fits_in_journal(dedup_trans->blocks.size() + (*it)->blocks.size(),
+                             cpu)) {
 
-      dedup_trans->add_blocks(std::move((*it)->blocks));
-      dedup_trans->deduplicate_blocks();
+        processed_trans_vec.push_back(*it);
+        dedup_trans->add_blocks(std::move((*it)->blocks));
+        dedup_trans->deduplicate_blocks();
 
-      processed_trans_vec.push_back(*it);
+        it = fs_journal[cpu]->transaction_queue.erase(it);
 
-    } else {
-
-      // No space left in the journal to accommodate this sub-transaction.
-      // So commit and apply all the earlier sub-transactions, to make space
-      // for the remaining sub-transactions.
-
-      commit_transactions(processed_trans_vec, dedup_trans, cpu);
-
-      apply_transactions(processed_trans_vec, dedup_trans, cpu);
-      delete dedup_trans;
-
-      processed_trans_vec.clear();
-
-      ilock(sv6_journal[cpu], WRITELOCK);
-      reset_journal(cpu);
-      iunlock(sv6_journal[cpu]);
-
-      // Retry this sub-transaction, since we couldn't write it to the journal.
-      dedup_trans = new transaction();
-      goto retry;
+      } else {
+        // No space left in the journal to accommodate this sub-transaction.
+        // So commit and apply all the earlier sub-transactions, to make space
+        // for the remaining sub-transactions.
+        break;
+      }
     }
-  }
 
-  // Finalize and flush out any remaining transactions from the journal.
+    assert(!processed_trans_vec.empty());
 
-  if (!processed_trans_vec.empty()) {
     commit_transactions(processed_trans_vec, dedup_trans, cpu);
-
     apply_transactions(processed_trans_vec, dedup_trans, cpu);
     delete dedup_trans;
 
     processed_trans_vec.clear();
+
+    ilock(sv6_journal[cpu], WRITELOCK);
+    reset_journal(cpu);
+    iunlock(sv6_journal[cpu]);
   }
-
-  ilock(sv6_journal[cpu], WRITELOCK);
-  reset_journal(cpu);
-  iunlock(sv6_journal[cpu]);
-
-  fs_journal[cpu]->transaction_queue.clear();
 }
 
 void
