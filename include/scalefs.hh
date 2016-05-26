@@ -436,17 +436,21 @@ class journal {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal() : current_off(0), committed_trans_tsc(0), applied_trans_tsc(0) {}
+    journal() : current_off(0), committed_trans_tsc(0), applied_trans_tsc(0)
+    {
+      apply_dedup_trans = new transaction();
+    }
 
     ~journal()
     {
-      assert(transaction_queue.empty());
+      assert(tx_commit_queue.empty());
+      assert(tx_apply_queue.empty());
     }
 
-    // Add a new transaction to the journal's transaction queue.
+    // Add a new transaction to the journal's transaction commit queue.
     void enqueue_transaction(transaction *tr)
     {
-      transaction_queue.push_back(tr);
+      tx_commit_queue.push_back(tr);
     }
 
     // comparison function to order journal transactions in timestamp order
@@ -493,9 +497,12 @@ class journal {
     }
 
   private:
-    std::vector<transaction*> transaction_queue;
-    sleeplock lock; // Guards updates to the transaction queue
-    // Current size of flushed out transactions on the disk
+    std::vector<transaction*> tx_commit_queue;
+    std::vector<transaction*> tx_apply_queue;
+    transaction *apply_dedup_trans;
+    sleeplock lock; // Guards updates to the transaction queues.
+
+    // Current size of flushed out transactions on the disk.
     u32 current_off;
     // The timestamp of the last transaction that was committed to the on-disk
     // filesystem via this journal.
@@ -678,8 +685,8 @@ class mfs_interface
                              transaction *dedup_trans, int cpu);
     void apply_transactions(std::vector<transaction*> &tx_queue,
                             transaction *dedup_trans, int cpu);
-    void flush_journal_locked(int cpu);
-    void flush_journal(int cpu);
+    void flush_journal_locked(int cpu, bool apply_all = false);
+    void flush_journal(int cpu, bool apply_all = false);
     void write_journal_hdrblock(const char *header, const char *datablock,
                                 transaction *tr, int cpu);
     void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr,
