@@ -5,6 +5,7 @@
 #include "file.hh"
 #include "major.h"
 #include "kstream.hh"
+#include "sys/time.h"
 
 #include <algorithm>
 #include <uk/time.h>
@@ -90,4 +91,13 @@ sys_time_nsec(void)
 {
   // Return the number of nanoseconds since the UNIX epoch
   return rtc_nsec0 + nsectime();
+}
+
+int
+gettimeofday(struct timeval *tv, struct timezone *tz)
+{
+  uint64_t nsec = sys_time_nsec();
+  tv->tv_sec = nsec / 1000000000;
+  tv->tv_usec = (nsec % 1000000000) / 1000;
+  return 0;
 }
