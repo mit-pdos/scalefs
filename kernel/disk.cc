@@ -99,6 +99,8 @@ sys_disktest(void)
 }
 
 // Stripe across all the (four) disks.
+
+// Given a block offset as argument, return the disk number that hosts that block.
 u32 offset_to_dev(u64 offset)
 {
   return offset % disks.size();
@@ -149,10 +151,10 @@ idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
 }
 
 void
-ideflush()
+ideflush(std::vector<u32> &disknums)
 {
   assert(disks.size() > 0);
-  for (int i = 0; i < disks.size(); i++)
-    disks[i]->flush();
+  for (auto &d : disknums)
+    disks[d]->flush();
 }
 

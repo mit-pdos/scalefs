@@ -1476,7 +1476,7 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 {
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
-  tr->write_to_disk();
+  tr->write_to_disk_and_flush();
 }
 
 void
@@ -1552,7 +1552,6 @@ mfs_interface::apply_transactions(std::vector<transaction*> &tx_queue,
   // Apply all the committed sub-transactions to their final destinations
   // on the disk.
   apply_trans_on_disk(dedup_trans);
-  ideflush();
 
   for (auto &tr : tx_queue)
     tr->dependent_txq.clear();
@@ -1754,8 +1753,7 @@ mfs_interface::write_journal_transaction_blocks(
   }
 
   // Write out the disk blocks in the transaction to stable storage (disk).
-  trans->write_to_disk();
-  ideflush();
+  trans->write_to_disk_and_flush();
 }
 
 // Caller must hold ilock for write on sv6_journal.
@@ -1767,8 +1765,7 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, int cpu)
 
   write_journal_header(jrnl_commit, timestamp, trans, cpu);
 
-  trans->write_to_disk();
-  ideflush();
+  trans->write_to_disk_and_flush();
   delete trans;
 }
 
