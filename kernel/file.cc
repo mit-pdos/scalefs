@@ -20,10 +20,11 @@ file_mnode::fsync() {
   rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, cpu);
 
   if (m->type() == mnode::types::file)
-    m->as_file()->sync_file(true, cpu);
+    m->as_file()->sync_file(cpu);
   else if (m->type() == mnode::types::dir)
     m->as_dir()->sync_dir(cpu);
 
+  rootfs_interface->flush_journal(cpu);
   return 0;
 }
 

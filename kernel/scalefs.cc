@@ -642,7 +642,7 @@ mfs_interface::sync_dirty_files_and_dirs(int cpu, std::vector<u64> &mnum_list)
     sref<mnode> m = root_fs->mget(mnum);
     if (m && m->is_dirty()) {
       if (m->type() == mnode::types::file)
-        m->as_file()->sync_file(false, cpu);
+        m->as_file()->sync_file(cpu);
       else if (m->type() == mnode::types::dir)
         m->as_dir()->sync_dir(cpu);
     }
@@ -1484,17 +1484,6 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
   tr->write_to_disk();
-}
-
-// Logs a transaction in the disk journal and then applies it to the disk,
-// if flush_journal is set to true.
-void
-mfs_interface::add_fsync_to_journal(transaction *tr, bool flush_jrnl, int cpu)
-{
-  add_transaction_to_queue(tr, cpu);
-
-  if (flush_jrnl)
-    flush_journal(cpu);
 }
 
 void

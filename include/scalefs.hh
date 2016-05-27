@@ -680,7 +680,6 @@ class mfs_interface
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
     void apply_trans_on_disk(transaction *tr);
-    void add_fsync_to_journal(transaction *tr, bool flush_journal, int cpu);
     void commit_transactions(std::vector<transaction*> &tx_queue,
                              transaction *dedup_trans, int cpu);
     void apply_transactions(std::vector<transaction*> &tx_queue,
