@@ -1312,13 +1312,6 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
     m->dirty(false);
 }
 
-void
-mfs_interface::process_metadata_log_and_flush(u64 max_tsc, u64 mnum, int cpu)
-{
-  process_metadata_log(max_tsc, mnum, cpu);
-  flush_journal(cpu);
-}
-
 // Create operation
 void
 mfs_interface::mfs_create(mfs_operation_create *op, transaction *tr)

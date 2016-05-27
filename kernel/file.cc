@@ -17,7 +17,7 @@ file_mnode::fsync() {
 
   int cpu = myid();
   u64 fsync_tsc = get_tsc();
-  rootfs_interface->process_metadata_log_and_flush(fsync_tsc, m->mnum_, cpu);
+  rootfs_interface->process_metadata_log(fsync_tsc, m->mnum_, cpu);
 
   if (m->type() == mnode::types::file)
     m->as_file()->sync_file(cpu);
