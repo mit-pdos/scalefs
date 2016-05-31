@@ -1573,9 +1573,12 @@ mfs_interface::flush_journal_locked(int cpu, bool apply_all)
 {
   bool apply_and_flush = apply_all;
   std::vector<transaction*> local_commit_queue;
+  transaction *dedup_trans;
 
   while (!fs_journal[cpu]->tx_commit_queue.empty() ||
          (apply_all && !fs_journal[cpu]->tx_apply_queue.empty())) {
+
+    dedup_trans = new transaction();
 
     for (auto it = fs_journal[cpu]->tx_commit_queue.begin();
          it != fs_journal[cpu]->tx_commit_queue.end(); ) {
@@ -1589,12 +1592,12 @@ mfs_interface::flush_journal_locked(int cpu, bool apply_all)
       // a new batch for the other transaction and its successors. See the
       // commit's changelog for details about deadlocks.
       if (((*it)->dependent_txq.empty() || local_commit_queue.empty())
-          && fits_in_journal(fs_journal[cpu]->apply_dedup_trans->blocks.size() +
-                             (*it)->blocks.size(), cpu)) {
+          && fits_in_journal(dedup_trans->blocks.size() + (*it)->blocks.size(),
+                             cpu)) {
 
         local_commit_queue.push_back(*it);
-        fs_journal[cpu]->apply_dedup_trans->add_blocks(std::move((*it)->blocks));
-        fs_journal[cpu]->apply_dedup_trans->deduplicate_blocks();
+        dedup_trans->add_blocks(std::move((*it)->blocks));
+        dedup_trans->deduplicate_blocks();
 
         it = fs_journal[cpu]->tx_commit_queue.erase(it);
 
@@ -1607,15 +1610,17 @@ mfs_interface::flush_journal_locked(int cpu, bool apply_all)
       }
     }
 
-    if (!local_commit_queue.empty()) {
-      commit_transactions(local_commit_queue, fs_journal[cpu]->apply_dedup_trans,
-                          cpu);
-    }
+    if (!local_commit_queue.empty())
+      commit_transactions(local_commit_queue, dedup_trans, cpu);
 
     // Save the committed transactions to the apply-queue, so that we can
     // postpone applying them if we wish.
     for (auto &tr : local_commit_queue)
       fs_journal[cpu]->tx_apply_queue.push_back(tr);
+
+    fs_journal[cpu]->apply_dedup_trans->add_blocks(std::move(dedup_trans->blocks));
+    fs_journal[cpu]->apply_dedup_trans->deduplicate_blocks();
+    delete dedup_trans;
 
     local_commit_queue.clear();
 
