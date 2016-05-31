@@ -1485,15 +1485,15 @@ mfs_interface::commit_transactions(std::vector<transaction*> &tx_queue,
 {
   assert(!tx_queue.empty());
 
-  u64 prolog_timestamp = tx_queue.front()->enq_tsc;
+  u64 timestamp = tx_queue.front()->enq_tsc;
   transaction *jrnl_trans = new transaction();
 
   ilock(sv6_journal[cpu], WRITELOCK);
-  write_journal_trans_prolog(prolog_timestamp, jrnl_trans, cpu);
 
-  // Write out the transaction blocks to the on-disk journal.
-  write_journal_transaction_blocks(dedup_trans->blocks, prolog_timestamp,
-                                   jrnl_trans, cpu);
+  // Write the transaction's start block and the data blocks to the on-disk
+  // journal.
+  write_journal_transaction_blocks(dedup_trans->blocks, timestamp, jrnl_trans,
+                                   cpu);
   delete jrnl_trans;
 
   // Postpone committing this batch of transactions until all the dependent
@@ -1505,9 +1505,8 @@ mfs_interface::commit_transactions(std::vector<transaction*> &tx_queue,
       fs_journal[dep_txn.id_]->wait_for_commit(dep_txn.timestamp_);
   }
 
-  // Commit the transaction by writing the commit record to the on-disk
-  // journal with the given timestamp.
-  write_journal_trans_epilog(prolog_timestamp, cpu);
+  // Commit the transaction to the on-disk journal with the given timestamp.
+  write_journal_commit_block(timestamp, cpu);
   iunlock(sv6_journal[cpu]);
 
   // Notify transactions (in other journal queues) which were waiting for
@@ -1652,123 +1651,100 @@ mfs_interface::flush_journal(int cpu, bool apply_all)
   flush_journal_locked(cpu, apply_all);
 }
 
-void
-mfs_interface::write_journal_hdrblock(const char *header, const char *datablock,
-                                      transaction *tr, int cpu)
-{
-  size_t data_size = BSIZE;
-  size_t hdr_size = sizeof(journal_block_header);
-  u32 offset = fs_journal[cpu]->current_offset();
-
-  if (writei(sv6_journal[cpu], header, offset, hdr_size, tr) != hdr_size)
-    panic("Journal write (header block) failed\n");
-
-  offset += hdr_size;
-
-  if (writei(sv6_journal[cpu], datablock, offset, data_size, tr) != data_size)
-    panic("Journal write (data block) failed\n");
-
-  offset += data_size;
-
-  fs_journal[cpu]->update_offset(offset);
-}
-
-void
-mfs_interface::write_journal_header(u8 hdr_type, u64 timestamp,
-                                    transaction *trans, int cpu)
-{
-  char databuf[BSIZE];
-  char buf[sizeof(journal_block_header)];
-
-  journal_block_header hdstart(timestamp, 0, jrnl_start);
-  journal_block_header hdcommit(timestamp, 0, jrnl_commit);
-
-  memset(buf, 0, sizeof(buf));
-  memset(databuf, 0, sizeof(databuf));
-
-  switch (hdr_type) {
-    case jrnl_start:
-      memmove(buf, (void *) &hdstart, sizeof(hdstart));
-      write_journal_hdrblock(buf, databuf, trans, cpu);
-      break;
-
-    case jrnl_commit:
-      memmove(buf, (void *) &hdcommit, sizeof(hdcommit));
-      write_journal_hdrblock(buf, databuf, trans, cpu);
-      break;
-
-    default:
-      cprintf("write_journal_header: requested invalid header %u\n", hdr_type);
-      break;
-  }
-}
-
 bool
 mfs_interface::fits_in_journal(size_t num_trans_blocks, int cpu)
 {
   // Estimate the space requirements of this transaction in the journal.
 
-  u64 trans_size;
-  size_t hdr_size = sizeof(journal_block_header);
-  u32 offset = fs_journal[cpu]->current_offset();
-
   // Check if we can fit num_trans_blocks disk blocks of the transaction
-  // as well as the start and commit blocks in the journal.
-  trans_size = (hdr_size + BSIZE) * (2 + num_trans_blocks);
+  // as well as the start and commit blocks in the journal. (And also an
+  // additional address block if necessary).
+  u64 trans_size = num_trans_blocks * BSIZE + 2 * sizeof(journal_header_block)
+                   + sizeof(journal_addr_block);
 
-  if (offset + trans_size > PHYS_JOURNAL_SIZE) {
-    // No space left in the journal.
+  if (fs_journal[cpu]->current_offset() + trans_size > PHYS_JOURNAL_SIZE)
     return false;
-  }
-
   return true;
 }
 
-
-// Caller must hold ilock for write on sv6_journal.
 void
-mfs_interface::write_journal_trans_prolog(u64 timestamp, transaction *trans,
-                                          int cpu)
+mfs_interface::write_journal(char *buf, size_t size, transaction *tr, int cpu)
 {
-  // A transaction begins with a start block.
-  write_journal_header(jrnl_start, timestamp, trans, cpu);
+  u32 offset = fs_journal[cpu]->current_offset();
+
+  // Make sure we are writing BSIZE bytes at BSIZE-aligned offsets, so that
+  // we can skip reading the disk within writei().
+  assert(offset % BSIZE == 0 && size == BSIZE);
+  assert(writei(sv6_journal[cpu], buf, offset, size, tr) == size);
+
+  offset += size;
+  fs_journal[cpu]->update_offset(offset);
 }
 
 // Write a transaction's disk blocks to the on-disk journal. The only thing
 // remaining to write to the journal on the disk after this function returns,
-// would be the commit record.
+// would be the commit block.
 // Caller must hold ilock for write on sv6_journal.
 void
 mfs_interface::write_journal_transaction_blocks(
-    const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
+    const std::vector<std::unique_ptr<transaction_diskblock> >& datablocks,
     const u64 timestamp, transaction *trans, int cpu)
 {
-  assert(sv6_journal[cpu]);
 
-  size_t hdr_size = sizeof(journal_block_header);
-  char buf[hdr_size];
+  journal_header_block hdr_start;
+  journal_addr_block hdr_addr;
+  memset(&hdr_start, 0, sizeof(hdr_start));
+  memset(&hdr_addr, 0, sizeof(hdr_addr));
+  hdr_start.timestamp = timestamp;
+  hdr_start.header_type = jrnl_start;
 
-  // Write out the transaction diskblocks to the journal in memory.
-  for (auto it = vec.begin(); it != vec.end(); it++) {
+  // No. of block addresses that can fit in the start and the address blocks.
+  u32 nslots_startblk = sizeof(hdr_start.blocknums) / sizeof(u32);
+  u32 nslots_addrblk = sizeof(hdr_addr.blocknums) / sizeof(u32);
 
-    journal_block_header hddata(timestamp, (*it)->blocknum, jrnl_data);
+  assert(datablocks.size() <= nslots_startblk + nslots_addrblk);
 
-    memmove(buf, (void *) &hddata, sizeof(hddata));
-    write_journal_hdrblock(buf, (*it)->blockdata, trans, cpu);
+  int count = 0;
+  for (auto it = datablocks.begin(); it != datablocks.end(); it++, count++) {
+
+    // Fill the addresses in the start block itself, as far as possible, and use
+    // the dedicated address block if it spills over. We won't need more than 1
+    // address block, because our journal size is about 4 MB, which limits the
+    // number of data blocks for any transaction to about 1024 or so (roughly).
+    if (count < nslots_startblk)
+      hdr_start.blocknums[count] = (*it)->blocknum;
+    else
+      hdr_addr.blocknums[count - nslots_startblk] = (*it)->blocknum;
   }
 
-  // Write out the disk blocks in the transaction to stable storage (disk).
+  if (datablocks.size() > nslots_startblk)
+    hdr_start.num_addr_blocks = 1;
+
+  // Write out the start block, (the addr block) and the data blocks.
+
+  write_journal((char *)&hdr_start, sizeof(hdr_start), trans, cpu);
+
+  // Write out the address block(s), if we have any.
+  if (hdr_start.num_addr_blocks)
+    write_journal((char *)&hdr_addr, sizeof(hdr_addr), trans, cpu);
+
+  // Write out the data blocks themselves to the in-memory journal.
+  for (auto &b : datablocks)
+    write_journal(b->blockdata, BSIZE, trans, cpu);
+
+  // Finally, write the transaction's disk blocks to stable storage (disk).
   trans->write_to_disk_and_flush();
 }
 
 // Caller must hold ilock for write on sv6_journal.
 void
-mfs_interface::write_journal_trans_epilog(u64 timestamp, int cpu)
+mfs_interface::write_journal_commit_block(u64 timestamp, int cpu)
 {
-  // The transaction ends with a commit block.
-  transaction *trans = new transaction(0);
+  // The transaction ends with a commit block containing the same timestamp.
+  journal_header_block hdr_commit(timestamp, jrnl_commit);
+  transaction *trans = new transaction();
 
-  write_journal_header(jrnl_commit, timestamp, trans, cpu);
+  write_journal((char *)&hdr_commit, sizeof(hdr_commit), trans, cpu);
 
   trans->write_to_disk_and_flush();
   delete trans;
@@ -1779,6 +1755,9 @@ mfs_interface::write_journal_trans_epilog(u64 timestamp, int cpu)
 transaction*
 mfs_interface::process_journal(int cpu)
 {
+  // TODO: Implement crash-recovery for the new journal layout.
+
+#if 0
   u32 offset = 0;
   u64 current_transaction = 0;
   transaction *trans = new transaction(0);
@@ -1791,6 +1770,7 @@ mfs_interface::process_journal(int cpu)
   bool jrnl_error = false;
 
   memset(&hdcmp, 0, sizeof(hdcmp));
+#endif
 
   char jrnl_name[32];
   snprintf(jrnl_name, sizeof(jrnl_name), "/sv6journal%d", cpu);
@@ -1804,6 +1784,7 @@ mfs_interface::process_journal(int cpu)
   return nullptr;
 #endif
 
+#if 0
   ilock(sv6_journal[cpu], WRITELOCK);
 
   while (!jrnl_error) {
@@ -1860,6 +1841,7 @@ mfs_interface::process_journal(int cpu)
   }
 
   return nullptr;
+#endif
 }
 
 // Reset the journal so that we can start writing to it again, from the
@@ -1875,6 +1857,12 @@ mfs_interface::process_journal(int cpu)
 void
 mfs_interface::reset_journal(int cpu, bool use_async_io)
 {
+  fs_journal[cpu]->update_offset(0);
+
+  // TODO: After booting, we might have to really reset the journal (by adding a
+  // zero block etc) to avoid unnecessarily reapplying stale committed
+  // transactions after a subsequent reboot.
+#if 0
   size_t hdr_size = sizeof(journal_block_header);
   char buf[hdr_size];
 
@@ -1892,6 +1880,7 @@ mfs_interface::reset_journal(int cpu, bool use_async_io)
   delete tr;
 
   fs_journal[cpu]->update_offset(0);
+#endif
 }
 
 sref<mnode>

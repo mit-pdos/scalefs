@@ -581,28 +581,43 @@ class mfs_interface
 {
   public:
 
-    // Header used by each journal block
-    typedef struct journal_block_header {
-      u64 timestamp;          // The transaction timestamp, serves as the
-                              // transaction ID
-      u32 blocknum;           // The disk block number if this is a data block
-      u8 block_type;          // The type of the journal block
+    // Headers used by the journal to indicate start and commit of transactions.
+    typedef struct journal_header_block {
+      journal_header_block() : timestamp(0), header_type(0) {}
+      journal_header_block(u64 t, u8 bt) : timestamp(t), header_type(bt) {}
 
-      journal_block_header(u64 t, u32 n, u8 bt) {
-        timestamp = t;
-        blocknum = n;
-        block_type = bt;
-      }
+      u64 timestamp; // The transaction timestamp, serves as the transaction ID.
+      u8 header_type; // The type of the journal header (start or commit)
 
-      journal_block_header(): timestamp(0), blocknum(0), block_type(0) {}
+      // The following fields are used only if this is a start block.
+      u8 num_addr_blocks; // No. of address-blocks that follow the start block.
+      u8 padding[2];
+      u32 blocknums[1021]; // Block numbers of the data blocks in the transaction.
 
-    } journal_block_header;
+    } journal_header;
 
-    // Types of journal blocks
+    static_assert(sizeof(journal_header_block) == BSIZE,
+                  "Journal header size is not optimal\n");
+
+    // Address block(s) : stores addresses (block numbers) of data blocks in the
+    // transaction, which helps apply them to the on-disk filesystem after commit.
+    // The first few block numbers are stored in the start header block itself.
+    // Dedicated address blocks are used if the block numbers overflow from the
+    // start header block.
+    typedef struct journal_addr_block {
+      u32 blocknums[1024];
+    } journal_addr_block;
+
+    static_assert(sizeof(journal_addr_block) == BSIZE,
+                  "Journal address block size should be equal to BSIZE\n");
+
+    static_assert((PHYS_JOURNAL_SIZE/BSIZE) <= 1021 + 1024,
+                   "Add more address blocks in the transaction commit code\n");
+
+    // Types of journal headers
     enum : u8 {
-      jrnl_start = 1,     // Start transaction block
-      jrnl_data,          // Data block
-      jrnl_commit,        // Commit transaction block
+      jrnl_start = 1,     // Start block
+      jrnl_commit,        // Commit block
     };
 
     struct pending_metadata {
@@ -719,16 +734,12 @@ class mfs_interface
                             transaction *dedup_trans, int cpu);
     void flush_journal_locked(int cpu, bool apply_all = false);
     void flush_journal(int cpu, bool apply_all = false);
-    void write_journal_hdrblock(const char *header, const char *datablock,
-                                transaction *tr, int cpu);
-    void write_journal_header(u8 hdr_type, u64 timestamp, transaction *tr,
-                              int cpu);
     bool fits_in_journal(size_t num_trans_blocks, int cpu);
-    void write_journal_trans_prolog(u64 timestamp, transaction *tr, int cpu);
+    void write_journal(char *buf, size_t size, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr, int cpu);
-    void write_journal_trans_epilog(u64 timestamp, int cpu);
+    void write_journal_commit_block(u64 timestamp, int cpu);
     transaction* process_journal(int cpu);
     void reset_journal(int cpu, bool use_async_io = true);
 
