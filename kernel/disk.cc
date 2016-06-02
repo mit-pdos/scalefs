@@ -98,17 +98,19 @@ sys_disktest(void)
   disk_test_all();
 }
 
-// Stripe across all the (four) disks.
+// Stripe across all the (four) disks, with a stripe size of 64KB.
+#define STRIPE_SIZE_BLKS		(64 * 1024 / BSIZE)
 
 // Given a block offset as argument, return the disk number that hosts that block.
 u32 offset_to_dev(u64 offset)
 {
-  return offset % disks.size();
+  return (offset / STRIPE_SIZE_BLKS) % disks.size();
 }
 
 u64 recalc_offset(u64 offset, u32 num_disks)
 {
-  return offset / num_disks;
+  return STRIPE_SIZE_BLKS * ((offset / STRIPE_SIZE_BLKS) / num_disks)
+         + (offset % STRIPE_SIZE_BLKS);
 }
 
 // compat for a single IDE disk..
