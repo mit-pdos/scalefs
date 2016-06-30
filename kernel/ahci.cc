@@ -53,6 +53,8 @@ public:
   void aflush(sref<disk_completion> dc) override;
 
   void handle_port_irq();
+  void handle_error();
+  void read_error_log();
 
   NEW_DELETE_OPS(ahci_port);
 
@@ -529,12 +531,65 @@ ahci_port::wait()
 }
 
 void
+ahci_port::read_error_log()
+{
+  u8 buf[512];
+  int iov_cnt = 1;
+  kiovec iov = { (void*) buf, 512 };
+  int offset = 0x10 * 512; // Offset in sectors must be 0x10.
+
+  assert(!preg->ci && !preg->sact);
+
+  auto dc = sref<disk_completion>::transfer(new disk_completion());
+  int cmdslot = alloc_cmdslot(dc);
+
+  // Read the first page (page 0) of the error log at address 10h.
+  issue(cmdslot, &iov, iov_cnt, offset, IDE_CMD_READ_LOG_DMA_EXT);
+  blocking_wait(dc);
+
+  cprintf("NCQ Queued Error Log (10h):\n\n");
+  for (int i = 0; i < 512; i++)
+    cprintf("log_byte[%d]: 0x%x\n", i, buf[i]);
+  cprintf("\n");
+}
+
+void
+ahci_port::handle_error()
+{
+  cprintf("AHCI: port %d: ERROR! IS 0x%x, SERR 0x%x\n", pid, preg->is,
+          preg->serr);
+
+  u32 tfd = preg->tfd;
+  if (AHCI_PORT_TFD_STAT(tfd) & (IDE_STAT_ERR | IDE_STAT_DF))
+    cprintf("AHCI: port %d: status %02x, err %02x\n",
+            pid, AHCI_PORT_TFD_STAT(tfd), AHCI_PORT_TFD_ERR(tfd));
+
+  // Restart the port so that we can read the error log.
+  preg->cmd &= ~AHCI_PORT_CMD_ST;
+  if (preg->cmd & AHCI_PORT_CMD_CR) {
+    microdelay(500 * 1000);
+
+    if (preg->cmd & (AHCI_PORT_CMD_CR)) {
+      cprintf("AHCI: port %d: unable to restart port upon error\n", pid);
+      return;
+    }
+  }
+
+  preg->serr = 0;
+  preg->is = ~0;
+
+  preg->cmd |= AHCI_PORT_CMD_ST;
+  read_error_log();
+  panic("AHCI port error\n");
+}
+
+void
 ahci_port::handle_port_irq()
 {
   scoped_acquire a(&cmdslot_alloc_lock);
 
   if (preg->is & AHCI_PORT_INTR_ERROR)
-    cprintf("handle_port_irq: ERROR status 0x%x\n", preg->is);
+    handle_error(); // Does not return!
 
   preg->is = ~0;
 
@@ -548,12 +603,6 @@ ahci_port::handle_port_irq()
       cmds_issued &= ~(1 << cmdslot);
 
       cmdslot_alloc_cv.wake_all();
-
-      u32 tfd = preg->tfd;
-      if (AHCI_PORT_TFD_STAT(tfd) & (IDE_STAT_ERR | IDE_STAT_DF)) {
-        cprintf("AHCI: port %d: status %02x, err %02x\n",
-                pid, AHCI_PORT_TFD_STAT(tfd), AHCI_PORT_TFD_ERR(tfd));
-      }
     }
   }
 }

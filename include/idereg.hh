@@ -30,6 +30,7 @@
 #define IDE_CMD_READ                  0x20
 #define IDE_CMD_READ_DMA              0xc8
 #define IDE_CMD_READ_DMA_EXT          0x25
+#define IDE_CMD_READ_LOG_DMA_EXT      0x47
 #define IDE_CMD_READ_FPDMA_QUEUED     0x60
 #define IDE_CMD_WRITE                 0x30
 #define IDE_CMD_WRITE_DMA             0xca
