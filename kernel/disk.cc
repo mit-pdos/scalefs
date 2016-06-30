@@ -48,7 +48,7 @@ initdisk()
 
 #endif
 
-static static_vector<disk*, 64> disks;
+static static_vector<disk*, NDISK> disks;
 
 void
 disk_register(disk* d)
@@ -153,10 +153,9 @@ idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
 }
 
 void
-ideflush(std::vector<u32> &disknums)
+ideflush(u32 dev)
 {
-  assert(disks.size() > 0);
-  for (auto &d : disknums)
-    disks[d]->flush();
+  assert(dev < disks.size());
+  disks[dev]->flush();
 }
 

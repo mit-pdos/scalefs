@@ -149,7 +149,7 @@ void            ideread_async(u32 dev, char* data, u64 count, u64 offset,
 void            idewrite(u32 dev, const char* data, u64 count, u64 offset);
 void            idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
                                sref<disk_completion> dc);
-void            ideflush(std::vector<u32> &disknums);
+void            ideflush(u32 dev);
 u32             offset_to_dev(u64 offset);
 
 // idle.cc

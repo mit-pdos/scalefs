@@ -4,6 +4,7 @@
 #include "buf.hh"
 #include "cpuid.hh"
 #include "oplog.hh"
+#include "bitset.hh"
 #include <vector>
 #include <algorithm>
 
@@ -291,25 +292,6 @@ class transaction {
       dirty_blocknums.clear();
     }
 
-    void deduplicate_disknums()
-    {
-      // Sort the disk numbers in increasing timestamp order.
-      std::sort(disks_written.begin(), disks_written.end());
-
-      std::vector<unsigned long> erase_indices;
-      for (auto b = disks_written.begin(); b != disks_written.end(); b++) {
-        if ((b+1) != disks_written.end() && (*b) == (*(b+1))) {
-          erase_indices.push_back(b - disks_written.begin());
-        }
-      }
-
-      std::sort(erase_indices.begin(), erase_indices.end(),
-                std::greater<unsigned long>());
-
-      for (auto &idx : erase_indices)
-        disks_written.erase(disks_written.begin() + idx);
-    }
-
     void deduplicate_dirty_blocknums()
     {
       // Sort the diskblocks in increasing timestamp order.
@@ -377,7 +359,7 @@ class transaction {
 
       for (auto b = blocks.begin(); b != blocks.end(); b++) {
         (*b)->writeback_async();
-        disks_written.push_back(offset_to_dev((*b)->blocknum));
+        disks_written.set(offset_to_dev((*b)->blocknum));
       }
 
       for (auto b = blocks.begin(); b != blocks.end(); b++)
@@ -387,9 +369,9 @@ class transaction {
     void write_to_disk_and_flush()
     {
       write_to_disk();
-      deduplicate_disknums();
-      ideflush(disks_written);
-      disks_written.clear();
+      for (auto d : disks_written)
+        ideflush(d);
+      disks_written.reset();
     }
 
     // Same as write_to_disk(), except that this uses synchronous disk I/O,
@@ -458,9 +440,9 @@ class transaction {
     std::vector<u32> inodebitmap_blk_list;
     std::vector<sleeplock*> inodebitmap_locks;
 
-    // A list of disks written to by this transaction, which is used to call
+    // A bitmap of disks written to by this transaction, which is used to call
     // ideflush() on exactly those set of disks.
-    std::vector<u32> disks_written;
+    bitset<NDISK> disks_written;
 };
 
 // The "physical" journal is made up of transactions, which in turn are made up of
