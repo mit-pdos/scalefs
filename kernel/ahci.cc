@@ -558,7 +558,7 @@ void
 ahci_port::aflush(sref<disk_completion> dc)
 {
   int cmdslot = alloc_cmdslot(dc);
-  issue(cmdslot, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE);
+  issue(cmdslot, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE_EXT);
 }
 
 void
