@@ -68,6 +68,21 @@ enum {
   AHCI_PORT_INTR_DEFAULT     = AHCI_PORT_INTR_DPE | AHCI_PORT_INTR_SDBE |
                                AHCI_PORT_INTR_DSE | AHCI_PORT_INTR_PSE  |
                                AHCI_PORT_INTR_DHRE,
+
+  /* Error conditions */
+  AHCI_PORT_INTR_TFEE        = (1 << 30), /* Task File Error */
+  AHCI_PORT_INTR_HBFE        = (1 << 29), /* Host Bus Fatal Error */
+  AHCI_PORT_INTR_HBDE        = (1 << 28), /* Host Bus Data Error */
+  AHCI_PORT_INTR_IFE         = (1 << 27), /* Interface Fatal Error */
+  AHCI_PORT_INTR_INFE        = (1 << 26), /* Interface Non-fatal Error */
+  AHCI_PORT_INTR_OFE         = (1 << 24), /* Overflow */
+  AHCI_PORT_INTR_IPME        = (1 << 23), /* Incorrect Port Multiplier */
+  AHCI_PORT_INTR_UFE         = (1 << 4),  /* Unknown FIS Interrupt */
+
+  AHCI_PORT_INTR_ERROR       = AHCI_PORT_INTR_TFEE | AHCI_PORT_INTR_HBFE |
+                               AHCI_PORT_INTR_HBDE | AHCI_PORT_INTR_IFE  |
+                               AHCI_PORT_INTR_INFE | AHCI_PORT_INTR_OFE  |
+                               AHCI_PORT_INTR_IPME | AHCI_PORT_INTR_UFE,
 };
 
 struct ahci_reg {
