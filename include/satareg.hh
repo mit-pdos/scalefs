@@ -4,6 +4,10 @@
  * Originally from HiStar kern/dev/satareg.h
  */
 
+/* The equivalent data-structure in Linux is struct ata_taskfile, and
+ * the function ata_tf_to_fis() helps convert from the ATA taskfile format
+ * to the FIS layout.
+ */
 struct sata_fis_reg {
   u8 type;
   u8 cflag;

@@ -30,9 +30,11 @@
 #define IDE_CMD_READ                  0x20
 #define IDE_CMD_READ_DMA              0xc8
 #define IDE_CMD_READ_DMA_EXT          0x25
+#define IDE_CMD_READ_FPDMA_QUEUED     0x60
 #define IDE_CMD_WRITE                 0x30
 #define IDE_CMD_WRITE_DMA             0xca
 #define IDE_CMD_WRITE_DMA_EXT         0x35
+#define IDE_CMD_WRITE_FPDMA_QUEUED    0x61
 #define IDE_CMD_FLUSH_CACHE           0xe7
 #define IDE_CMD_FLUSH_CACHE_EXT       0xea
 #define IDE_CMD_IDENTIFY              0xec
@@ -54,15 +56,21 @@ struct identify_device {
   char model[40];         // Words 27-46
   u16 pad2[13];           // Words 47-59
   u32 lba_sectors;        // Words 60-61, assuming little-endian
-  u16 pad3[24];           // Words 62-85
+  u16 pad3[13];           // Words 62-74
+  u16 queue_depth;        // Word 75
+  u16 sata_caps;          // Word 76
+  u16 pad4[9];            // Words 77-85
   u16 features86;         // Word 86
   u16 features87;         // Word 87
   u16 udma_mode;          // Word 88
-  u16 pad4[4];            // Words 89-92
+  u16 pad5[4];            // Words 89-92
   u16 hwreset;            // Word 93
-  u16 pad5[6];            // Words 94-99
+  u16 pad6[6];            // Words 94-99
   u64 lba48_sectors;      // Words 100-104, assuming little-endian
 };
+
+#define IDE_SATA_NCQ_SUPPORTED          (1 << 8)
+#define IDE_SATA_NCQ_QUEUE_DEPTH        0x1f
 
 #define IDE_FEATURE86_LBA48     (1 << 10)
 #define IDE_HWRESET_CBLID       0x2000

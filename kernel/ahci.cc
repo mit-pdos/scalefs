@@ -61,6 +61,7 @@ private:
   const int pid;
   volatile ahci_reg_port *const preg;
   ahci_port_mem *portmem;
+  int num_cmdslots;
 
   u64 fill_prd(int cmdslot, void* addr, u64 nbytes);
   u64 fill_prd_v(int, kiovec* iov, int iov_cnt);
@@ -69,7 +70,8 @@ private:
   void dump();
   int wait();
 
-  void issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd);
+  void issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd,
+             bool cmd_is_ncq = false);
 
   // For the disk read/write interface..
   u32 cmds_issued;
@@ -78,7 +80,7 @@ private:
   condvar cmdslot_alloc_cv;
   sref<disk_completion> cmdslot_dc[32];
 
-  int alloc_cmdslot(sref<disk_completion> dc);
+  int alloc_cmdslot(sref<disk_completion> dc, bool no_pending_ncq = false);
 
   void blocking_wait(sref<disk_completion> dc) {
     while (!dc->done()) {
@@ -205,7 +207,7 @@ ata_byteswap(char* buf, u64 len)
 
 
 ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
-  : hba(h), pid(p), preg(reg), cmds_issued(0), last_cmdslot(-1)
+  : hba(h), pid(p), preg(reg), num_cmdslots(0), cmds_issued(0), last_cmdslot(-1)
 {
   // Round up the size to make it an integral multiple of PGSIZE.
   // Crashes on boot otherwise.
@@ -309,6 +311,17 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
     return;
   }
 
+  /* Check support for Native Command Queueing */
+  if (!(id_buf.id.sata_caps & IDE_SATA_NCQ_SUPPORTED)) {
+    cprintf("AHCI: port %d: SATA Native Command Queuing not supported\n", pid);
+    return;
+  }
+
+  num_cmdslots = 1 + (id_buf.id.queue_depth & IDE_SATA_NCQ_QUEUE_DEPTH);
+  if (num_cmdslots < hba->ncs)
+    cprintf("AHCI: port %d: NCQ queue depth limited to %d (out of %d)\n",
+            pid, num_cmdslots, hba->ncs);
+
   /* Enable write-caching, read look-ahead */
   memset(&fis, 0, sizeof(fis));
   fis.type = SATA_FIS_TYPE_REG_H2D;
@@ -368,14 +381,29 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
 }
 
 int
-ahci_port::alloc_cmdslot(sref<disk_completion> dc)
+ahci_port::alloc_cmdslot(sref<disk_completion> dc, bool no_pending_ncq)
 {
   scoped_acquire a(&cmdslot_alloc_lock);
+
+  if (no_pending_ncq) {
+    // Make sure that no NCQ commands are still in flight. This is primarily
+    // used so that FLUSH CACHE (EXT) commands (which are not NCQ commands) are
+    // not mixed with NCQ commands such as READ/WRITE FPDMA QUEUED. (The spec
+    // mandates that non-NCQ commands must not be issued while any NCQ command
+    // is still outstanding).
+
+    while (preg->ci || preg->sact)
+      cmdslot_alloc_cv.sleep(&cmdslot_alloc_lock);
+
+    cmdslot_dc[0] = dc;
+    last_cmdslot = 0;
+    return 0;
+  }
 
   for (;;) {
 
     bool all_scanned = false;
-    for (int cmdslot = (last_cmdslot + 1) % hba->ncs; cmdslot < hba->ncs;
+    for (int cmdslot = (last_cmdslot + 1) % num_cmdslots; cmdslot < num_cmdslots;
          cmdslot++) {
 
       if (!cmdslot_dc[cmdslot] && !(preg->ci & (1 << cmdslot)) &&
@@ -386,7 +414,7 @@ ahci_port::alloc_cmdslot(sref<disk_completion> dc)
         return cmdslot;
       }
 
-      if (cmdslot == hba->ncs - 1 && !all_scanned) {
+      if (cmdslot == num_cmdslots - 1 && !all_scanned) {
         cmdslot = -1;
         all_scanned = true;
         continue;
@@ -501,7 +529,7 @@ ahci_port::handle_port_irq()
   for (int cmdslot = 0; cmdslot < 32; cmdslot++) {
 
     if (cmdslot_dc[cmdslot] && (cmds_issued & (1 << cmdslot)) &&
-        !(preg->ci & (1 << cmdslot))) {
+        !(preg->ci & (1 << cmdslot)) && !(preg->sact & (1 << cmdslot))) {
 
       cmdslot_dc[cmdslot]->notify();
       cmdslot_dc[cmdslot].reset();
@@ -531,7 +559,11 @@ ahci_port::areadv(kiovec* iov, int iov_cnt, u64 off,
                   sref<disk_completion> dc)
 {
   int cmdslot = alloc_cmdslot(dc);
+#if USE_SATA_NCQ
+  issue(cmdslot, iov, iov_cnt, off, IDE_CMD_READ_FPDMA_QUEUED, true);
+#else
   issue(cmdslot, iov, iov_cnt, off, IDE_CMD_READ_DMA_EXT);
+#endif
 }
 
 void
@@ -547,7 +579,11 @@ ahci_port::awritev(kiovec* iov, int iov_cnt, u64 off,
                    sref<disk_completion> dc)
 {
   int cmdslot = alloc_cmdslot(dc);
+#if USE_SATA_NCQ
+  issue(cmdslot, iov, iov_cnt, off, IDE_CMD_WRITE_FPDMA_QUEUED, true);
+#else
   issue(cmdslot, iov, iov_cnt, off, IDE_CMD_WRITE_DMA_EXT);
+#endif
 }
 
 void
@@ -561,12 +597,16 @@ ahci_port::flush()
 void
 ahci_port::aflush(sref<disk_completion> dc)
 {
-  int cmdslot = alloc_cmdslot(dc);
+  // FLUSH CACHE (EXT) is not an NCQ command and hence must not be issued if any
+  // NCQ commands are still outstanding. So allocate a command slot only after
+  // draining out all pending commands.
+  int cmdslot = alloc_cmdslot(dc, true);
   issue(cmdslot, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE_EXT);
 }
 
 void
-ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
+ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd,
+                 bool cmd_is_ncq)
 {
   assert((off % 512) == 0);
 
@@ -583,18 +623,26 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
   portmem->cmdh[cmdslot].prdbc = 0;
 
   if (len) {
-    u64 sector_off = off / 512;
-
     fis.dev_head = IDE_DEV_LBA;
     fis.control = IDE_CTL_LBA48;
 
-    fis.sector_count = len / 512;
+    u64 sector_off = off / 512;
     fis.lba_0 = (sector_off >>  0) & 0xff;
     fis.lba_1 = (sector_off >>  8) & 0xff;
     fis.lba_2 = (sector_off >> 16) & 0xff;
     fis.lba_3 = (sector_off >> 24) & 0xff;
     fis.lba_4 = (sector_off >> 32) & 0xff;
     fis.lba_5 = (sector_off >> 40) & 0xff;
+
+    u64 num_sectors = len / 512;
+    if (cmd_is_ncq) {
+      fis.features = num_sectors & 0xff;
+      fis.features_ex = (num_sectors >> 8) & 0xff;
+      fis.sector_count = cmdslot << 3;
+    } else {
+      fis.sector_count = num_sectors & 0xff;
+      fis.sector_count_ex = (num_sectors >> 8) & 0xff;
+    }
   }
 
   fill_fis(cmdslot, &fis);
@@ -602,13 +650,16 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
   // Update the Write bit in the flags *after* invoking fill_fis(), to ensure
   // that it remains set (and hence allow the disk write to go through).
   // Otherwise, disk writes never complete on ben.
-  if (cmd == IDE_CMD_WRITE_DMA_EXT)
+  if (cmd == IDE_CMD_WRITE_DMA_EXT || cmd == IDE_CMD_WRITE_FPDMA_QUEUED)
     portmem->cmdh[cmdslot].flags |= AHCI_CMD_FLAGS_WRITE;
 
   // Mark the command as issued, for the interrupt handler's benefit.
   // The cmdslot_alloc_lock protects 'cmds_issued' as well.
   scoped_acquire a(&cmdslot_alloc_lock);
   cmds_issued |= (1 << cmdslot);
+
+  if (cmd_is_ncq)
+    preg->sact = (1 << cmdslot);
 
   preg->ci = (1 << cmdslot);
 }
