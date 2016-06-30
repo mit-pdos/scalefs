@@ -46,6 +46,10 @@
 #define IDE_FEATURE_RLA_DIS     0x55
 #define IDE_FEATURE_WCACHE_DIS  0x82
 #define IDE_FEATURE_RLA_ENA     0xAA
+#define IDE_FEATURE_SATA_ENA    0x10
+
+// SATA features
+#define SATA_NCQ_AUTO_ACTIVATE  0x02 // DMA Setup FIS Auto-Activate optimization
 
 // Identify device structure
 struct identify_device {

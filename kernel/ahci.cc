@@ -347,6 +347,18 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
     return;
   }
 
+  // Enable DMA Setup FIS Auto-Activate optimization for NCQ
+  fis.features = IDE_FEATURE_SATA_ENA;
+  fis.sector_count = SATA_NCQ_AUTO_ACTIVATE;
+  fill_fis(0, &fis);
+  preg->ci = 1;
+
+  if (wait() < 0) {
+    cprintf("AHCI: port %d: cannot enable DMA setup auto-activate "
+            "optimization for NCQ\n", pid);
+    return;
+  }
+
   if (VERBOSE) {
     // After enabling all the features, print out the updated data returned from
     // IDENTIFY DEVICE.
