@@ -576,6 +576,8 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
   assert((len % 512) == 0);
   assert(len <= DISK_REQMAX);
 
+  portmem->cmdh[cmdslot].prdbc = 0;
+
   if (len) {
     u64 sector_off = off / 512;
 
@@ -589,16 +591,6 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
     fis.lba_3 = (sector_off >> 24) & 0xff;
     fis.lba_4 = (sector_off >> 32) & 0xff;
     fis.lba_5 = (sector_off >> 40) & 0xff;
-
-    if (cmd == IDE_CMD_READ_DMA_EXT) {
-      portmem->cmdh[cmdslot].prdbc = 0;
-    }
-
-    if (cmd == IDE_CMD_WRITE_DMA_EXT)
-      portmem->cmdh[cmdslot].prdbc = len;
-
-  } else {
-    portmem->cmdh[cmdslot].prdbc = 0;
   }
 
   fill_fis(cmdslot, &fis);
