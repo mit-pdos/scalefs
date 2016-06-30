@@ -255,6 +255,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   union {
     struct identify_device id;
     char buf[512];
+    u16 word[256];
   } id_buf;
 
   struct sata_fis_reg fis;
@@ -331,6 +332,33 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   if (wait() < 0) {
     cprintf("AHCI: port %d: cannot enable read lookahead\n", pid);
     return;
+  }
+
+  if (VERBOSE) {
+    // After enabling all the features, print out the updated data returned from
+    // IDENTIFY DEVICE.
+    memset(&fis, 0, sizeof(fis));
+    fis.type = SATA_FIS_TYPE_REG_H2D;
+    fis.cflag = SATA_FIS_REG_CFLAG;
+    fis.command = IDE_CMD_IDENTIFY;
+    fis.sector_count = 1;
+
+    fill_prd(0, &id_buf, sizeof(id_buf));
+    fill_fis(0, &fis);
+    preg->ci = 1;
+
+    if (wait() < 0) {
+      cprintf("AHCI: port %d: cannot identify after enabling additional features\n",
+              pid);
+      return;
+    }
+
+    cprintf("\nIDENTIFY DEVICE data after enabling additional features on AHCI "
+            "port %d\n", pid);
+
+    for (int i = 0; i < 256; i++)
+      cprintf("Word[%d]: 0x%x\n", i, id_buf.word[i]);
+    cprintf("\n");
   }
 
   /* Enable interrupts */
