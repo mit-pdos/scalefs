@@ -92,6 +92,11 @@ struct ahci_cmd_header {
 #define AHCI_CMD_FLAGS_WRITE	(1 << 6)
 #define AHCI_CMD_FLAGS_CFL_MASK	0x1f		/* command FIS len, in DWs */
 
+enum {
+  MAX_PRD_SIZE       = 4*1024*1024, /* Each PRD entry can be 4MB in size */
+  MAX_PRD_ENTRIES    = 65536,
+};
+
 struct ahci_prd {
   u64 dba;
   u32 reserved;
@@ -102,5 +107,5 @@ struct ahci_cmd_table {
   u8 cfis[0x40];		/* command FIS */
   u8 acmd[0x10];		/* ATAPI command */
   u8 reserved[0x30];
-  ahci_prd prdt[DISK_REQMAX];
+  ahci_prd prdt[MAX_PRD_ENTRIES];
 };

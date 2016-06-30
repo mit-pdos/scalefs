@@ -3,9 +3,6 @@
 #include "spinlock.hh"
 #include "condvar.hh"
 
-// IDE supports at most a 64K DMA request
-#define DISK_REQMAX     65536
-
 struct kiovec
 {
   void *iov_base;

@@ -574,7 +574,7 @@ ahci_port::issue(int cmdslot, kiovec* iov, int iov_cnt, u64 off, int cmd)
 
   u64 len = fill_prd_v(cmdslot, iov, iov_cnt);
   assert((len % 512) == 0);
-  assert(len <= DISK_REQMAX);
+  assert(len <= (u64) MAX_PRD_SIZE * (u64) MAX_PRD_ENTRIES);
 
   portmem->cmdh[cmdslot].prdbc = 0;
 
