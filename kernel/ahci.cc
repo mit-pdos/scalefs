@@ -362,7 +362,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   }
 
   /* Enable interrupts */
-  preg->ie = AHCI_PORT_INTR_DHRE;
+  preg->ie = AHCI_PORT_INTR_DEFAULT;
 
   disk_register(this);
 }
@@ -407,6 +407,7 @@ ahci_port::fill_prd_v(int cmdslot, kiovec* iov, int iov_cnt)
   for (int slot = 0; slot < iov_cnt; slot++) {
     cmd->prdt[slot].dba = v2p(iov[slot].iov_base);
     cmd->prdt[slot].dbc = iov[slot].iov_len - 1;
+    cmd->prdt[slot].dbc |= 1 << 31;
     nbytes += iov[slot].iov_len;
   }
 

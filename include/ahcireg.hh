@@ -54,7 +54,21 @@ struct ahci_reg_port {
 #define AHCI_PORT_TFD_ERR(tfd)	(((tfd) >> 8) & 0xff)
 #define AHCI_PORT_TFD_STAT(tfd)	(((tfd) >> 0) & 0xff)
 #define AHCI_PORT_SCTL_RESET	0x01
-#define AHCI_PORT_INTR_DHRE	(1 << 0)
+
+/* Interrupt types to signal various conditions */
+
+enum {
+  /* Progress conditions */
+  AHCI_PORT_INTR_DPE         = (1 << 5),  /* Descriptor (PRD) processed */
+  AHCI_PORT_INTR_SDBE        = (1 << 3),  /* Set Device Bits FIS received */
+  AHCI_PORT_INTR_DSE         = (1 << 2),  /* DMA Setup FIS received */
+  AHCI_PORT_INTR_PSE         = (1 << 1),  /* PIO Setup FIS received */
+  AHCI_PORT_INTR_DHRE        = (1 << 0),  /* D2H Register FIS received */
+
+  AHCI_PORT_INTR_DEFAULT     = AHCI_PORT_INTR_DPE | AHCI_PORT_INTR_SDBE |
+                               AHCI_PORT_INTR_DSE | AHCI_PORT_INTR_PSE  |
+                               AHCI_PORT_INTR_DHRE,
+};
 
 struct ahci_reg {
   union {
