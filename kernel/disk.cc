@@ -15,6 +15,10 @@ extern u64 _fs_imgz_size;
 static u64 nblocks = NMEGS * BLKS_PER_MEG;
 static const u64 _fs_img_size = nblocks * BSIZE;
 
+#define WB_SIZE	64*1024
+static char write_buffer[WB_SIZE];
+static u64 wb_offset;
+
 void
 write_output(const char *buf, u64 offset, u64 size)
 {
@@ -27,7 +31,21 @@ write_output(const char *buf, u64 offset, u64 size)
    assert(size == BSIZE);
    if ((offset/BSIZE) % 100000 == 0)
      cprintf("Writing block %8lu / %lu\r", offset/BSIZE, _fs_img_size/BSIZE);
-   disk_write(1, buf, BSIZE, offset);
+
+   // We use disk_writev() to write out the data in bigger (accumulated) chunks
+   // to the disk below, but its correctness heavily depends on the assumption
+   // that all the writes are going to be sequential/contiguous (which holds
+   // good for zlib_decompress(), the way it is implemented).
+   memcpy(write_buffer + wb_offset, buf, size);
+   wb_offset += size;
+
+   // If the write-buffer is full or if this is the last write, write out all
+   // the buffered data to the disk.
+   if (wb_offset == WB_SIZE || offset == (_fs_img_size - BSIZE)) {
+     kiovec iov = { (void *) write_buffer, wb_offset };
+     disk_writev(1, &iov, 1, offset - (wb_offset - BSIZE));
+     wb_offset = 0;
+   }
 }
 
 void
