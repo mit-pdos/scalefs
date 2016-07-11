@@ -107,9 +107,9 @@ u32 offset_to_dev(u64 offset)
   return (offset / STRIPE_SIZE_BLKS) % disks.size();
 }
 
-u64 recalc_offset(u64 offset, u32 num_disks)
+u64 recalc_offset(u64 offset)
 {
-  return STRIPE_SIZE_BLKS * ((offset / STRIPE_SIZE_BLKS) / num_disks)
+  return STRIPE_SIZE_BLKS * ((offset / STRIPE_SIZE_BLKS) / disks.size())
          + (offset % STRIPE_SIZE_BLKS);
 }
 
@@ -119,7 +119,7 @@ disk_read(u32 dev, char* data, u64 count, u64 offset,
 {
   assert(disks.size() > 0);
   dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
+  offset = recalc_offset(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
     disks[dev]->aread(data, count, offset, dc);
@@ -133,7 +133,7 @@ disk_write(u32 dev, const char* data, u64 count, u64 offset,
 {
   assert(disks.size() > 0);
   dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
+  offset = recalc_offset(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
     disks[dev]->awrite(data, count, offset, dc);

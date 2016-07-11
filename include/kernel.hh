@@ -143,7 +143,6 @@ void            inithz(void);
 // ide.c
 void            ideinit(void);
 void            ideintr(void);
-u32             offset_to_dev(u64 offset);
 
 // idle.cc
 struct proc *   idleproc(void);

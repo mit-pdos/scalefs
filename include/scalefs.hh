@@ -5,6 +5,7 @@
 #include "cpuid.hh"
 #include "oplog.hh"
 #include "bitset.hh"
+#include "disk.hh"
 #include <vector>
 #include <algorithm>
 

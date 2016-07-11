@@ -95,6 +95,10 @@ public:
   }
 };
 
+
+u32 offset_to_dev(u64 offset);
+u64 recalc_offset(u64 offset);
+
 void disk_register(disk* d);
 
 void disk_read(u32 dev, char* data, u64 count, u64 offset,
