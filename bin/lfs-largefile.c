@@ -77,7 +77,7 @@ char *argv[];
     float sec;			/* Elapsed time for a test (in sec) */
     float total_sec;
     float throughput;		/* Throughput of a test, expressed in KB/sec */
-    float total_throughput;
+    float avg_throughput;
     int fd;			/* File descriptor for test file */
     int i;
 
@@ -169,13 +169,12 @@ char *argv[];
     printf ( "----		---------	------\n" );
 
     total_sec = 0;
-    total_throughput = 0;
+    avg_throughput = 0;
 
     usec = seq_write ( fd, fileSize, ioSize );
     sec = (float) usec / 1000000.0;
     total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
-    total_throughput += throughput;
     printf ( "seq_write\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
@@ -183,7 +182,6 @@ char *argv[];
     sec = (float) usec / 1000000.0;
     total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
-    total_throughput += throughput;
     printf ( "seq_read\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
@@ -191,7 +189,6 @@ char *argv[];
     sec = (float) usec / 1000000.0;
     total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
-    total_throughput += throughput;
     printf ( "rand_write\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
@@ -199,7 +196,6 @@ char *argv[];
     sec = (float) usec / 1000000.0;
     total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
-    total_throughput += throughput;
     printf ( "rand_read\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
@@ -207,12 +203,12 @@ char *argv[];
     sec = (float) usec / 1000000.0;
     total_sec += sec;
     throughput = ((float) fileSize / sec) / (float) ONE_KB;
-    total_throughput += throughput;
     printf ( "re-read\t\t%7.3f\t\t%7.3f\n", sec, throughput );
     fflush ( stdout );
 
     printf("\n\n");
-    printf ( "TOTAL\t\t%7.3f\t\t%7.3f\n", total_sec, total_throughput );
+    avg_throughput = ((float) fileSize * 5 / total_sec) / (float) ONE_KB;
+    printf ( "TOTAL\t\t%7.3f\t\t%7.3f\n", total_sec, avg_throughput );
     close ( fd );
     exit ( 0 );
 }
