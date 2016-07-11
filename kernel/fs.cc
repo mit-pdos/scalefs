@@ -1109,8 +1109,10 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       }
     }
 
+    // Use the transaction's private block layer to accumulate the writes and
+    // flush them out in bigger chunks using scatter-gather I/O.
     if (writeback)
-      bp->writeback_async();
+      trans->write_block(ip->dev, src, blocknum);
   }
   // Don't update inode yet. Wait till all the pages have been written to and then
   // call update_size to update the inode just once.

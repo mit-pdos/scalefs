@@ -136,14 +136,19 @@ class transaction {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(transaction);
-    explicit transaction(u64 t) : timestamp_(t), htable_initialized(false) {}
+    explicit transaction(u64 t) : timestamp_(t), htable_initialized(false),
+                                  bqueue_initialized(false) {}
 
-    transaction() : timestamp_(get_tsc()), htable_initialized(false) {}
+    transaction() : timestamp_(get_tsc()), htable_initialized(false),
+                    bqueue_initialized(false) {}
 
     ~transaction()
     {
       if (htable_initialized)
         delete trans_blocks;
+
+      if (bqueue_initialized)
+        delete bqueue;
     }
 
     void add_dirty_blocknum(u32 bno)
@@ -353,11 +358,27 @@ class transaction {
       return (b1->blocknum < b2->blocknum);
     }
 
+    // Write a block to the disk via the transaction's block-queue.
+    void write_block(u32 dev, const char *buf, u64 blocknum)
+    {
+      if (!bqueue_initialized) {
+        bqueue = new block_queue();
+        bqueue_initialized = true;
+      }
+
+      bqueue->write(dev, buf, BSIZE, blocknum * BSIZE);
+      disks_written.set(offset_to_dev(blocknum));
+    }
+
     // Write the blocks in this transaction to disk. Used to write the journal.
     void write_to_disk()
     {
       deduplicate_blocks();
-      bqueue = new block_queue();
+
+      if (!bqueue_initialized) {
+        bqueue = new block_queue();
+        bqueue_initialized = true;
+      }
 
       for (auto b = blocks.begin(); b != blocks.end(); b++) {
         bqueue->write(1, (*b)->blockdata, BSIZE, (*b)->blocknum * BSIZE);
@@ -367,6 +388,7 @@ class transaction {
       // Make sure all the block-writes complete.
       bqueue->flush();
       delete bqueue;
+      bqueue_initialized = false;
     }
 
     void write_to_disk_and_flush()
@@ -397,6 +419,12 @@ class transaction {
 
       for (auto b = blocks.begin(); b != blocks.end(); b++)
         (*b)->writeback_through_bufcache();
+    }
+
+    void flush_block_queue()
+    {
+      if (bqueue_initialized)
+        bqueue->flush();
     }
 
     // Transactions need to be applied in timestamp order too. They might not
@@ -447,6 +475,7 @@ class transaction {
     // disk_flush() on exactly those set of disks.
     bitset<NDISK> disks_written;
     block_queue *bqueue; // Access to the block layer.
+    bool bqueue_initialized;
 };
 
 // The "physical" journal is made up of transactions, which in turn are made up of

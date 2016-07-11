@@ -180,6 +180,8 @@ mfs_interface::finish_sync_file_pages(sref<inode> ip, transaction *tr)
 {
   scoped_gc_epoch e;
 
+  // Make sure that there are no pending writes in the block-queue.
+  tr->flush_block_queue();
   tr->add_dirty_blocks_lazy();
   iunlock(ip);
 }
