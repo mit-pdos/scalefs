@@ -357,14 +357,16 @@ class transaction {
     void write_to_disk()
     {
       deduplicate_blocks();
+      bqueue = new block_queue();
 
       for (auto b = blocks.begin(); b != blocks.end(); b++) {
-        (*b)->writeback_async();
+        bqueue->write(1, (*b)->blockdata, BSIZE, (*b)->blocknum * BSIZE);
         disks_written.set(offset_to_dev((*b)->blocknum));
       }
 
-      for (auto b = blocks.begin(); b != blocks.end(); b++)
-        (*b)->async_iowait();
+      // Make sure all the block-writes complete.
+      bqueue->flush();
+      delete bqueue;
     }
 
     void write_to_disk_and_flush()
@@ -444,6 +446,7 @@ class transaction {
     // A bitmap of disks written to by this transaction, which is used to call
     // disk_flush() on exactly those set of disks.
     bitset<NDISK> disks_written;
+    block_queue *bqueue; // Access to the block layer.
 };
 
 // The "physical" journal is made up of transactions, which in turn are made up of
