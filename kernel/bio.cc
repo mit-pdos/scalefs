@@ -87,7 +87,7 @@ buf::writeback(bool sync)
   // lifetime properly!
 
   async_iowait_init();
-  idewrite_async(dev_, copy->data, BSIZE, block_*BSIZE, dc_);
+  idewrite(dev_, copy->data, BSIZE, block_*BSIZE, dc_);
 
   if (sync) // Synchronous disk I/O
     async_iowait();

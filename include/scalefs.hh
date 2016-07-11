@@ -105,7 +105,7 @@ struct transaction_diskblock {
   void writeback_async()
   {
       dc = make_sref<disk_completion>();
-      idewrite_async(1, blockdata, BSIZE, blocknum*BSIZE, dc);
+      idewrite(1, blockdata, BSIZE, blocknum*BSIZE, dc);
   }
 
   // Wait for the async I/O to complete.

@@ -17,11 +17,11 @@ static const u64 _fs_img_size = nblocks * BSIZE;
 void
 write_output(const char *buf, u64 offset, u64 size)
 {
-   // TODO: Use idewrite_async() to make this faster. At the moment, the
-   // scheduler panics ("EMBRYO -> 1") when the AHCI driver tries to put
-   // the async request to sleep on the cmdslot_alloc_cv condvar inside
-   // alloc_cmdslot(). This is probably because we are doing this way too
-   // early in the boot sequence.
+   // TODO: Use idewrite in the asynchronous mode to make this faster. At the
+   // moment, the scheduler panics ("EMBRYO -> 1") when the AHCI driver tries to
+   // put the async request to sleep on the cmdslot_alloc_cv condvar inside
+   // alloc_cmdslot(). This is probably because we are doing this way too early
+   // in the boot sequence.
 
    assert(size == BSIZE);
    if ((offset/BSIZE) % 100000 == 0)
@@ -115,41 +115,31 @@ u64 recalc_offset(u64 offset, u32 num_disks)
 
 // compat for a single IDE disk..
 void
-ideread(u32 dev, char* data, u64 count, u64 offset)
+ideread(u32 dev, char* data, u64 count, u64 offset,
+        sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
   dev = offset_to_dev(offset/BSIZE);
   offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
-  disks[dev]->read(data, count, offset);
+
+  if (dc) // Asynchronous
+    disks[dev]->aread(data, count, offset, dc);
+  else
+    disks[dev]->read(data, count, offset);
 }
 
 void
-ideread_async(u32 dev, char* data, u64 count, u64 offset,
-              sref<disk_completion> dc)
+idewrite(u32 dev, const char* data, u64 count, u64 offset,
+         sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
   dev = offset_to_dev(offset/BSIZE);
   offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
-  disks[dev]->aread(data, count, offset, dc);
-}
 
-void
-idewrite(u32 dev, const char* data, u64 count, u64 offset)
-{
-  assert(disks.size() > 0);
-  dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
-  disks[dev]->write(data, count, offset);
-}
-
-void
-idewrite_async(u32 dev, const char* data, u64 count, u64 offset,
-               sref<disk_completion> dc)
-{
-  assert(disks.size() > 0);
-  dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE, disks.size()) * BSIZE;
-  disks[dev]->awrite(data, count, offset, dc);
+  if (dc) // Asynchronous
+    disks[dev]->awrite(data, count, offset, dc);
+  else
+    disks[dev]->write(data, count, offset);
 }
 
 void

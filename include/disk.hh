@@ -96,3 +96,11 @@ public:
 };
 
 void disk_register(disk* d);
+
+void ideread(u32 dev, char* data, u64 count, u64 offset,
+             sref<disk_completion> dc = sref<disk_completion>());
+
+void idewrite(u32 dev, const char* data, u64 count, u64 offset,
+              sref<disk_completion> dc = sref<disk_completion>());
+
+void ideflush(u32 dev);
