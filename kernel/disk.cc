@@ -17,7 +17,7 @@ static const u64 _fs_img_size = nblocks * BSIZE;
 void
 write_output(const char *buf, u64 offset, u64 size)
 {
-   // TODO: Use idewrite in the asynchronous mode to make this faster. At the
+   // TODO: Use disk_write in the asynchronous mode to make this faster. At the
    // moment, the scheduler panics ("EMBRYO -> 1") when the AHCI driver tries to
    // put the async request to sleep on the cmdslot_alloc_cv condvar inside
    // alloc_cmdslot(). This is probably because we are doing this way too early
@@ -26,7 +26,7 @@ write_output(const char *buf, u64 offset, u64 size)
    assert(size == BSIZE);
    if ((offset/BSIZE) % 100000 == 0)
      cprintf("Writing block %8lu / %lu\r", offset/BSIZE, _fs_img_size/BSIZE);
-   idewrite(1, buf, BSIZE, offset);
+   disk_write(1, buf, BSIZE, offset);
 }
 
 void
@@ -113,10 +113,9 @@ u64 recalc_offset(u64 offset, u32 num_disks)
          + (offset % STRIPE_SIZE_BLKS);
 }
 
-// compat for a single IDE disk..
 void
-ideread(u32 dev, char* data, u64 count, u64 offset,
-        sref<disk_completion> dc)
+disk_read(u32 dev, char* data, u64 count, u64 offset,
+          sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
   dev = offset_to_dev(offset/BSIZE);
@@ -129,8 +128,8 @@ ideread(u32 dev, char* data, u64 count, u64 offset,
 }
 
 void
-idewrite(u32 dev, const char* data, u64 count, u64 offset,
-         sref<disk_completion> dc)
+disk_write(u32 dev, const char* data, u64 count, u64 offset,
+           sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
   dev = offset_to_dev(offset/BSIZE);
@@ -143,7 +142,7 @@ idewrite(u32 dev, const char* data, u64 count, u64 offset,
 }
 
 void
-ideflush(u32 dev)
+disk_flush(u32 dev)
 {
   assert(dev < disks.size());
   disks[dev]->flush();

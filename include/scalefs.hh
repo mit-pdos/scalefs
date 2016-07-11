@@ -97,7 +97,7 @@ struct transaction_diskblock {
   // Write out the block contents to disk block # blocknum.
   void writeback()
   {
-      idewrite(1, blockdata, BSIZE, blocknum*BSIZE);
+      disk_write(1, blockdata, BSIZE, blocknum * BSIZE);
   }
 
   // Write out the block contents to disk block # blocknum,
@@ -105,7 +105,7 @@ struct transaction_diskblock {
   void writeback_async()
   {
       dc = make_sref<disk_completion>();
-      idewrite(1, blockdata, BSIZE, blocknum*BSIZE, dc);
+      disk_write(1, blockdata, BSIZE, blocknum * BSIZE, dc);
   }
 
   // Wait for the async I/O to complete.
@@ -370,7 +370,7 @@ class transaction {
     {
       write_to_disk();
       for (auto d : disks_written)
-        ideflush(d);
+        disk_flush(d);
       disks_written.reset();
     }
 
@@ -441,7 +441,7 @@ class transaction {
     std::vector<sleeplock*> inodebitmap_locks;
 
     // A bitmap of disks written to by this transaction, which is used to call
-    // ideflush() on exactly those set of disks.
+    // disk_flush() on exactly those set of disks.
     bitset<NDISK> disks_written;
 };
 

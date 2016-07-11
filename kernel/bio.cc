@@ -40,7 +40,7 @@ buf::get(u32 dev, u64 block, bool skip_disk_read)
     if (bufcache.insert(k, nb.get())) {
       nb->cache_pin(true); // keep it in the cache
       if (!skip_disk_read)
-        ideread(dev, locked->data, BSIZE, block*BSIZE);
+        disk_read(dev, locked->data, BSIZE, block * BSIZE);
       nb->mark_clean(); // we just loaded the contents from the disk!
       return nb;
     }
@@ -87,7 +87,7 @@ buf::writeback(bool sync)
   // lifetime properly!
 
   async_iowait_init();
-  idewrite(dev_, copy->data, BSIZE, block_*BSIZE, dc_);
+  disk_write(dev_, copy->data, BSIZE, block_ * BSIZE, dc_);
 
   if (sync) // Synchronous disk I/O
     async_iowait();
