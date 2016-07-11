@@ -4,6 +4,7 @@
 #include "vector.hh"
 #include "amd64.h"
 #include <cstring>
+#include <sys/time.h>
 
 #if AHCIIDE
 
@@ -37,13 +38,18 @@ initidedisk()
 void
 initdisk()
 {
+  struct timeval before, after;
+
   cprintf("initdisk: Flashing the filesystem image on the disk(s)\n");
 
+  gettimeofday(&before, NULL);
   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
                   _fs_img_size, write_output);
 
+  gettimeofday(&after, NULL);
+
   cprintf("Writing block %8lu / %lu\n", _fs_img_size/BSIZE, _fs_img_size/BSIZE);
-  cprintf("Writing blocks ... done!\n");
+  cprintf("Writing blocks ... done! (%d seconds)\n", after.tv_sec - before.tv_sec);
 }
 
 #endif

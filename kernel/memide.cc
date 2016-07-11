@@ -10,8 +10,8 @@
 #include "amd64.h"
 #include "traps.h"
 #include "disk.hh"
-
 #include "buf.hh"
+#include <sys/time.h>
 
 extern u8 _fs_imgz_start[];
 extern u64 _fs_imgz_size;
@@ -96,13 +96,18 @@ initdisk(void)
   memdisk* md = new memdisk(_fs_img_start, _fs_img_size);
   disk_register(md);
 
+  struct timeval before, after;
+
   cprintf("initdisk: Flashing the filesystem image on the memdisk(s)\n");
 
+  gettimeofday(&before, NULL);
   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
                   _fs_img_size, write_output);
 
+  gettimeofday(&after, NULL);
+
   cprintf("Writing block %8lu / %lu\n", _fs_img_size/BSIZE, _fs_img_size/BSIZE);
-  cprintf("Writing blocks ... done!\n");
+  cprintf("Writing blocks ... done! (%d seconds)\n", after.tv_sec - before.tv_sec);
 }
 
 #endif  /* MEMIDE */
