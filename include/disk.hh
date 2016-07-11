@@ -3,6 +3,8 @@
 #include "spinlock.hh"
 #include "condvar.hh"
 
+#define IOV_MAX	65535  // Limited by MAX_PRD_ENTRIES
+
 struct kiovec
 {
   void *iov_base;
@@ -101,10 +103,16 @@ u64 recalc_offset(u64 offset);
 
 void disk_register(disk* d);
 
-void disk_read(u32 dev, char* data, u64 count, u64 offset,
+void disk_read(u32 dev, char* buf, u64 nbytes, u64 offset,
                sref<disk_completion> dc = sref<disk_completion>());
 
-void disk_write(u32 dev, const char* data, u64 count, u64 offset,
+void disk_readv(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
                 sref<disk_completion> dc = sref<disk_completion>());
+
+void disk_write(u32 dev, const char* buf, u64 nbytes, u64 offset,
+                sref<disk_completion> dc = sref<disk_completion>());
+
+void disk_writev(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
+                 sref<disk_completion> dc = sref<disk_completion>());
 
 void disk_flush(u32 dev);

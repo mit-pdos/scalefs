@@ -114,31 +114,49 @@ u64 recalc_offset(u64 offset)
 }
 
 void
-disk_read(u32 dev, char* data, u64 count, u64 offset,
-          sref<disk_completion> dc)
-{
-  assert(disks.size() > 0);
-  dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE) * BSIZE;
-
-  if (dc) // Asynchronous
-    disks[dev]->aread(data, count, offset, dc);
-  else
-    disks[dev]->read(data, count, offset);
-}
-
-void
-disk_write(u32 dev, const char* data, u64 count, u64 offset,
+disk_readv(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
            sref<disk_completion> dc)
 {
   assert(disks.size() > 0);
+  assert(iov_cnt <= IOV_MAX);
   dev = offset_to_dev(offset/BSIZE);
   offset = recalc_offset(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
-    disks[dev]->awrite(data, count, offset, dc);
+    disks[dev]->areadv(iov, iov_cnt, offset, dc);
   else
-    disks[dev]->write(data, count, offset);
+    disks[dev]->readv(iov, iov_cnt, offset);
+}
+
+void
+disk_read(u32 dev, char* buf, u64 nbytes, u64 offset,
+          sref<disk_completion> dc)
+{
+  kiovec iov = { (void*) buf, nbytes };
+  disk_readv(dev, &iov, 1, offset, dc);
+}
+
+void
+disk_writev(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
+            sref<disk_completion> dc)
+{
+  assert(disks.size() > 0);
+  assert(iov_cnt <= IOV_MAX);
+  dev = offset_to_dev(offset/BSIZE);
+  offset = recalc_offset(offset/BSIZE) * BSIZE;
+
+  if (dc) // Asynchronous
+    disks[dev]->awritev(iov, iov_cnt, offset, dc);
+  else
+    disks[dev]->writev(iov, iov_cnt, offset);
+}
+
+void
+disk_write(u32 dev, const char* buf, u64 nbytes, u64 offset,
+           sref<disk_completion> dc)
+{
+  kiovec iov = { (void*) buf, nbytes };
+  disk_writev(dev, &iov, 1, offset, dc);
 }
 
 void
