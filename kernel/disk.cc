@@ -128,13 +128,18 @@ sys_disktest(void)
 // Given a block offset as argument, return the disk number that hosts that block.
 u32 offset_to_dev(u64 offset)
 {
-  return (offset / STRIPE_SIZE_BLKS) % disks.size();
+  return (offset / STRIPE_SIZE_BLKS) % num_disks();
 }
 
 u64 recalc_offset(u64 offset)
 {
-  return STRIPE_SIZE_BLKS * ((offset / STRIPE_SIZE_BLKS) / disks.size())
+  return STRIPE_SIZE_BLKS * ((offset / STRIPE_SIZE_BLKS) / num_disks())
          + (offset % STRIPE_SIZE_BLKS);
+}
+
+u32 num_disks()
+{
+  return (u32) disks.size();
 }
 
 void
