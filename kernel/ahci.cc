@@ -408,10 +408,6 @@ ahci_port::alloc_cmdslot(sref<disk_completion> dc, bool no_pending_ncq)
 
     while (preg->ci || preg->sact)
       cmdslot_alloc_cv.sleep(&cmdslot_alloc_lock);
-
-    cmdslot_dc[0] = dc;
-    last_cmdslot = 0;
-    return 0;
   }
 
   for (;;) {
@@ -658,10 +654,14 @@ ahci_port::flush()
 void
 ahci_port::aflush(sref<disk_completion> dc)
 {
+#if USE_SATA_NCQ
   // FLUSH CACHE (EXT) is not an NCQ command and hence must not be issued if any
   // NCQ commands are still outstanding. So allocate a command slot only after
   // draining out all pending commands.
   int cmdslot = alloc_cmdslot(dc, true);
+#else
+  int cmdslot = alloc_cmdslot(dc);
+#endif
   issue(cmdslot, nullptr, 0, 0, IDE_CMD_FLUSH_CACHE_EXT);
 }
 
