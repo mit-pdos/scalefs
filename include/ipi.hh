@@ -48,3 +48,5 @@ void run_on_cpus(const bitset<NCPU> &cpu_set, CB cb)
   ipi_call_callable<CB> call(cb);
   call.run_on(cpu_set);
 }
+
+void poke_cpu(int cpu);

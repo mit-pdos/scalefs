@@ -7,6 +7,7 @@
 #include "proc.hh"
 #include "cpu.hh"
 #include "hpet.hh"
+#include "ipi.hh"
 
 static u64 ticks __mpalign__;
 
@@ -20,6 +21,8 @@ wakeup(struct proc *p)
   p->oncv->waiters.erase(it);
   p->oncv = 0;
   addrun(p);
+  if (p->cpuid != myid())
+    poke_cpu(p->cpuid);
 }
 
 u64

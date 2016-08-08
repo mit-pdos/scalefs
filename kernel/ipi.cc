@@ -22,6 +22,13 @@ struct ipi_queue
 
 DEFINE_PERCPU(struct ipi_queue, myipi);
 
+// Wakeup the given CPU by sending an asynchronous IPI with no payload.
+void
+poke_cpu(int cpu)
+{
+  lapic->send_ipi(&cpus[cpu], T_IPICALL);
+}
+
 void
 ipi_call::start(unsigned cpu)
 {
