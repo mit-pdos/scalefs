@@ -45,7 +45,8 @@ public:
     struct stat st;
     if (fstatx(fd, &st, STAT_OMIT_NLINK) < 0)
       edie("fstat %s failed", tmppath.c_str());
-    fsync(fd);
+    if (fsync(fd) < 0)
+      edie("fsync %s failed", tmppath.c_str());
     close(fd);
 
     // Deliver message
@@ -59,7 +60,8 @@ public:
     newdir.append("/new");
     fd = open(newdir.c_str(), O_RDONLY|O_DIRECTORY);
     if (fd >= 0) {
-      fsync(fd);
+      if (fsync(fd) < 0)
+        edie("fsync %s failed", newdir.c_str());
       close(fd);
     }
   }

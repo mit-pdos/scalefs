@@ -54,7 +54,8 @@ public:
     if (fstatx(tmpfd, &st, STAT_OMIT_NLINK) < 0)
       edie("fstat failed");
 
-    fsync(tmpfd);
+    if (fsync(tmpfd) < 0)
+      edie("fsync %s failed", tmpname);
     close(tmpfd);
 
     // Create envelope
@@ -65,14 +66,16 @@ public:
     if (envfd < 0)
       edie("open %s failed", envname);
     xwrite(envfd, recipient, strlen(recipient));
-    fsync(envfd);
+    if (fsync(envfd) < 0)
+      edie("fsync %s failed", envname);
     close(envfd);
 
     char tododir[256];
     snprintf(tododir, sizeof tododir, "%s/todo", spooldir_.c_str());
     int tododirfd = open(tododir, O_RDONLY|O_DIRECTORY);
     if (tododirfd >= 0) {
-      fsync(tododirfd);
+      if (fsync(tododirfd) < 0)
+        edie("fsync %s failed", tododir);
       close(tododirfd);
     }
 
@@ -87,7 +90,8 @@ public:
     snprintf(messdir, sizeof messdir, "%s/mess", spooldir_.c_str());
     int messdirfd = open(messdir, O_RDONLY|O_DIRECTORY);
     if (messdirfd >= 0) {
-      fsync(messdirfd);
+      if (fsync(messdirfd) < 0)
+        edie("fsync %s failed", messdir);
       close(messdirfd);
     }
 
