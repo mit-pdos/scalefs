@@ -184,10 +184,13 @@ schedule::enq_dwork(dwork *w)
 void
 schedule::try_dwork(void)
 {
+  auto l = lock_.guard();
   while (!work_.empty()) {
     auto &w = work_.front();
     work_.pop_front();
+    l.release();
     w.run();
+    l = lock_.guard();
   }
 }
 
