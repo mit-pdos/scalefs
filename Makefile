@@ -18,7 +18,7 @@ EXCEPTIONS ?= y
 # Shell command to run in VM after booting
 RUN        ?= $(empty)
 # Python binary
-PYTHON     ?= python
+PYTHON     ?= python2
 # Directory containing mtrace-magic.h for HW=mtrace
 MTRACESRC  ?= ../mtrace
 # Mtrace-enabled QEMU binary
