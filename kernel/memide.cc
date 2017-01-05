@@ -55,15 +55,21 @@ public:
   {
     u8 *p;
 
-    assert (iov_cnt == 1);
+    // For simplicity, we mandate that all the I/O requests in the vector are of
+    // equal size (BSIZE).
+
     u64 count = iov[0].iov_len;
 
-    if(off > nbytes_ || off + count > nbytes_)
+    if (off > nbytes_ || off + iov_cnt * count > nbytes_)
       panic("memdisk::writev: sector out of range: offset %ld, count %ld\n",
-             off, count);
+             off, iov_cnt * count);
 
     p = data_ + off;
-    memmove(p, iov[0].iov_base, count);
+    for (int i = 0; i < iov_cnt; i++) {
+      assert(iov[i].iov_len == BSIZE);
+      memmove(p, iov[i].iov_base, iov[i].iov_len);
+      p += BSIZE;
+    }
   }
 
   void flush() override
