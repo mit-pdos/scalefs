@@ -330,6 +330,10 @@ proc::kill(int pid)
 // Print a process listing to console.  For debugging.
 // Runs when user types ^P on console.
 // No lock to avoid wedging a stuck machine further.
+//
+// On a multi-core machine with lots of CPUs, the number of per-cpu system
+// processes can dominate/clutter the output; so we suppress them here
+// because usually they are not "interesting" to look at.
 void
 procdumpall(void)
 {
@@ -350,10 +354,18 @@ procdumpall(void)
       state = states[p->get_state()];
     else
       state = "???";
-    
+
     if (p->name && p->name[0] != 0)
       name = p->name;
-    
+
+    // Skip printing kernel threads and processes.
+    if (strncmp("gc", p->name, 2) == 0)
+      continue;
+    if (strncmp("idle", p->name, 4) == 0)
+      continue;
+    if (strncmp("refcache", p->name, 8) == 0)
+      continue;
+
     cprintf("\n%-3d %-10s %8s %2u  %lu\n",
             p->pid, name, state, p->cpuid, p->tsc);
     
