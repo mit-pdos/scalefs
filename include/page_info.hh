@@ -77,6 +77,8 @@ public:
   // be informed of the change.
   class rmap: public tsc_logged_object {
     public:
+      rmap(bool use_sleeplock) : tsc_logged_object(use_sleeplock) {}
+
       NEW_DELETE_OPS(rmap);
       // Oplog operation that implements adding a <vmap*,va> pair to the rmap
       struct add_op {
@@ -131,22 +133,22 @@ public:
       }
 
       void sync(std::vector<rmap_entry> &vec) {
-        auto guard = synchronize();
+        auto guard = synchronize_with_spinlock();
         for (auto it = rmap_vec.begin(); it != rmap_vec.end(); it++)
           vec.emplace_back(*it);
         rmap_vec.clear();
       }
 
       void sync() {
-        auto guard = synchronize();
+        auto guard = synchronize_with_spinlock();
       }
 
     protected:
       std::vector<rmap_entry> rmap_vec;
   };
-  
+
   page_info() {
-    rmap_pte = new rmap();
+    rmap_pte = new rmap(false); // use_sleeplock = false.
     outstanding_ops = 0;
   }
 

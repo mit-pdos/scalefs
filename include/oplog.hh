@@ -50,7 +50,8 @@ namespace oplog {
   class logged_object
   {
   public:
-    constexpr logged_object() : sync_lock_() { }
+    constexpr logged_object(bool use_sleeplock) : sync_spinlock_(),
+      sync_sleeplock_(), use_sleeplock_(use_sleeplock) { }
 
     // logged_object is meant to be subclassed, so it needs a virtual
     // destructor.
@@ -109,14 +110,25 @@ namespace oplog {
           // between this and synchronize, we may deadlock here if we
           // simply acquire cur_obj's sync lock.  Hence, we perform
           // deadlock avoidance.
-          // (Furthermore, since sync_lock_ is a sleeplock, while
-          // way->lock_ is a spinlock, we can't actually afford to
-          // sleep on contention here; if we did, it would lead to
-          // "sleeping inside atomic section" bug).
-          auto sync_guard = cur_obj->sync_lock_.try_guard();
-          if (!sync_guard)
-            // We would deadlock with synchronize.  Back out
-            goto back_out;
+	  // (Furthermore, since the sync lock can be a sleeplock, while
+	  // way->lock_ is a spinlock, we can't actually afford to sleep on
+	  // contention here; if we did, it would lead to "sleeping inside
+	  // atomic section" bug).
+          lock_guard<spinlock> sync_spin_guard;
+          lock_guard<sleeplock> sync_sleep_guard;
+
+          if (cur_obj->use_sleeplock_) {
+            sync_sleep_guard = cur_obj->sync_sleeplock_.try_guard();
+            if (!sync_sleep_guard)
+              // We would deadlock with synchronize; back out.
+              goto back_out;
+          } else {
+            sync_spin_guard = cur_obj->sync_spinlock_.try_guard();
+            if (!sync_spin_guard)
+              // We would deadlock with synchronize; back out.
+              goto back_out;
+          }
+
           // XXX Since we don't do a full synchronize here, we lose
           // some of the potential memory overhead benefits of the
           // logger cache for ordered loggers like tsc_logged_object.
@@ -135,14 +147,10 @@ namespace oplog {
       return locked_logger(std::move(guard), &my_way->logger_);
     }
 
-    // Acquire a per-object lock, apply all logged operations to this
-    // object, and return the per-object lock.  The caller may keep
-    // this lock live for as long as it needs to prevent modifications
-    // to the object's synchronized value.
-    lock_guard<sleeplock> synchronize()
+    // This is a helper function; do not call it directly. Use
+    // synchronize_with_spinlock() or synchronize_with_sleeplock() instead.
+    void __synchronize()
     {
-      auto guard = sync_lock_.guard();
-
       // Repeatedly gather loggers until we see that the CPU set is
       // empty.  We can't check the whole CPU set atomically, but
       // that's okay.  Since we hold the sync lock, only we can clear
@@ -175,7 +183,25 @@ namespace oplog {
       // Tell the logged object that it has a consistent set of
       // loggers and should do any final flushing.
       flush_finish();
+    }
 
+    // Acquire a per-object lock, apply all logged operations to this
+    // object, and return the per-object lock.  The caller may keep
+    // this lock live for as long as it needs to prevent modifications
+    // to the object's synchronized value. The caller has the choice
+    // of using a spinlock or a sleeplock for synchronization.
+    lock_guard<spinlock> synchronize_with_spinlock()
+    {
+      auto guard = sync_spinlock_.guard();
+      __synchronize();
+      return std::move(guard);
+    }
+
+    // See comment above synchronize_with_spinlock().
+    lock_guard<sleeplock> synchronize_with_sleeplock()
+    {
+      auto guard = sync_sleeplock_.guard();
+      __synchronize();
       return std::move(guard);
     }
 
@@ -228,14 +254,15 @@ namespace oplog {
     bitset<NCPU> cpus_;
 
     // This lock serializes log flushes and protects clearing cpus_.
-    // Note: sync_lock_ is a sleeplock, whereas way->lock_ is a spinlock.
-    // So the only legal lock ordering is to nest the way->lock_ inside
-    // the sync_lock_. However, we are forced to acquire these locks in
-    // the opposite order in get_logger(); but luckily, our deadlock
-    // avoidance scheme retries if the sync_lock_ is contended, so we
-    // never actually sleep while holding the spinlock, which makes it
-    // safe.
-    sleeplock sync_lock_;
+    // Note: sync_sleeplock_ is a sleeplock, whereas way->lock_ is a spinlock.
+    // So the only legal lock ordering is to nest the way->lock_ inside the
+    // sync_sleeplock_. However, we are forced to acquire these locks in the
+    // opposite order in get_logger(); but luckily, our deadlock avoidance
+    // scheme retries if the sync_sleeplock_ is contended, so we never actually
+    // sleep while holding the spinlock, which makes it safe.
+    spinlock sync_spinlock_;
+    sleeplock sync_sleeplock_;
+    bool use_sleeplock_;
   };
 
   template<typename Logger>
@@ -353,11 +380,23 @@ namespace oplog {
   // synchronized TSCs.
   class tsc_logged_object : public logged_object<tsc_logger>
   {
+  public:
+    tsc_logged_object(bool use_sleeplock) : logged_object(use_sleeplock),
+      use_sleeplock_(use_sleeplock) {}
   protected:
     std::vector<tsc_logger> pending_;
+    bool use_sleeplock_;
 
-    void clear_loggers() {
-      auto guard = sync_lock_.guard();
+    void clear_loggers()
+    {
+      lock_guard<spinlock> spin_guard;
+      lock_guard<sleeplock> sleep_guard;
+
+      if (use_sleeplock_)
+        sleep_guard = sync_sleeplock_.guard();
+      else
+        spin_guard = sync_spinlock_.guard();
+
       while (1) {
         bool any = false;
         // Gather loggers
@@ -449,6 +488,9 @@ namespace oplog {
   };
 
   class mfs_logged_object : public tsc_logged_object {
+  public:
+    mfs_logged_object(bool use_sleeplock) : tsc_logged_object(use_sleeplock) {}
+
     typedef struct mfs_tsc {
       u64 tsc_value;
       seqcount<u32> seq;
@@ -544,8 +586,12 @@ namespace oplog {
     //
     // synchronize_upto_tsc(): Applies all logged operations whose timestamps
     // are less than or equal to 'max_tsc'.
+    //
+    // This is only ever called from the ScaleFS code, so we directly use a
+    // sleeplock here for synchronization, and don't provide a spinlock
+    // alternative.
     lock_guard<sleeplock> synchronize_upto_tsc(u64 max_tsc) {
-      auto guard = sync_lock_.guard();
+      auto guard = sync_sleeplock_.guard();
 
       for (size_t i = 0; i < NCPU; ++i) {
         auto r_start = mfs_start_tsc[i].seq.read_begin();
