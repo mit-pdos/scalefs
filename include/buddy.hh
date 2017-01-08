@@ -21,7 +21,7 @@ public:
     // The maximum order.  The higher this is, the larger blocks this
     // allocator can allocate.  The worst-case time for allocate and
     // free is proportional to MAX_ORDER.
-    MAX_ORDER = 14, // Bumped from 12 to 14 temporarily; revert it later.
+    MAX_ORDER = 16, // Bumped from (12) 14 to 16 temporarily; revert it later.
     // The maximum size this allocator can allocate.
     MAX_SIZE = MIN_SIZE << MAX_ORDER,
   };
