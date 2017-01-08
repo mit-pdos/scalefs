@@ -1251,6 +1251,17 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
     switch (ret) {
 
     case RET_DONE:
+      // Handling renames is a 2-step process involving a RET_RENAME_SUBOP,
+      // followed by a RET_RENAME_PAIR. However, with concurrent fsync()s, we
+      // can end up getting a RET_DONE when we were expecting a RET_RENAME_PAIR,
+      // if another fsync() call processes that rename operation faster. Fix up
+      // the rename_stack here in those situations.
+      {
+        rename_metadata rm = rename_stack.back();
+        if (pm.max_tsc == rm.timestamp &&
+              (pm.mnum == rm.src_parent_mnum || pm.mnum == rm.dst_parent_mnum))
+          rename_stack.pop_back();
+      }
       pending_stack.pop_back();
       break;
 
