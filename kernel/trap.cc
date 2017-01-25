@@ -183,12 +183,8 @@ trap(struct trapframe *tf)
               mycpu()->id,
               myproc() ? myproc()->name : "(none)",
               tf->rip, tf->rsp, tf->cs);
-      if (mycpu()->timer_printpc == 2 && tf->rbp > KBASE) {
-        uptr pc[10];
-        getcallerpcs((void *) tf->rbp, pc, NELEM(pc));
-        for (int i = 0; i < 10 && pc[i]; i++)
-          cprintf("cpu%d:   %lx\n", mycpu()->id, pc[i]);
-      }
+      if (mycpu()->timer_printpc == 2 && tf->rbp > KBASE)
+        printtrace(tf->rbp);
       mycpu()->timer_printpc = 0;
     }
     if (mycpu()->id == 0)
