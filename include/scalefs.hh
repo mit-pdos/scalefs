@@ -547,8 +547,29 @@ class journal {
   private:
     std::vector<transaction*> tx_commit_queue;
     std::vector<transaction*> tx_apply_queue;
+
+    // Locks to guarantee atomic updates to the commit and apply queue
+    // data-structures.
+    spinlock tx_commit_queue_lock, tx_apply_queue_lock;
+
+    // Locks to preserve high-level invariants with respect to inserting and
+    // removing transactions to/from the commit and apply transaction queues
+    // respectively. For example, transactions should be processed
+    // (committed/applied) in the same order that they are removed from the
+    // queues. So, the commitq_remove_lock (or the applyq_remove_lock) is held
+    // throughout that sequence.
+    sleeplock commitq_insert_lock, commitq_remove_lock;
+    sleeplock applyq_insert_lock, applyq_remove_lock;
+
     transaction *apply_dedup_trans;
-    sleeplock lock; // Guards updates to the transaction queues.
+
+    // Ensures that there is only one process/thread driving
+    // flush_transaction_queue() on a given per-core journal at a time.
+    // This is used for efficiency reasons: it avoids redundant attempts
+    // at performing the same operations from multiple processes/threads,
+    // thus reducing the number of sleeps/wakeups and IPIs in the commit/apply
+    // path.
+    sleeplock journal_lock;
 
     // Current size of flushed out transactions on the disk.
     u32 current_off;
@@ -743,12 +764,21 @@ class mfs_interface
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
     void apply_trans_on_disk(transaction *tr);
+#if 0
     void commit_transactions(std::vector<transaction*> &tx_queue,
                              transaction *dedup_trans, int cpu);
     void apply_transactions(std::vector<transaction*> &tx_queue,
                             transaction *dedup_trans, int cpu);
+#endif
+    void commit_transaction_to_disk(int cpu, transaction *trans);
+    void apply_transaction_to_disk(int cpu, transaction *trans);
+    void commit_all_transactions(int cpu);
+    void apply_all_transactions(int cpu);
+#if 0
     void flush_journal_locked(int cpu, bool apply_all = false);
     void flush_journal(int cpu, bool apply_all = false);
+#endif
+    void flush_transaction_queue(int cpu, bool apply_transactions = false);
     bool fits_in_journal(size_t num_trans_blocks, int cpu);
     void write_journal(char *buf, size_t size, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const

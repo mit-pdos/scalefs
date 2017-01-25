@@ -24,7 +24,7 @@ file_mnode::fsync() {
   else if (m->type() == mnode::types::dir)
     m->as_dir()->sync_dir(cpu);
 
-  rootfs_interface->flush_journal(cpu);
+  rootfs_interface->flush_transaction_queue(cpu);
   return 0;
 }
 
