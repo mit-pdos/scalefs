@@ -2,7 +2,7 @@
 
 $(O)/tools/mkfs: tools/mkfs.c include/fs.h
 	$(Q)mkdir -p $(@D)
-	gcc -Werror -Wall -I. -idirafter stdinc -o $@ $<
+	gcc -Werror -Wall -I. -idirafter stdinc -DHW_$(HW) -o $@ $<
 
 $(O)/tools/perf-report: tools/perf-report.cc include/sampler.h
 	$(Q)mkdir -p $(@D)
