@@ -23,6 +23,8 @@ struct intdesc idt[256] __attribute__((aligned(16)));
 
 static char fpu_initial_state[FXSAVE_BYTES];
 
+static spinlock printpc_lock;
+
 // boot.S
 extern u64 trapentry[];
 
@@ -179,12 +181,16 @@ trap(struct trapframe *tf)
     codex_magic_action_run_async_event(T_IRQ0 + IRQ_TIMER);
 #endif
     if (mycpu()->timer_printpc) {
+      scoped_acquire a(&printpc_lock);
       cprintf("cpu%d: proc %s rip %lx rsp %lx cs %x\n",
               mycpu()->id,
               myproc() ? myproc()->name : "(none)",
               tf->rip, tf->rsp, tf->cs);
-      if (mycpu()->timer_printpc == 2 && tf->rbp > KBASE)
+
+      if (mycpu()->timer_printpc == 1 ||
+           (mycpu()->timer_printpc == 2 && tf->rbp > KBASE)) {
         printtrace(tf->rbp);
+      }
       mycpu()->timer_printpc = 0;
     }
     if (mycpu()->id == 0)

@@ -295,7 +295,7 @@ consoleintr(int (*getc)(void))
     case C('P'):  // Process listing.
       procdumpall();
       break;
-    case C('E'):  // Print user-space PCs.
+    case C('E'):  // Print PCs and stack traces.
       for (u32 i = 0; i < NCPU; i++)
         cpus[i].timer_printpc = 1;
       break;
