@@ -1699,7 +1699,17 @@ mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
 void
 mfs_interface::apply_transaction_to_disk(int cpu, transaction *trans)
 {
-  // Coming soon...
+  // Apply all the committed sub-transactions to their final destinations
+  // on the disk.
+  apply_trans_on_disk(trans);
+
+  // Notify transactions (in other journal queues) which were waiting for
+  // this particular batch of transactions to get applied to the on-disk
+  // filesystem.
+  u64 latest_apply_tsc = trans->enq_tsc;
+  fs_journal[cpu]->notify_apply(latest_apply_tsc);
+
+  delete trans;
 }
 
 void
@@ -1772,7 +1782,89 @@ mfs_interface::commit_all_transactions(int cpu)
 void
 mfs_interface::apply_all_transactions(int cpu)
 {
-  // Coming soon...
+  std::vector<tx_queue_info> dependent_txq;
+  {
+    // Since we are not actually removing transactions from the queue yet, we
+    // don't need to hold the applyq_remove_lock here.
+    auto apply_guard = fs_journal[cpu]->tx_apply_queue_lock.guard();
+    if (fs_journal[cpu]->tx_apply_queue.empty())
+      return;
+
+    dependent_txq.push_back({cpu,
+                            fs_journal[cpu]->tx_apply_queue.back()->enq_tsc});
+  }
+
+  while (dependent_txq.size()) {
+    transaction *tr = nullptr;
+    tx_queue_info txq = dependent_txq.back();
+
+    int dep_cpu = txq.id_;
+    u64 dep_tsc = txq.timestamp_;
+
+    if (fs_journal[dep_cpu]->get_applied_tsc() >= dep_tsc) {
+      dependent_txq.pop_back();
+      continue;
+    }
+
+    auto apply_remove_guard = fs_journal[dep_cpu]->applyq_remove_lock.guard();
+    {
+      auto apply_guard = fs_journal[dep_cpu]->tx_apply_queue_lock.guard();
+
+      // applied_trans_tsc is updated with the applyq_remove_lock held. So this
+      // check will be accurate.
+      if (fs_journal[dep_cpu]->get_applied_tsc() >= dep_tsc) {
+        dependent_txq.pop_back();
+        continue;
+      }
+
+      // applied_trans_tsc is still less than what we want, and the apply queue
+      // is empty. That means the transaction has been committed and is about to
+      // be moved to the apply queue. So give that process a chance to acquire
+      // the tx_apply_queue_lock in order to finish the move, and then try again
+      // to apply that transaction.
+      if (fs_journal[dep_cpu]->tx_apply_queue.empty())
+        continue;
+
+      auto it = fs_journal[dep_cpu]->tx_apply_queue.begin();
+      tr = *it;
+      // Careful *not* to use >= here, because we are looking at a transaction
+      // that has not been applied yet.
+      if (tr->enq_tsc > dep_tsc) {
+        dependent_txq.pop_back();
+        continue;
+      }
+
+      u64 txq_size = dependent_txq.size();
+      for (auto &dep_txn : tr->dependent_txq) {
+        if (fs_journal[dep_txn.id_]->get_applied_tsc() < dep_txn.timestamp_)
+          dependent_txq.push_back(dep_txn);
+      }
+
+      // If we added any new nested dependencies, process them first.
+      if (dependent_txq.size() != txq_size) {
+        assert(dependent_txq.size() > txq_size);
+        continue;
+      }
+
+      fs_journal[dep_cpu]->tx_apply_queue.erase(it);
+    }
+
+    apply_transaction_to_disk(dep_cpu, tr);
+
+    if (fs_journal[dep_cpu]->get_applied_tsc() >= dep_tsc)
+      dependent_txq.pop_back();
+
+    // Clear the journal if we emptied the transaction-apply queue.
+    {
+      auto apply_guard = fs_journal[dep_cpu]->tx_apply_queue_lock.guard();
+      if (!fs_journal[dep_cpu]->tx_apply_queue.empty())
+        continue;
+    }
+
+    ilock(sv6_journal[dep_cpu], WRITELOCK);
+    reset_journal(dep_cpu);
+    iunlock(sv6_journal[dep_cpu]);
+  }
 }
 
 void
