@@ -181,15 +181,18 @@ trap(struct trapframe *tf)
     codex_magic_action_run_async_event(T_IRQ0 + IRQ_TIMER);
 #endif
     if (mycpu()->timer_printpc) {
-      scoped_acquire a(&printpc_lock);
-      cprintf("cpu%d: proc %s rip %lx rsp %lx cs %x\n",
-              mycpu()->id,
-              myproc() ? myproc()->name : "(none)",
-              tf->rip, tf->rsp, tf->cs);
+      // Skip printing the idle process, which is the most common.
+      if (strncmp("idle", myproc()->name, 4) != 0) {
+        scoped_acquire a(&printpc_lock);
+        cprintf("cpu%d: proc %s rip %lx rsp %lx cs %x\n",
+                mycpu()->id,
+                myproc() ? myproc()->name : "(none)",
+                tf->rip, tf->rsp, tf->cs);
 
-      if (mycpu()->timer_printpc == 1 ||
-           (mycpu()->timer_printpc == 2 && tf->rbp > KBASE)) {
-        printtrace(tf->rbp);
+        if (mycpu()->timer_printpc == 1 ||
+             (mycpu()->timer_printpc == 2 && tf->rbp > KBASE)) {
+          printtrace(tf->rbp);
+        }
       }
       mycpu()->timer_printpc = 0;
     }
