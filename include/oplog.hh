@@ -489,8 +489,10 @@ namespace oplog {
 
   class mfs_logged_object : public tsc_logged_object {
   public:
-    mfs_logged_object(bool use_sleeplock) : tsc_logged_object(use_sleeplock) {}
+    mfs_logged_object(bool use_sleeplock) : tsc_logged_object(use_sleeplock),
+                                            synced_upto_tsc(0) {}
 
+  private:
     typedef struct mfs_tsc {
       u64 tsc_value;
       seqcount<u32> seq;
@@ -502,6 +504,8 @@ namespace oplog {
     percpu<mfs_tsc> mfs_end_tsc;
     // Lock to protect writes to both mfs_start_tsc and mfs_end_tsc.
     percpu<sleeplock> mfs_tsc_lock;
+
+    u64 synced_upto_tsc;
 
     // Heap-merges pending loggers and applies the operations, leaving behind
     // operations that have timestamps greater than max_tsc.
@@ -591,7 +595,15 @@ namespace oplog {
     // sleeplock here for synchronization, and don't provide a spinlock
     // alternative.
     lock_guard<sleeplock> synchronize_upto_tsc(u64 max_tsc) {
+
+      // max_tsc should not be in the future.
+      assert(max_tsc < get_tsc());
+
       auto guard = sync_sleeplock_.guard();
+
+      // Avoid repeated work if we already synchronized upto the given timestamp.
+      if (max_tsc <= synced_upto_tsc)
+        return std::move(guard);
 
       for (size_t i = 0; i < NCPU; ++i) {
         auto r_start = mfs_start_tsc[i].seq.read_begin();
@@ -638,6 +650,9 @@ namespace oplog {
       // Tell the logged object that it has a consistent set of
       // loggers and should do any final flushing.
       flush_finish_max_timestamp(max_tsc);
+
+      assert(max_tsc > synced_upto_tsc);
+      synced_upto_tsc = max_tsc;
 
       return std::move(guard);
     }
