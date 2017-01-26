@@ -594,12 +594,12 @@ namespace oplog {
     // This is only ever called from the ScaleFS code, so we directly use a
     // sleeplock here for synchronization, and don't provide a spinlock
     // alternative.
-    lock_guard<sleeplock> synchronize_upto_tsc(u64 max_tsc) {
+    lock_guard<spinlock> synchronize_upto_tsc(u64 max_tsc) {
 
       // max_tsc should not be in the future.
       assert(max_tsc < get_tsc());
 
-      auto guard = sync_sleeplock_.guard();
+      auto guard = sync_spinlock_.guard();
 
       // Avoid repeated work if we already synchronized upto the given timestamp.
       if (max_tsc <= synced_upto_tsc)

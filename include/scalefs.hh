@@ -1202,8 +1202,8 @@ class mfs_logical_log: public mfs_logged_object
 
   public:
     NEW_DELETE_OPS(mfs_logical_log);
-    // Set 'use_sleeplock' to true in mfs_logged_object.
-    mfs_logical_log(u64 mnum) : mfs_logged_object(true), mnode_mnum(mnum) {}
+    // Set 'use_sleeplock' to false in mfs_logged_object.
+    mfs_logical_log(u64 mnum) : mfs_logged_object(false), mnode_mnum(mnum) {}
     ~mfs_logical_log()
     {
       for (auto it = operation_vec.begin(); it != operation_vec.end(); it++)
