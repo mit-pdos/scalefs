@@ -1769,12 +1769,12 @@ mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
   write_journal_commit_block(timestamp, cpu);
   iunlock(sv6_journal[cpu]);
 
+  post_process_transaction(trans);
+
   // Notify transactions (in other journal queues) which were waiting for
   // this particular batch of transactions to get committed.
   u64 latest_commit_tsc = trans->enq_tsc;
   fs_journal[cpu]->notify_commit(latest_commit_tsc);
-
-  post_process_transaction(trans);
 }
 
 void
