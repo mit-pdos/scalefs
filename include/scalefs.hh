@@ -779,6 +779,7 @@ class mfs_interface
     void flush_journal(int cpu, bool apply_all = false);
 #endif
     void flush_transaction_queue(int cpu, bool apply_transactions = false);
+    void print_txq_stats();
     bool fits_in_journal(size_t num_trans_blocks, int cpu);
     void write_journal(char *buf, size_t size, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const

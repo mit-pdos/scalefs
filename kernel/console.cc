@@ -303,6 +303,10 @@ consoleintr(int (*getc)(void))
       for (u32 i = 0; i < NCPU; i++)
         cpus[i].timer_printpc = 2;
       break;
+    case C('J'):  // Print per-cpu transaction-queue statistics.
+      extern void print_all_txq_stats();
+      print_all_txq_stats();
+      break;
     case C('U'):  // Kill line.
       while(input.e != input.w &&
             input.buf[(input.e-1) % INPUT_BUF] != '\n'){

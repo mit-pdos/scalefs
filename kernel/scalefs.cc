@@ -1961,6 +1961,48 @@ mfs_interface::flush_transaction_queue(int cpu, bool apply_transactions)
     apply_all_transactions(cpu);
 }
 
+void
+mfs_interface::print_txq_stats()
+{
+  // We intentionally avoid taking any locks here, because this function is
+  // typically invoked by the user when the system has already deadlocked;
+  // we don't want to make it any worse.
+
+  cprintf("TRANSACTION COMMIT QUEUES:\n");
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    if (fs_journal[cpu]->tx_commit_queue.empty())
+      continue;
+
+    cprintf("CPU %d: committed_upto: %lu\n", cpu, fs_journal[cpu]->get_committed_tsc());
+    for (auto &t : fs_journal[cpu]->tx_commit_queue) {
+      cprintf("cpu %d txn %lu depends on \n", cpu, t->enq_tsc);
+      for (auto &d : t->dependent_txq) {
+        cprintf("    dcpu %d dtxn %lu\n", d.id_, d.timestamp_);
+      }
+    }
+  }
+
+  cprintf("TRANSACTION APPLY QUEUES:\n");
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    if (fs_journal[cpu]->tx_apply_queue.empty())
+      continue;
+
+    cprintf("CPU %d: applied_upto: %lu\n\n", cpu, fs_journal[cpu]->get_applied_tsc());
+    for (auto &t : fs_journal[cpu]->tx_apply_queue) {
+      cprintf("cpu %d txn %lu depends on \n", cpu, t->enq_tsc);
+      for (auto &d : t->dependent_txq) {
+        cprintf("    dcpu %d dtxn %lu\n", d.id_, d.timestamp_);
+      }
+    }
+  }
+}
+
+void
+print_all_txq_stats()
+{
+  rootfs_interface->print_txq_stats();
+}
+
 bool
 mfs_interface::fits_in_journal(size_t num_trans_blocks, int cpu)
 {
