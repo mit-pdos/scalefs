@@ -753,6 +753,8 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack,
     mfs_log_dst->lock.acquire();
   }
 
+  std::vector<mfs_operation*> op_vec;
+
   // Acquire the oplog's sync_lock_ as well, since we will be manipulating
   // the operation vectors as well as their operations.
   {
@@ -764,7 +766,6 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack,
     // flushed out both the rename sub-operations!
     mfs_operation_rename_link *link_op = nullptr;
     mfs_operation_rename_unlink *unlink_op = nullptr;
-    transaction *tr = nullptr;
 
     if (!mfs_log_src->operation_vec.size() ||
         !mfs_log_dst->operation_vec.size())
@@ -780,6 +781,7 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack,
           link_op->timestamp == rm_1.timestamp))
       goto unlock;
 
+#if 0
     // Make sure that both parts of the rename operation are applied within
     // the same transaction, to preserve atomicity.
     tr = new transaction(link_op->timestamp);
@@ -788,6 +790,10 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack,
     // transaction queue before it is fully formed.
     add_op_to_transaction_queue(link_op, cpu, tr, true);
     add_op_to_transaction_queue(unlink_op, cpu, tr);
+#else
+    op_vec.push_back(link_op);
+    op_vec.push_back(unlink_op);
+#endif
 
     // Now we need to delete these two sub-operations from their oplogs.
     // Luckily, we know that as of this moment, both these rename sub-
@@ -799,6 +805,16 @@ mfs_interface::apply_rename_pair(std::vector<rename_metadata> &rename_stack,
   unlock:
     ; // release the locks held by src_guard and dst_guard
   }
+
+  for (auto it = op_vec.begin(); it != op_vec.end(); ) {
+    transaction *tr = new transaction((*it)->timestamp);
+    add_op_to_transaction_queue(*it, cpu, tr, true);
+    it = op_vec.erase(it);
+    add_op_to_transaction_queue(*it, cpu, tr);
+    it = op_vec.erase(it);
+  }
+
+  assert(op_vec.empty());
 
   if (dst_mnum != src_mnum)
     mfs_log_dst->lock.release();
@@ -941,6 +957,8 @@ mfs_interface::absorb_delete_inode(mfs_logical_log *mfs_log, u64 mnum, int cpu,
 // Return values from process_ops_from_oplog():
 // -------------------------------------------
 enum {
+  RET_INVALID = -1,
+
   // All done (processed operations upto max_tsc in the given mfs_log)
   RET_DONE = 0,
 
@@ -981,11 +999,21 @@ mfs_interface::process_ops_from_oplog(
                     std::vector<rename_barrier_metadata> &rename_barrier_stack,
                     std::vector<u64> &absorb_mnum_list)
 {
+  int retval = RET_INVALID;
+
+  struct mfs_ops {
+    mfs_operation *op;
+    bool op_is_rename;
+  };
+  std::vector<mfs_ops> op_vec;
+
   // Synchronize the oplog loggers.
   auto guard = mfs_log->synchronize_upto_tsc(max_tsc);
 
-  if (mfs_log->operation_vec.empty())
-    return RET_DONE;
+  if (mfs_log->operation_vec.empty()) {
+    retval = RET_DONE;
+    goto out;
+  }
 
   // count == 1 is a special case instruction to process only the 'create'
   // operation of the mnode. In all other cases, we process all the operations
@@ -994,10 +1022,11 @@ mfs_interface::process_ops_from_oplog(
     auto it = mfs_log->operation_vec.begin();
     auto create_op = dynamic_cast<mfs_operation_create*>(*it);
     if (create_op) {
-      add_op_to_transaction_queue(*it, cpu);
+      op_vec.push_back({*it, false});
       mfs_log->operation_vec.erase(it);
     }
-    return RET_DONE;
+    retval = RET_DONE;
+    goto out;
   }
 
   if (mfs_log->operation_vec.size() > 1)
@@ -1016,7 +1045,8 @@ mfs_interface::process_ops_from_oplog(
         if (!inum_lookup(link_op->mnode_mnum, &mnode_inum)) {
           // Add the create operation of the mnode being linked as a dependency.
           pending_stack.push_back({link_op->mnode_mnum, link_op->timestamp, 1});
-          return RET_LINK;
+          retval = RET_LINK;
+          goto out;
         }
       }
       break;
@@ -1036,14 +1066,15 @@ mfs_interface::process_ops_from_oplog(
             sref<mnode> m = root_fs->mget(mnum);
             if (m && m->is_dirty())
               m->dirty(false);
-            add_op_to_transaction_queue(*it, cpu);
+            op_vec.push_back({*it, false});
             it = mfs_log->operation_vec.erase(it);
             continue;
           }
 
           dirunlink_stack.push_back({mnum});
           pending_stack.push_back({mnum, get_tsc(), -1});
-          return RET_DIRUNLINK;
+          retval = RET_DIRUNLINK;
+          goto out;
         } else {
           unlink_mnum_list.push_back(unlink_op->mnode_mnum);
         }
@@ -1088,7 +1119,8 @@ mfs_interface::process_ops_from_oplog(
 
         rename_barrier_stack.push_back({mnum, timestamp});
         pending_stack.push_back({parent_mnum, timestamp, -1});
-        return RET_RENAME_BARRIER;
+        retval = RET_RENAME_BARRIER;
+        goto out;
       }
       break;
 
@@ -1108,6 +1140,7 @@ mfs_interface::process_ops_from_oplog(
         if (rename_link_op &&
             rename_link_op->src_parent_mnum == rename_link_op->dst_parent_mnum) {
 
+#if 0
           transaction *tr = nullptr;
 
           // Make sure that both parts of the rename operation are applied within
@@ -1117,6 +1150,9 @@ mfs_interface::process_ops_from_oplog(
           // Set 'skip_add' to true, to avoid adding the transaction to the journal
           // before it is fully formed.
           add_op_to_transaction_queue(rename_link_op, cpu, tr, true);
+#else
+          op_vec.push_back({rename_link_op, true});
+#endif
           it = mfs_log->operation_vec.erase(it);
 
           // The very next operation in this oplog *has* to be the corresponding
@@ -1125,7 +1161,11 @@ mfs_interface::process_ops_from_oplog(
           assert(r_unlink_op && r_unlink_op->timestamp == rename_link_op->timestamp
                  && r_unlink_op->src_parent_mnum == r_unlink_op->dst_parent_mnum);
 
+#if 0
           add_op_to_transaction_queue(r_unlink_op, cpu, tr);
+#else
+          op_vec.push_back({r_unlink_op, true});
+#endif
           it = mfs_log->operation_vec.erase(it);
 
           // Retry absorption after processing a rename, if we are not exiting
@@ -1145,6 +1185,7 @@ mfs_interface::process_ops_from_oplog(
           assert(r_link_op && r_link_op->timestamp == rename_unlink_op->timestamp
                  && r_link_op->src_parent_mnum == r_link_op->dst_parent_mnum);
 
+#if 0
           transaction *tr = nullptr;
 
           // Make sure that both parts of the rename operation are applied within
@@ -1155,6 +1196,11 @@ mfs_interface::process_ops_from_oplog(
           // before it is fully formed.
           add_op_to_transaction_queue(r_link_op, cpu, tr, true);
           add_op_to_transaction_queue(rename_unlink_op, cpu, tr);
+#else
+          op_vec.push_back({r_link_op, true});
+          op_vec.push_back({rename_unlink_op, true});
+#endif
+
           it = mfs_log->operation_vec.erase(it);
           it = mfs_log->operation_vec.erase(it);
 
@@ -1202,20 +1248,55 @@ mfs_interface::process_ops_from_oplog(
                                      rename_unlink_op->timestamp, -1});
         }
 
-        if (rename_timestamp && (*it)->timestamp == rename_timestamp)
-          return RET_RENAME_PAIR;
-        return RET_RENAME_SUBOP;
+        if (rename_timestamp && (*it)->timestamp == rename_timestamp) {
+          retval = RET_RENAME_PAIR;
+          goto out;
+        }
+        retval = RET_RENAME_SUBOP;
+        goto out;
       }
       break;
 
     }
 
-    add_op_to_transaction_queue(*it, cpu);
+    op_vec.push_back({*it, false});
     it = mfs_log->operation_vec.erase(it);
   }
 
   assert(mfs_log->operation_vec.empty());
-  return RET_DONE;
+
+out:
+  if (retval == RET_INVALID)
+    retval = RET_DONE;
+
+  if (op_vec.empty())
+    return retval;
+
+  // Release the sync-lock (which is a spinlock) because
+  // add_op_to_transaction_queue() can sleep.
+  guard.release();
+
+  for (auto it = op_vec.begin(); it != op_vec.end(); ) {
+    if ((*it).op_is_rename) {
+      // Make sure that both parts of the rename operation are applied within
+      // the same transaction, to preserve atomicity.
+      transaction *tr = new transaction((*it).op->timestamp);
+
+      // Set 'skip_add' to true, to avoid adding the transaction to the journal
+      // before it is fully formed.
+      add_op_to_transaction_queue((*it).op, cpu, tr, true);
+      it = op_vec.erase(it);
+
+      assert((*it).op_is_rename);
+      add_op_to_transaction_queue((*it).op, cpu, tr);
+      it = op_vec.erase(it);
+    } else {
+      add_op_to_transaction_queue((*it).op, cpu);
+      it = op_vec.erase(it);
+    }
+  }
+  assert(op_vec.empty());
+  return retval;
 }
 
 // Applies metadata operations logged in the logical journal. Called on
