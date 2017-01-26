@@ -1995,6 +1995,34 @@ mfs_interface::print_txq_stats()
       }
     }
   }
+
+  cprintf("COMMIT DEPENDENCIES:\n");
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    if (fs_journal[cpu]->tx_commit_queue.empty())
+      continue;
+
+    auto &t = fs_journal[cpu]->tx_commit_queue.front();
+    if (t->dependent_txq.empty())
+      continue;
+    for (auto &d : t->dependent_txq) {
+      if (fs_journal[d.id_]->get_committed_tsc() < d.timestamp_)
+        cprintf("cpu %d waits for commit on dcpu %d\n", cpu, d.id_);
+    }
+  }
+
+  cprintf("APPLY DEPENDENCIES:\n");
+  for (int cpu = 0; cpu < NCPU; cpu++) {
+    if (fs_journal[cpu]->tx_apply_queue.empty())
+      continue;
+
+    auto &t = fs_journal[cpu]->tx_apply_queue.front();
+    if (t->dependent_txq.empty())
+      continue;
+    for (auto &d : t->dependent_txq) {
+      if (fs_journal[d.id_]->get_applied_tsc() < d.timestamp_)
+        cprintf("cpu %d waits for apply on dcpu %d\n", cpu, d.id_);
+    }
+  }
 }
 
 void
