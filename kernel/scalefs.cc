@@ -1526,16 +1526,21 @@ mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
     assert(blocknum_to_queue->insert(blknum, my_txq));
   }
 
+  // Phase 2 of the 2-Phase locking. Updating the blocknum_to_queue hash-table
+  // with this transaction's cpu and timestamp is sufficient to help us preserve
+  // the ordering between dependent transactions across different cores. So it
+  // is safe to execute phase 2 and release the locks here.
+  release_inodebitmap_locks(tr);
+
   {
     auto cq_guard = fs_journal[cpu]->tx_commit_queue_lock.guard();
     fs_journal[cpu]->enqueue_transaction(tr);
-  }
 
-  // Phase 2 of the 2-Phase locking. Enqueuing the transaction in the journal's
-  // transaction queue is sufficient to help us preserve the ordering between
-  // dependent operations. So it is safe to execute phase 2 and release the
-  // locks here.
-  release_inodebitmap_locks(tr);
+    // Once the tx_commit_queue_lock is released, the transaction that we just
+    // enqueued can be dequeued by the commit-side code and can even be deleted
+    // after processing. So we should not make any more updates to this
+    // transaction after this point.
+  }
 }
 
 void
