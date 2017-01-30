@@ -524,12 +524,14 @@ class journal {
 
     void notify_commit(u64 committed_tsc) {
       scoped_acquire a(&commit_cv_lock_);
+      assert(committed_tsc > committed_trans_tsc);
       committed_trans_tsc = committed_tsc;
       commit_cv_.wake_all();
     }
 
     void notify_apply(u64 applied_tsc) {
       scoped_acquire a(&apply_cv_lock_);
+      assert(applied_tsc > applied_trans_tsc);
       applied_trans_tsc = applied_tsc;
       apply_cv_.wake_all();
     }
