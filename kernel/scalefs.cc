@@ -926,31 +926,38 @@ void
 mfs_interface::absorb_delete_inode(mfs_logical_log *mfs_log, u64 mnum, int cpu,
                                    std::vector<u64> &unlink_mnum_list)
 {
-  // Synchronize the oplog loggers.
-  auto guard = mfs_log->synchronize_upto_tsc(get_tsc());
 
-  // TODO: Handle directories properly.
-  if (!mfs_log->operation_vec.empty() &&
-      (mfs_log->operation_vec.front()->operation_type == MFS_OP_CREATE_FILE ||
-       mfs_log->operation_vec.front()->operation_type == MFS_OP_CREATE_DIR)) {
+  {
+    // Synchronize the oplog loggers.
+    auto guard = mfs_log->synchronize_upto_tsc(get_tsc());
 
-    // Simply absorb the 'create' operation.
-    mfs_operation *op = mfs_log->operation_vec.front();
-    delete op;
-    mfs_log->operation_vec.erase(mfs_log->operation_vec.begin());
+    // TODO: Handle directories properly.
+    if (!mfs_log->operation_vec.empty() &&
+        (mfs_log->operation_vec.front()->operation_type == MFS_OP_CREATE_FILE ||
+         mfs_log->operation_vec.front()->operation_type == MFS_OP_CREATE_DIR)) {
 
-    // TODO: If this is a directory, its oplog might not be empty. Deal with
-    // this case properly.
-    assert(mfs_log->operation_vec.empty());
+      // Simply absorb the 'create' operation.
+      mfs_operation *op = mfs_log->operation_vec.front();
+      delete op;
+      mfs_log->operation_vec.erase(mfs_log->operation_vec.begin());
 
-  } else {
-    // The 'create' operation of this mnode was already flushed to the disk.
-    // So we'll have to delete the inode from the disk.
-    transaction *tr = new transaction();
-    delete_mnum_inode_safe(mnum, tr, true);
-    add_transaction_to_queue(tr, cpu);
+      // TODO: If this is a directory, its oplog might not be empty. Deal with
+      // this case properly.
+      assert(mfs_log->operation_vec.empty());
+
+      unlink_mnum_list.push_back(mnum);
+      return;
+    }
   }
 
+  // Release the spinlock returned by synchronize_upto_tsc() before calling
+  // delete_mnum_inode_safe(), because it can sleep.
+
+  // The 'create' operation of this mnode was already flushed to the disk.
+  // So we'll have to delete the inode from the disk.
+  transaction *tr = new transaction();
+  delete_mnum_inode_safe(mnum, tr, true);
+  add_transaction_to_queue(tr, cpu);
   unlink_mnum_list.push_back(mnum);
 }
 
