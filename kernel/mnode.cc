@@ -321,6 +321,8 @@ mfile::sync_file(int cpu)
 
   auto lock = fsync_lock_.guard();
 
+  auto guard = rootfs_interface->fs_journal[cpu]->commitq_insert_lock.guard();
+
   transaction *trans = new transaction();
   u64 mlen = *read_size();
 

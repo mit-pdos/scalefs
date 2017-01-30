@@ -560,9 +560,11 @@ class journal {
     // (committed/applied) in the same order that they are removed from the
     // queues. So, the commitq_remove_lock (or the applyq_remove_lock) is held
     // throughout that sequence.
+  public:
     sleeplock commitq_insert_lock, commitq_remove_lock;
     sleeplock applyq_insert_lock, applyq_remove_lock;
 
+  private:
     transaction *apply_dedup_trans;
 
     // Ensures that there is only one process/thread driving
