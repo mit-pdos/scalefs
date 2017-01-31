@@ -1818,8 +1818,18 @@ mfs_interface::commit_all_transactions(int cpu)
     std::vector<tx_queue_info> dependent_txq;
 
     {
-      // Since we are not actually removing transactions from the queue yet, we
-      // don't need to hold the commitq_remove_lock here.
+      auto commit_remove_guard = fs_journal[cpu]->commitq_remove_lock.guard();
+
+      // We hold the commitq_remove_lock above (even though we are not actually
+      // removing transactions from the queue yet), so that we don't observe an
+      // empty commit-queue and return early while the (other) thread that
+      // dequeued the last transaction is still committing it to the disk.
+      // However, this is only to make things look symmetric with the apply-code
+      // and avoid any nasty surprises; in practice though, we hold the per-core
+      // journal's journal_lock before invoking this function, so there can only
+      // be one thread committing transactions to a given per-core journal at a
+      // time (unlike apply).
+
       auto cq_guard = fs_journal[cpu]->tx_commit_queue_lock.guard();
 
       if (fs_journal[cpu]->tx_commit_queue.empty())
