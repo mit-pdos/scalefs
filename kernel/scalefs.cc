@@ -1881,8 +1881,19 @@ mfs_interface::apply_all_transactions(int cpu)
 {
   std::vector<tx_queue_info> dependent_txq;
   {
-    // Since we are not actually removing transactions from the queue yet, we
-    // don't need to hold the applyq_remove_lock here.
+    auto apply_remove_guard = fs_journal[cpu]->applyq_remove_lock.guard();
+
+    // We need to hold the applyq_remove_lock above (even though we are not
+    // actually removing transactions from the queue yet), so as to maintain
+    // this invariant: if the apply-queue is empty, the journal's offset should
+    // be zero.
+    // We might observe an empty apply-queue here due to a concurrent thread
+    // dequeuing and applying the last transaction in that queue; in that case,
+    // we need to wait for the journal to be cleared by that thread, before
+    // returning. Since the dequeue-apply-clear-journal sequence is performed
+    // with the applyq_remove_lock held, we just need to observe the state of
+    // the apply-queue with the same lock held.
+
     auto apply_guard = fs_journal[cpu]->tx_apply_queue_lock.guard();
     if (fs_journal[cpu]->tx_apply_queue.empty())
       return;
