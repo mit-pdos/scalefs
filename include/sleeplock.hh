@@ -9,10 +9,8 @@ class sleeplock {
   sleeplock() : held_(false) {}
 
   void check_locking_context_is_safe() {
-#if SPINLOCK_DEBUG
     if (mycpu()->ncli != 0)
       panic("Possible nesting of sleeplock inside a spinlock!\n");
-#endif
   }
 
   void acquire() {
