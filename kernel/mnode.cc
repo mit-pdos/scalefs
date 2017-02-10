@@ -78,7 +78,7 @@ mfs::alloc(u8 type, u64 parent_mnum)
 
 mnode::mnode(mfs* fs, u64 mnum)
   : fs_(fs), mnum_(mnum), initialized_(false), cache_pin_(false), dirty_(false),
-    valid_(false)
+    valid_(false), delete_inode_(false)
 {
   kstats::inc(&kstats::mnode_alloc);
 }
@@ -110,8 +110,26 @@ mnode::is_dirty()
 }
 
 void
+mnode::mark_inode_for_deletion()
+{
+  delete_inode_ = true;
+}
+
+void
 mnode::onzero()
 {
+  int cpu = myid();
+
+  if (delete_inode_) {
+    // Delete the on-disk inode corresponding to this mnode.
+    auto guard = rootfs_interface->fs_journal[cpu]->commitq_insert_lock.guard();
+    transaction *tr = new transaction();
+    rootfs_interface->delete_mnum_inode_safe(mnum_, tr, true, true);
+    rootfs_interface->add_transaction_to_queue(tr, cpu);
+    guard.release();
+    rootfs_interface->flush_transaction_queue(cpu);
+  }
+
   if (type() == types::file)
     this->as_file()->remove_pgtable_mappings(0);
 

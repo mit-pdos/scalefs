@@ -58,6 +58,7 @@ public:
   void cache_pin(bool flag);
   void dirty(bool flag);
   bool is_dirty();
+  void mark_inode_for_deletion();
   u8 type() const { return mnumber(mnum_).type(); }
   void initialized(bool flag) { initialized_ = flag; }
   bool is_initialized() { return initialized_; }
@@ -92,6 +93,7 @@ private:
   std::atomic<bool> cache_pin_;
   std::atomic<bool> dirty_;
   std::atomic<bool> valid_;
+  bool delete_inode_;
 };
 
 /*

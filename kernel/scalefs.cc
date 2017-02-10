@@ -440,7 +440,7 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
 // disk, if there are no open file descriptors referring to that inode.
 void
 mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
-                                      bool acquire_locks)
+                                      bool acquire_locks, bool mnode_dying)
 {
   u64 inum = 0;
   assert(inum_lookup(mnum, &inum));
@@ -453,11 +453,26 @@ mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
     acquire_inodebitmap_locks(inum_list, INODE_BLOCK, tr);
   }
 
+  // Ideally, we shouldn't need this extra check, as this scenario should
+  // automatically go to the else condition below; but for some mysterious
+  // reason, that doesn't seem to work reliably. So we have this blunt check
+  // to make sure we absolutely get this right.
+  if (mnode_dying) {
+    // mnode_dying == true indicates that the mnode has reached onzero().
+    // So it is safe to delete its inode from the disk.
+    __delete_mnum_inode(mnum, tr);
+    // We already deleted the inode, so it doesn't need to be on the
+    // inode-reclaim list anymore.
+    revive_unreachable_inode(inum, tr);
+    return;
+  }
+
   sref<mnode> m = root_fs->mget(mnum);
   if (m && m->get_consistent() > 2) {
     // It looks like userspace still has open file descriptors referring to
     // this mnode, so it is not safe to delete its on-disk inode just yet.
     // So mark it for deletion and postpone it until reboot.
+    m->mark_inode_for_deletion();
     mark_unreachable_inode(inum, tr);
   } else {
     // The mnode is gone (which also implies that all its open file

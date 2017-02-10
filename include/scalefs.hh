@@ -752,7 +752,8 @@ class mfs_interface
     void remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
                           bool rename_unlink = false);
     void delete_mnum_inode_safe(u64 mnum, transaction *tr,
-                                bool acquire_locks = false);
+                                bool acquire_locks = false,
+                                bool mnode_dying = false);
     void __delete_mnum_inode(u64 mnum, transaction *tr);
 
     bool mnum_name_insert(u64 mnum, const strbuf<DIRSIZ>& name);
