@@ -350,6 +350,9 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
     return;
   }
 
+  // Switch off DMA Setup FIS Auto-Activate optimization for NCQ, as it
+  // causes I/O errors sometimes.
+#if 0
   // Enable DMA Setup FIS Auto-Activate optimization for NCQ
   fis.features = IDE_FEATURE_SATA_ENA;
   fis.sector_count = SATA_NCQ_AUTO_ACTIVATE;
@@ -361,6 +364,7 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
             "optimization for NCQ\n", pid);
     return;
   }
+#endif
 
   if (VERBOSE) {
     // After enabling all the features, print out the updated data returned from
