@@ -11,6 +11,7 @@
 #include "traps.h"
 #include "disk.hh"
 #include "buf.hh"
+#include "ideconfig.hh"
 #include <sys/time.h>
 
 extern u8 _fs_imgz_start[];

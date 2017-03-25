@@ -7,6 +7,7 @@
 #include "amd64.h"
 #include "traps.h"
 #include "disk.hh"
+#include "ideconfig.hh"
 
 #define IDE_BSY       0x80
 #define IDE_DRDY      0x40

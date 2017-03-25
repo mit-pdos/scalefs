@@ -6,6 +6,7 @@
 #include "cpu.hh"
 #include "amd64.h"
 #include "hwvm.hh"
+#include "ideconfig.hh"
 #include "condvar.hh"
 #include "proc.hh"
 #include "apic.hh"

@@ -1,6 +1,7 @@
 #include "types.h"
 #include "kernel.hh"
 #include "disk.hh"
+#include "ideconfig.hh"
 #include "vector.hh"
 #include "amd64.h"
 #include <cstring>

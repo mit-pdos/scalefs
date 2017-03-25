@@ -4,6 +4,7 @@
 #include "pci.hh"
 #include "pcireg.hh"
 #include "disk.hh"
+#include "ideconfig.hh"
 #include "ahcireg.hh"
 #include "satareg.hh"
 #include "idereg.hh"

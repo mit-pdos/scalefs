@@ -66,6 +66,9 @@
 // the filesystem will be brand new.
 #define FLASH_FS_AT_BOOT 1
 
+// Configuring MEMIDE/AHCIIDE in param.h is deprecated.
+// Use include/ideconfig.hh instead.
+
 //
 // QEMU-based targets
 //
@@ -74,8 +77,6 @@
 #define NCPU          8   // maximum number of CPUs
 #define NSOCKET       2
 #define PERFSIZE      (16<<20ull)
-#define MEMIDE        0
-#define AHCIIDE       1
 #elif defined(HW_mtrace)
 #define DEBUG         0
 #define NCPU          16   // maximum number of CPUs
@@ -117,8 +118,6 @@
 #define NSOCKET       8
 #define PERFSIZE      (128<<20ull)
 #define UART_BAUD     115200
-#define MEMIDE        0
-#define AHCIIDE       1
 // Disable the hardware stream and adjacent cache line prefetcher
 #define DISABLE_PREFETCH_STREAM 1
 #define DISABLE_PREFETCH_ADJ 1
@@ -161,10 +160,4 @@
 #endif
 #ifndef QUANTUM
 #define QUANTUM      10  // scheduling time quantum and tick length (in msec)
-#endif
-#ifndef MEMIDE
-#define MEMIDE 1
-#endif
-#ifndef AHCIIDE
-#define AHCIIDE 0
 #endif
