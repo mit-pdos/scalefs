@@ -13,7 +13,12 @@
 #define BSIZE 4096  // block size
 // total number of disk blocks in fs.img, see tools/mkfs.c
 #define BLKS_PER_MEG 256
+
+#if defined(HW_qemu)
+#define NMEGS 512 // 0.5 GB
+#else
 #define NMEGS 16384 // 16 GB
+#endif
 
 
 // File system super block
@@ -95,14 +100,26 @@ struct dinode {
 // as well as kernel/scalefs.cc (to decide the size of the inum<->mnode
 // lookup tables). If you change this number, remember to update NINODES_PRIME
 // in kernel/scalefs.cc
+#if defined(HW_qemu)
+#define NINODES		1000
+#else
 #define NINODES		1000000
+#endif
 
 // A prime number larger than NINODES
+#if defined(HW_qemu)
+#define NINODES_PRIME	1013
+#else
 #define NINODES_PRIME	1010003
+#endif
 
 // A prime number larger than the total number of inode and bitmap blocks.
 // (They are currently around 15000 for a 16GB filesystem).
+#if defined(HW_qemu)
+#define NINODEBITMAP_BLKS_PRIME	311
+#else
 #define NINODEBITMAP_BLKS_PRIME	30011
+#endif
 
 // The on-disk inodereclaim file must be big enough to hold all the inode
 // numbers in the filesystem. [ This macro is not actually used to size the
