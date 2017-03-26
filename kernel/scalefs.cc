@@ -1346,7 +1346,7 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
   while (pending_stack.size()) {
     pending_metadata pm = pending_stack.back();
 
-    mfs_logical_log *mfs_log;
+    mfs_logical_log *mfs_log = nullptr;
     if (!metadata_log_htab->lookup(pm.mnum, &mfs_log)) {
       pending_stack.pop_back();
       continue;
@@ -1369,8 +1369,9 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
       {
         rename_metadata rm = rename_stack.back();
         if (pm.max_tsc == rm.timestamp &&
-              (pm.mnum == rm.src_parent_mnum || pm.mnum == rm.dst_parent_mnum))
+             (pm.mnum == rm.src_parent_mnum || pm.mnum == rm.dst_parent_mnum)) {
           rename_stack.pop_back();
+        }
       }
       pending_stack.pop_back();
       break;

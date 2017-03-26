@@ -1209,7 +1209,8 @@ class mfs_logical_log: public mfs_logged_object
   public:
     NEW_DELETE_OPS(mfs_logical_log);
     // Set 'use_sleeplock' to false in mfs_logged_object.
-    mfs_logical_log(u64 mnum) : mfs_logged_object(false), mnode_mnum(mnum) {}
+    mfs_logical_log(u64 mnum) : mfs_logged_object(false), mnode_mnum(mnum),
+                                last_synced_tsc(0) {}
     ~mfs_logical_log()
     {
       for (auto it = operation_vec.begin(); it != operation_vec.end(); it++)
@@ -1225,6 +1226,8 @@ class mfs_logical_log: public mfs_logged_object
 
       void operator()()
       {
+        assert(operation->timestamp > parent->last_synced_tsc);
+        parent->last_synced_tsc = operation->timestamp;
         parent->operation_vec.push_back(std::move(operation));
       }
 
@@ -1260,6 +1263,7 @@ class mfs_logical_log: public mfs_logged_object
     mfs_operation_vec operation_vec;
     sleeplock lock;
     u64 mnode_mnum;
+    u64 last_synced_tsc;
 
     // This link-count is used to perform a hand-shake between MemFS and
     // fsync/sync for accurate zero-detection of file link-counts, which helps
