@@ -497,10 +497,11 @@ namespace oplog {
                                             synced_upto_tsc(0) {}
 
   private:
-    typedef struct mfs_tsc {
+    struct mfs_tsc {
       u64 tsc_value;
       seqcount<u32> seq;
-    } mfs_tsc;
+      mfs_tsc() { tsc_value = 0; }
+    };
 
     // The starting time of the latest mfs metadata operation on each core
     percpu<mfs_tsc> mfs_start_tsc;
