@@ -141,7 +141,10 @@ namespace oplog {
         }
         // Put this object in this way's tag
         my_way->obj_.store(this, std::memory_order_relaxed);
+      } else {
+        assert(cpus_[id]);
       }
+
       if (!cpus_[id])
         cpus_.atomic_set(id);
       return locked_logger(std::move(guard), &my_way->logger_);
