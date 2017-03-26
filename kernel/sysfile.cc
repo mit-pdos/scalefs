@@ -619,6 +619,26 @@ sys_unlink(userptr_str path)
   return 0;
 }
 
+void add_create_to_metadata_log(u64 md_mnum, u64 mf_mnum, strbuf<DIRSIZ> name,
+                                short type, int cpu, u64 tsc)
+{
+  rootfs_interface->mnum_name_insert(mf_mnum, name);
+  mfs_operation *op_c, *op_l;
+
+  op_c = new mfs_operation_create(rootfs_interface, tsc, mf_mnum,
+                                  md_mnum, name.buf_, type);
+  rootfs_interface->add_to_metadata_log(mf_mnum, cpu, op_c);
+
+  op_l = new mfs_operation_link(rootfs_interface, tsc, mf_mnum,
+                                md_mnum, name.buf_, type);
+  rootfs_interface->add_to_metadata_log(md_mnum, cpu, op_l);
+  rootfs_interface->inc_mfslog_linkcount(mf_mnum);
+
+  u64 tsc_val = get_tsc();
+  rootfs_interface->metadata_op_end(mf_mnum, cpu, tsc_val);
+  rootfs_interface->metadata_op_end(md_mnum, cpu, tsc_val);
+}
+
 sref<mnode>
 create(sref<mnode> cwd, const char *path, short type, short major, short minor, bool excl)
 {
@@ -653,18 +673,20 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
     mf = ilink.mn();
     mf->initialized(true);
 
-    u64 tsc_val = get_tsc();
     int cpu = myid();
+    u64 tsc_val = get_tsc();
     lock_guard<sleeplock> l1, l2;
 
     if (mtype == mnode::types::dir || mtype == mnode::types::file) {
-      if (md->mnum_ < mf->mnum_) {
-        l1 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
-        l2 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
-      } else {
-        l1 = rootfs_interface->metadata_op_lockguard(mf->mnum_, cpu);
-        l2 = rootfs_interface->metadata_op_lockguard(md->mnum_, cpu);
+      u64 low_mnum = md->mnum_, high_mnum = mf->mnum_;
+      if (mf->mnum_ < md->mnum_) {
+        low_mnum = mf->mnum_;
+        high_mnum = md->mnum_;
       }
+
+      // Lock ordering: acquire locks in increasing order of mnums.
+      l1 = rootfs_interface->metadata_op_lockguard(low_mnum, cpu);
+      l2 = rootfs_interface->metadata_op_lockguard(high_mnum, cpu);
 
       rootfs_interface->metadata_op_start(md->mnum_, cpu, tsc_val);
       rootfs_interface->metadata_op_start(mf->mnum_, cpu, tsc_val);
@@ -686,23 +708,9 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       parentlink.acquire();
       assert(mf->as_dir()->insert("..", &parentlink));
       if (md->as_dir()->insert(name, &ilink, &tsc)) {
-        if (myproc() != bootproc) {
-          rootfs_interface->mnum_name_insert(mf->mnum_, name);
-          mfs_operation *op_c, *op_l;
-
-          op_c = new mfs_operation_create(rootfs_interface, tsc, mf->mnum_,
-                                          md->mnum_, name.buf_, type);
-          rootfs_interface->add_to_metadata_log(mf->mnum_, cpu, op_c);
-
-          op_l = new mfs_operation_link(rootfs_interface, tsc, mf->mnum_,
-                                        md->mnum_, name.buf_, type);
-          rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_l);
-          rootfs_interface->inc_mfslog_linkcount(mf->mnum_);
-
-          tsc_val = get_tsc();
-          rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
-          rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
-        }
+        if (myproc() != bootproc)
+          add_create_to_metadata_log(md->mnum_, mf->mnum_, name, type,
+                                     cpu, tsc);
         return mf;
       }
 
@@ -721,23 +729,9 @@ create(sref<mnode> cwd, const char *path, short type, short major, short minor, 
       mf->as_dev()->init(major, minor);
 
     if (md->as_dir()->insert(name, &ilink, &tsc)) {
-      if (myproc() != bootproc && (mtype == mnode::types::file)) {
-        rootfs_interface->mnum_name_insert(mf->mnum_, name);
-        mfs_operation *op_c, *op_l;
-
-        op_c = new mfs_operation_create(rootfs_interface, tsc, mf->mnum_,
-                                        md->mnum_, name.buf_, type);
-        rootfs_interface->add_to_metadata_log(mf->mnum_, cpu, op_c);
-
-        op_l = new mfs_operation_link(rootfs_interface, tsc, mf->mnum_,
-                                      md->mnum_, name.buf_, type);
-        rootfs_interface->add_to_metadata_log(md->mnum_, cpu, op_l);
-        rootfs_interface->inc_mfslog_linkcount(mf->mnum_);
-
-        tsc_val = get_tsc();
-        rootfs_interface->metadata_op_end(mf->mnum_, cpu, tsc_val);
-        rootfs_interface->metadata_op_end(md->mnum_, cpu, tsc_val);
-      }
+      if (myproc() != bootproc && mtype == mnode::types::file)
+        add_create_to_metadata_log(md->mnum_, mf->mnum_, name, type,
+                                   cpu, tsc);
       return mf;
     }
 
