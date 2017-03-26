@@ -7,6 +7,7 @@
 #include "hpet.hh"
 #include "cpuid.hh"
 #include "sleeplock.hh"
+#include "lockwrap.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -603,35 +604,32 @@ namespace oplog {
     // alternative.
     lock_guard<spinlock> synchronize_upto_tsc(u64 max_tsc) {
 
-      // max_tsc should not be in the future.
-      assert(max_tsc < get_tsc());
-
-      auto guard = sync_spinlock_.guard();
-
       // Avoid repeated work if we already synchronized upto the given timestamp.
       if (max_tsc <= synced_upto_tsc)
-        return std::move(guard);
+        return std::move(sync_spinlock_.guard());
 
-      for (size_t i = 0; i < NCPU; ++i) {
-        auto r_start = mfs_start_tsc[i].seq.read_begin();
-        auto r_end = mfs_end_tsc[i].seq.read_begin();
-        u64 start_tsc = 0, end_tsc = 0;
-        while (r_start.do_retry())
-          start_tsc = mfs_start_tsc[i].tsc_value;
-        while (r_end.do_retry())
-          end_tsc = mfs_end_tsc[i].tsc_value;
-
-        // end_tsc < start_tsc indicates that the core in question is executing
+      for (int i = 0; i < NCPU; i++) {
+        // end_tsc <= start_tsc indicates that the core in question is executing
         // an operation that might not have been logged yet. We can only be sure
         // that the operation has been logged once the end_tsc value has been
         // updated, which is the last thing an operation does before exiting. We
         // need to wait for an operation that is executing to be logged in order
         // to know where the linearization point of the operation lies with
         // respect to max_tsc.
-        if (end_tsc < start_tsc && start_tsc <= max_tsc)
-          while (!r_end.need_retry());
+
+        u64 start_tsc, end_tsc;
+        start_tsc = *seq_reader<u64>(&mfs_start_tsc[i].tsc_value,
+                                     &mfs_start_tsc[i].seq);
+
+        do {
+          end_tsc = *seq_reader<u64>(&mfs_end_tsc[i].tsc_value,
+                                     &mfs_end_tsc[i].seq);
+        } while (start_tsc && start_tsc <= max_tsc && end_tsc <= start_tsc);
+
+        assert(!start_tsc || start_tsc > max_tsc || end_tsc > start_tsc);
       }
 
+      auto guard = sync_spinlock_.guard();
       while (1) {
         bool any = false;
         // Gather loggers
