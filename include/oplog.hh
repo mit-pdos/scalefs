@@ -508,6 +508,8 @@ namespace oplog {
     // Lock to protect writes to both mfs_start_tsc and mfs_end_tsc.
     percpu<sleeplock> mfs_tsc_lock;
 
+    // synced_upto_tsc tracks the latest tsc value that the user has invoked
+    // synchronized_upto_tsc() on.
     u64 synced_upto_tsc;
 
     // Heap-merges pending loggers and applies the operations, leaving behind
@@ -548,6 +550,8 @@ namespace oplog {
       }
       assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
                             tsc_logger::compare_tsc));
+
+      assert(merged_ops.front()->tsc > synced_upto_tsc);
 
       for(auto &op : merged_ops)
         op->run();
