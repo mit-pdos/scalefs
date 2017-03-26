@@ -1059,7 +1059,7 @@ mfs_interface::process_ops_from_oplog(
     absorb_file_link_unlink(mfs_log, absorb_mnum_list);
 
   for (auto it = mfs_log->operation_vec.begin();
-       it != mfs_log->operation_vec.end(); ) {
+       it != mfs_log->operation_vec.end() && (*it)->timestamp <= max_tsc; ) {
 
     switch ((*it)->operation_type) {
 
@@ -1289,7 +1289,8 @@ mfs_interface::process_ops_from_oplog(
     it = mfs_log->operation_vec.erase(it);
   }
 
-  assert(mfs_log->operation_vec.empty());
+  assert(mfs_log->operation_vec.empty() ||
+         mfs_log->operation_vec.front()->timestamp > max_tsc);
 
 out:
   if (retval == RET_INVALID)
