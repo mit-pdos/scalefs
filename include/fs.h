@@ -101,14 +101,14 @@ struct dinode {
 // lookup tables). If you change this number, remember to update NINODES_PRIME
 // in kernel/scalefs.cc
 #if defined(HW_qemu)
-#define NINODES		1000
+#define NINODES		4000
 #else
 #define NINODES		1000000
 #endif
 
 // A prime number larger than NINODES
 #if defined(HW_qemu)
-#define NINODES_PRIME	1013
+#define NINODES_PRIME	4013
 #else
 #define NINODES_PRIME	1010003
 #endif
