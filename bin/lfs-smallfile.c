@@ -315,58 +315,149 @@ void *run_benchmark(void *arg)
 
 void create_dirs(const char *topdir, unsigned long num_dirs)
 {
-	int ret;
+	int ret, fd;
 	unsigned long i, j;
 	char dir[128], sub_dir[128];
 
 	if (per_cpu_dirs) {
 		for (j = 0; j < num_cpus; j++) {
+			setaffinity(j);
 			snprintf(sub_dir, 128, "%s/cpu-%ld", topdir, j);
 			if ((ret = mkdir(sub_dir, 0777)) != 0)
 				die("mkdir %s failed %d\n", sub_dir, ret);
+
+			fd = open(sub_dir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", sub_dir, ret);
+				close(fd);
+			}
+
+			fd = open(topdir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", topdir, ret);
+				close(fd);
+			}
 
 			for (i = 0; i < num_dirs; i++) {
 				snprintf(dir, 128, "%s/cpu-%ld/dir-%ld", topdir, j, i);
 				if ((ret = mkdir(dir, 0777)) != 0)
 					die("mkdir %s failed %d\n", dir, ret);
+
+				fd = open(dir, O_RDONLY|O_DIRECTORY);
+				if (fd >= 0) {
+					if ((ret = fsync(fd)) < 0)
+						die("fsync %s failed %d\n", dir, ret);
+					close(fd);
+				}
+
+			}
+
+			fd = open(sub_dir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", sub_dir, ret);
+				close(fd);
 			}
 		}
 	} else {
 		for (i = 0; i < num_dirs; i++) {
+			setaffinity(i % num_cpus);
 			snprintf(dir, 128, "%s/dir-%ld", topdir, i);
 			if ((ret = mkdir(dir, 0777)) != 0)
 				die("mkdir %s failed %d\n", dir, ret);
+
+			fd = open(dir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", dir, ret);
+				close(fd);
+			}
+
+			fd = open(topdir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", topdir, ret);
+				close(fd);
+			}
 		}
 	}
+
+	// Break CPU affinity.
+	setaffinity(-1);
 }
 
 
 void delete_dirs(const char *topdir, unsigned long num_dirs)
 {
-	int ret;
+	int ret, fd;
 	unsigned long i, j;
 	char dir[128], sub_dir[128];
 
 	if (per_cpu_dirs) {
 		for (j = 0; j < num_cpus; j++) {
+			setaffinity(j);
+
 			snprintf(sub_dir, 128, "%s/cpu-%ld", topdir, j);
 
 			for (i = 0; i < num_dirs; i++) {
 				snprintf(dir, 128, "%s/cpu-%ld/dir-%ld", topdir, j, i);
+
+				fd = open(dir, O_RDONLY|O_DIRECTORY);
+				if (fd >= 0) {
+					if ((ret = fsync(fd)) < 0)
+						die("fsync %s failed %d\n", dir, ret);
+					close(fd);
+				}
+
 				if ((ret = unlink(dir)) != 0)
 					die("unlink %s failed %d\n", dir, ret);
 			}
 
+			fd = open(sub_dir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", sub_dir, ret);
+				close(fd);
+			}
+
 			if ((ret = unlink(sub_dir)) != 0)
 				die("unlink %s failed %d\n", sub_dir, ret);
+
+			fd = open(topdir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", topdir, ret);
+				close(fd);
+			}
 		}
 	} else {
 		for (i = 0; i < num_dirs; i++) {
+			setaffinity(i % num_cpus);
 			snprintf(dir, 128, "%s/dir-%ld", topdir, i);
+
+			fd = open(dir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", dir, ret);
+				close(fd);
+			}
+
 			if ((ret = unlink(dir)) != 0)
 				die("unlink %s failed %d\n", dir, ret);
+
+			fd = open(topdir, O_RDONLY|O_DIRECTORY);
+			if (fd >= 0) {
+				if ((ret = fsync(fd)) < 0)
+					die("fsync %s failed %d\n", topdir, ret);
+				close(fd);
+			}
 		}
 	}
+
+	// Break CPU affinity.
+	setaffinity(-1);
 }
 
 
