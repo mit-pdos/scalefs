@@ -2,7 +2,7 @@
 
 echo
 
-NCPU=16
+NCPU=80
 
 mkdir temp
 for ncore in {1..$NCPU}; do
