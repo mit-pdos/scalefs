@@ -1226,7 +1226,7 @@ class mfs_logical_log: public mfs_logged_object
 
       void operator()()
       {
-        assert(operation->timestamp > parent->last_synced_tsc);
+        assert(operation->timestamp >= parent->last_synced_tsc);
         parent->last_synced_tsc = operation->timestamp;
         parent->operation_vec.push_back(std::move(operation));
       }

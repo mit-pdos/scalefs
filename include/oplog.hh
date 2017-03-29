@@ -553,7 +553,7 @@ namespace oplog {
       assert(std::is_sorted(merged_ops.begin(), merged_ops.end(),
                             tsc_logger::compare_tsc));
 
-      assert(merged_ops.front()->tsc > synced_upto_tsc);
+      assert(merged_ops.front()->tsc >= synced_upto_tsc);
 
       for(auto &op : merged_ops)
         op->run();
