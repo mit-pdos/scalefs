@@ -1880,12 +1880,10 @@ mfs_interface::commit_all_transactions(int cpu)
     {
       auto cq_guard = fs_journal[cpu]->tx_commit_queue_lock.guard();
 
-      if (fs_journal[cpu]->tx_commit_queue.empty() ||
-          fs_journal[cpu]->tx_commit_queue.front()->enq_tsc != enq_tsc) {
-        // Some other thread committed the transaction that we were originally
-        // getting ready to commit; so move on.
-        continue;
-      }
+      // The commit-queue should not have shrunk in the meantime, because we
+      // hold this per-cpu journal's journal_lock (acquired by our caller).
+      assert(!fs_journal[cpu]->tx_commit_queue.empty());
+      assert(fs_journal[cpu]->tx_commit_queue.front()->enq_tsc == enq_tsc);
 
       auto it = fs_journal[cpu]->tx_commit_queue.begin();
       trans = *it;
@@ -1962,12 +1960,8 @@ mfs_interface::apply_all_transactions(int cpu)
 
       auto it = fs_journal[dep_cpu]->tx_apply_queue.begin();
       tr = *it;
-      // Careful *not* to use >= here, because we are looking at a transaction
-      // that has not been applied yet.
-      if (tr->enq_tsc > dep_tsc) {
-        dependent_txq.pop_back();
-        continue;
-      }
+
+      assert(tr->enq_tsc <= dep_tsc);
 
       u64 txq_size = dependent_txq.size();
       for (auto &dep_txn : tr->dependent_txq) {
@@ -2098,6 +2092,8 @@ mfs_interface::fits_in_journal(size_t num_trans_blocks, int cpu)
   ilock(sv6_journal[cpu], READLOCK);
   u64 trans_size = num_trans_blocks * BSIZE + 2 * sizeof(journal_header_block)
                    + sizeof(journal_addr_block);
+
+  assert(trans_size <= PHYS_JOURNAL_SIZE);
 
   if (fs_journal[cpu]->current_offset() + trans_size > PHYS_JOURNAL_SIZE) {
     iunlock(sv6_journal[cpu]);

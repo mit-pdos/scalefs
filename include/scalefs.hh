@@ -508,7 +508,10 @@ class journal {
     }
 
     u32 current_offset() { return current_off; }
-    void update_offset(u32 new_off) { current_off = new_off; }
+    void update_offset(u32 new_off) {
+      assert(new_off <= PHYS_JOURNAL_SIZE);
+      current_off = new_off;
+    }
 
     void wait_for_commit(u64 upto_enq_tsc) {
       scoped_acquire a(&commit_cv_lock_);
