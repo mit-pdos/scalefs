@@ -1,10 +1,14 @@
 #pragma once
 #define NPROC        64  // maximum number of processes
 #define KSTACKSIZE 32768 // size of per-process kernel stack
-#define NOFILE      100  // open files per process
+#define NOFILE     1024  // open files per process
+
+#if 0 // These parameters are currently unused.
 #define NFILE       100  // open files per system
 #define NBUF      10000  // size of disk block cache
 #define NINODE     5000  // maximum number of active i-nodes
+#endif
+
 #define NDEV         16  // maximum major device number
 #define ROOTDEV       1  // device number of file system root disk
 #define MAXARG       32  // max exec arguments
