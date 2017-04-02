@@ -125,6 +125,8 @@ mnode::onzero()
     auto guard = rootfs_interface->fs_journal[cpu]->commitq_insert_lock.guard();
     transaction *tr = new transaction();
     rootfs_interface->delete_mnum_inode_safe(mnum_, tr, true, true);
+    rootfs_interface->free_metadata_log(mnum_);
+    rootfs_interface->free_mnode_lock(mnum_);
     rootfs_interface->add_transaction_to_queue(tr, cpu);
     guard.release();
     rootfs_interface->flush_transaction_queue(cpu);
