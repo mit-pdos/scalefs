@@ -92,7 +92,15 @@ setaffinity(int c)
 {
   cpu_set_t cpuset;
   CPU_ZERO(&cpuset);
-  CPU_SET(c, &cpuset);
+
+  if (c == -1) {
+    // Break the CPU affinity.
+    for (int i = 0; i < NCPU; i++)
+      CPU_SET(i, &cpuset);
+  } else {
+    CPU_SET(c, &cpuset);
+  }
+
   if (sched_setaffinity(0, sizeof(cpuset), &cpuset) < 0)
     edie("setaffinity, sched_setaffinity failed");
   return 0;

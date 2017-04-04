@@ -130,7 +130,7 @@
 // Linux user-space targets (no kernel, so most options aren't set)
 //
 #elif defined(HW_linux)
-#define NCPU          256
+#define NCPU          80 // We have 80 cores on ben.
 #define MTRACE        0
 #elif defined(HW_linuxmtrace)
 #define NCPU          256
