@@ -358,6 +358,13 @@ main(int argc, char **argv)
       std::vector<const char*> qman{"./mail-qman", "-a", alt_str};
       if (pool)
         qman.push_back("-p");
+
+      if (percpu_spooldirs) {
+        char cpu_str[32];
+        snprintf(cpu_str, sizeof(cpu_str), "%d", i);
+        qman.push_back("-c");
+        qman.push_back(cpu_str);
+      }
       qman.push_back(spooldirs[i].c_str());
       qman.push_back(mailroot.c_str());
 

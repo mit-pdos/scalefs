@@ -115,6 +115,9 @@ public:
 
   void exit_others(int mycpu, int nthread)
   {
+    if (nthread == 1)
+      return; // Nothing to do.
+
     // xv6 doesn't have an easy way to kill processes, so cascade the
     // exit message to all other threads. We have to affinitize
     // ourselves around in case socket load balancing is off.
@@ -288,6 +291,7 @@ usage(const char *argv0)
   fprintf(stderr, "  -a none   Use regular APIs (default)\n");
   fprintf(stderr, "     all    Use alternate APIs\n");
   fprintf(stderr, "  -p        Use pooled mail-deliver\n");
+  fprintf(stderr, "  -c cpu    Pin to cpu (nthread must be 1)\n");
   exit(2);
 }
 
@@ -295,8 +299,9 @@ int
 main(int argc, char **argv)
 {
   int opt;
-  bool pool = false;
-  while ((opt = getopt(argc, argv, "a:p")) != -1) {
+  bool pool = false, do_pin = false;
+  int cpuid = 0;
+  while ((opt = getopt(argc, argv, "a:pc:")) != -1) {
     switch (opt) {
     case 'a':
       if (strcmp(optarg, "all") == 0)
@@ -308,6 +313,10 @@ main(int argc, char **argv)
       break;
     case 'p':
       pool = true;
+      break;
+    case 'c':
+      cpuid = atoi(optarg);
+      do_pin = true;
       break;
     default:
       usage(argv[0]);
@@ -323,15 +332,24 @@ main(int argc, char **argv)
   if (nthread <= 0)
     usage(argv[0]);
 
+  // If a CPU is specified for pinning, nthread should be 1 to disable
+  // multi-threading.
+  if (do_pin) {
+    if (cpuid < 0 || nthread != 1)
+      usage(argv[0]);
+  }
+
   spool_reader reader{spooldir};
 
   thread *threads = new thread[nthread];
 
   for (int i = 0; i < nthread; ++i) {
-    setaffinity(i);
+    setaffinity(do_pin ? cpuid : i);
     threads[i] = std::move(thread(do_process, &reader, mailroot, pool,
-                                  nthread, i));
+                                  nthread, do_pin ? cpuid : i));
   }
+
+  setaffinity(-1);
 
   for (int i = 0; i < nthread; ++i)
     threads[i].join();
