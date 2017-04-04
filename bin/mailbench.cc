@@ -102,7 +102,8 @@ xwaitpid(int pid, const char *cmd)
 }
 
 static void
-do_mua(int cpu, string spooldir, string msgpath, size_t batch_size, bool verbose)
+do_mua(int cpu, string spooldir, string msgpath, string userdir, size_t batch_size,
+       bool verbose)
 {
   std::vector<const char*> argv{"./mail-enqueue"};
 #if defined(XV6_USER)
@@ -120,7 +121,7 @@ do_mua(int cpu, string spooldir, string msgpath, size_t batch_size, bool verbose
   if (batch_size)
     argv.push_back("-b");
   argv.push_back(spooldir.c_str());
-  argv.push_back("user");
+  argv.push_back(userdir.c_str());
   argv.push_back(nullptr);
 
   bar.join();
@@ -211,21 +212,29 @@ xmkdir(const string &d)
 }
 
 static void
-create_spool(const string &base)
+create_spool(const string &base, int cpu)
 {
+  setaffinity(cpu);
   xmkdir(base);
   xmkdir(base + "/pid");
   xmkdir(base + "/todo");
   xmkdir(base + "/mess");
+
+  sync();
+  setaffinity(-1);
 }
 
 static void
-create_maildir(const string &base)
+create_maildir(const string &base, int cpu)
 {
+  setaffinity(cpu);
   xmkdir(base);
   xmkdir(base + "/tmp");
   xmkdir(base + "/new");
   xmkdir(base + "/cur");
+
+  sync();
+  setaffinity(-1);
 }
 
 void
@@ -238,6 +247,8 @@ usage(const char *argv0)
   fprintf(stderr, "     N      Spool in batches of size N\n");
   fprintf(stderr, "     inf    Spool in unbounded batches\n");
   fprintf(stderr, "  -p        Use delivery process pooling\n");
+  fprintf(stderr, "  -c        Use nthreads spool directories\n");
+  fprintf(stderr, "  -u N      Use N user mailboxes (N should be 1 or nthreads)\n");
   fprintf(stderr, "  -v        Verbose\n");
   fprintf(stderr, "  -W        Disable warmup phase\n");
   exit(2);
@@ -250,9 +261,11 @@ main(int argc, char **argv)
   size_t batch_size = 0;
   bool verbose = false;
   bool pool = false;
+  bool percpu_spooldirs = false;
+  int nusers = 1;
   bool do_warmup = true;
   int opt;
-  while ((opt = getopt(argc, argv, "a:b:pvW")) != -1) {
+  while ((opt = getopt(argc, argv, "a:b:pcu:vW")) != -1) {
     switch (opt) {
     case 'a':
       alt_str = optarg;
@@ -265,6 +278,12 @@ main(int argc, char **argv)
       break;
     case 'p':
       pool = true;
+      break;
+    case 'c':
+      percpu_spooldirs = true;
+      break;
+    case 'u':
+      nusers = atoi(optarg);
       break;
     case 'v':
       verbose = true;
@@ -286,32 +305,80 @@ main(int argc, char **argv)
   if (nthreads <= 0)
     usage(argv[0]);
 
+  if (nusers <= 0)
+    usage(argv[0]);
+
+  // Currently we support only nusers = 1 or nusers = nthreads.
+  if (!(nusers == 1 || nusers == nthreads)) {
+    printf("Number of user mailboxes should be either 1 or nthreads\n");
+    usage(argv[0]);
+  }
+
+  if (nusers > 1 && !percpu_spooldirs) {
+    printf("Please setup nthreads spool dirs when using multiple user mailboxes\n");
+    usage(argv[0]);
+  }
+
   // Create spool and inboxes
   // XXX This terminology is wrong.  The spool is where mail
   // ultimately gets delivered to.
-  string spooldir = basedir + "/spool";
-  if (START_QMAN)
-    create_spool(spooldir);
+  string spoolbase = basedir + "/spool";
+  xmkdir(spoolbase);
+
+  string spooldirs[128];
+  for (int i = 0; i < nthreads; i++) {
+    char str[32];
+    snprintf(str, sizeof(str), "/spool%d", i);
+    spooldirs[i] = spoolbase + str;
+    if (START_QMAN)
+      create_spool(spooldirs[i], i);
+
+    if (!percpu_spooldirs)
+      break;
+  }
+
   string mailroot = basedir + "/mail";
   xmkdir(mailroot);
-  create_maildir(mailroot + "/user");
+
+  // Associate a different user mailbox with each CPU, if the options permit.
+  string userdirs[128];
+  for (int i = 0; i < nusers; i++) {
+    char str[32];
+    snprintf(str, sizeof(str), "/user%d", i);
+    userdirs[i] = str;
+    create_maildir(mailroot + userdirs[i], i);
+  }
 
   sync();
 
-  pid_t qman_pid;
+  pid_t qman_pid[128];
   if (START_QMAN) {
-    // Start queue manager
-    std::vector<const char*> qman{"./mail-qman", "-a", alt_str};
-    if (pool)
-      qman.push_back("-p");
-    qman.push_back(spooldir.c_str());
-    qman.push_back(mailroot.c_str());
-    qman.push_back(nthreads_str);
-    qman.push_back(nullptr);
-    if (posix_spawn(&qman_pid, qman[0], nullptr, nullptr,
-                    const_cast<char *const*>(qman.data()), environ) != 0)
-      die("posix_spawn %s failed", qman[0]);
-    sleep(1);
+    for (int i = 0; i < nthreads; i++) {
+      // Start queue manager
+      std::vector<const char*> qman{"./mail-qman", "-a", alt_str};
+      if (pool)
+        qman.push_back("-p");
+      qman.push_back(spooldirs[i].c_str());
+      qman.push_back(mailroot.c_str());
+
+      if (percpu_spooldirs) {
+        // Don't create multi-threaded mail-qman, because we will create a new
+        // instance of mail-qman for each cpu anyway.
+        qman.push_back("1");
+      } else {
+        qman.push_back(nthreads_str);
+      }
+
+      qman.push_back(nullptr);
+
+      if (posix_spawn(&qman_pid[i], qman[0], nullptr, nullptr,
+                      const_cast<char *const*>(qman.data()), environ) != 0)
+        die("posix_spawn %s failed", qman[0]);
+      sleep(1);
+
+      if (!percpu_spooldirs)
+        break;
+    }
   }
 
   // Write message to a file
@@ -336,7 +403,8 @@ main(int argc, char **argv)
 
   std::thread *threads = new std::thread[nthreads];
   for (int i = 0; i < nthreads; ++i)
-    threads[i] = std::thread(do_mua, i, basedir + "/spool", basedir + "/msg",
+    threads[i] = std::thread(do_mua, i, percpu_spooldirs ? spooldirs[i] : spooldirs[0],
+                             basedir + "/msg", nusers > 1 ? userdirs[i] : userdirs[0],
                              batch_size, verbose);
 
   // Wait
@@ -345,14 +413,24 @@ main(int argc, char **argv)
     threads[i].join();
 
   if (START_QMAN) {
-    // Kill qman and wait for it to exit
-    const char *enq[] = {"./mail-enqueue", "--exit", spooldir.c_str(), nullptr};
-    pid_t enq_pid;
-    if (posix_spawn(&enq_pid, enq[0], nullptr, nullptr,
-                    const_cast<char *const*>(enq), environ) != 0)
-      die("posix_spawn %s failed", enq[0]);
-    xwaitpid(enq_pid, "mail-enqueue --exit");
-    xwaitpid(qman_pid, "mail-qman");
+    for (int i = 0; i < nthreads; i++) {
+      // Kill qman and wait for it to exit
+      const char *enq[] = {"./mail-enqueue", "--exit", spooldirs[i].c_str(), nullptr};
+      pid_t enq_pid;
+
+      setaffinity(i);
+      if (posix_spawn(&enq_pid, enq[0], nullptr, nullptr,
+                      const_cast<char *const*>(enq), environ) != 0)
+        die("posix_spawn %s failed", enq[0]);
+      xwaitpid(enq_pid, "mail-enqueue --exit");
+      xwaitpid(qman_pid[i], "mail-qman");
+
+      if (!percpu_spooldirs)
+        break;
+    }
+
+    // Break the affinity
+    setaffinity(-1);
   }
 
   // Summarize
