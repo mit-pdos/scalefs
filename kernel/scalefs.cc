@@ -418,10 +418,11 @@ mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
   }
 
   sref<mnode> m = root_fs->mget(mnum);
-  if (m && m->get_consistent() > 2) {
+  if (m) {
     // It looks like userspace still has open file descriptors referring to
     // this mnode, so it is not safe to delete its on-disk inode just yet.
-    // So mark it for deletion and postpone it until reboot.
+    // So mark it for deletion and postpone it until this mnode's onzero()
+    // function is invoked.
     m->mark_inode_for_deletion();
   } else {
     // The mnode is gone (which also implies that all its open file
