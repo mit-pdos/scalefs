@@ -590,31 +590,6 @@ class journal {
     condvar commit_cv_, apply_cv_;
 };
 
-class inode_reclaim {
-  friend mfs_interface;
-public:
-  NEW_DELETE_OPS(inode_reclaim);
-
-  inode_reclaim(u64 size) : map_(size), next_offset(0) {}
-  ~inode_reclaim() {}
-
-  bool lookup(const u32 inum, u32 *offsetp) {
-    return map_.lookup(inum, offsetp);
-  }
-
-  bool insert(const u32 inum, const u32 offset) {
-    return map_.insert(inum, offset);
-  }
-
-  bool remove(const u32 inum) {
-    return map_.remove(inum);
-  }
-
-private:
-  // Mapping from inode number to its offset in the on-disk inode-reclaim file.
-  chainhash<u32, u32> map_;
-  u32 next_offset; // Points to where we can add the next inum entry.
-};
 
 // This class acts as an interfacing layer between the in-memory representation
 // of the filesystem and the on-disk representation. It provides functions to
@@ -835,9 +810,7 @@ class mfs_interface
     void mfs_unlink(mfs_operation_unlink *op, transaction *tr);
     void mfs_rename_link(mfs_operation_rename_link *op, transaction *tr);
     void mfs_rename_unlink(mfs_operation_rename_unlink *op, transaction *tr);
-    void mark_unreachable_inode(u32 inum, transaction *tr);
-    void revive_unreachable_inode(u32 inum, transaction *tr);
-    void reclaim_unreachable_inodes(int cpu);
+    void reclaim_unreachable_inodes();
 
     // Block allocator functionality
     void initialize_freeblock_bitmap();
@@ -888,21 +861,12 @@ class mfs_interface
 
   public:
     percpu<journal*> fs_journal;
-    percpu<inode_reclaim*> fs_inode_reclaim;
     percpu<sref<inode> > sv6_journal;
-    percpu<sref<inode> > sv6_inode_reclaim;
 
     // A hash-table to track the last transaction(*) that modified a given
     // inode-block or bitmap-block. (* = specifically, which journal's
     // transaction-queue that transaction went into and at what timestamp).
     chainhash<u32, tx_queue_info> *blocknum_to_queue;
-
-    // Given an (unreachable) inode marked for deletion upon reboot, this
-    // hash-table tells us which per-CPU inode-reclaim file it was marked in.
-    // This helps us revive the inode (i.e., delete it from that inode-reclaim
-    // file) when it becomes reachable again, for example, when we flush a
-    // link to the inode by fsyncing its parent directory.
-    chainhash<u32, int> *deadinum_to_cpu;
 
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log

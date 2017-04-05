@@ -11,10 +11,8 @@
 
 mfs_interface::mfs_interface()
 {
-  for (int cpu = 0; cpu < NCPU; cpu++) {
+  for (int cpu = 0; cpu < NCPU; cpu++)
     fs_journal[cpu] = new journal();
-    fs_inode_reclaim[cpu] = new inode_reclaim(NINODES_PRIME);
-  }
 
   inum_to_mnum = new chainhash<u64, u64>(NINODES_PRIME);
   mnum_to_inum = new chainhash<u64, u64>(NINODES_PRIME);
@@ -22,7 +20,6 @@ mfs_interface::mfs_interface()
   mnum_to_name = new chainhash<u64, strbuf<DIRSIZ>>(NINODES_PRIME); // Debug
   metadata_log_htab = new chainhash<u64, mfs_logical_log*>(NINODES_PRIME);
   blocknum_to_queue = new chainhash<u32, tx_queue_info>(NINODEBITMAP_BLKS_PRIME);
-  deadinum_to_cpu = new chainhash<u32, int>(NINODES_PRIME);
 }
 
 bool
@@ -242,16 +239,6 @@ mfs_interface::create_file(u64 mnum, u8 type, transaction *tr)
   // Buffer-cache updates start here.
   ilock(ip, WRITELOCK);
   iupdate(ip, tr);
-
-  // This file is going to be unreachable on the disk at least until its link in
-  // the parent is flushed by fsyncing the parent directory. So add it to the
-  // inode-reclaim list. Note that if the parent is fsynced first, it will flush
-  // the 'create' operation of the newly created file/sub-directory as a
-  // dependency; so we will always get to execute first and hence there is no
-  // problem with respect to ordering the marking and revival of the inode from
-  // the inode-reclaim list.
-  mark_unreachable_inode(ip->inum, tr);
-
   iunlock(ip);
 }
 
@@ -293,19 +280,6 @@ mfs_interface::create_dir(u64 mnum, u64 parent_mnum, u8 type, transaction *tr)
     iupdate(parent_ip, tr);
     iunlock(parent_ip);
   }
-
-  // This sub-directory is going to be unreachable on the disk at least until
-  // its link in the parent is flushed by fsyncing the parent directory. So add
-  // it to the inode-reclaim list. Note that if the parent is fsynced first, it
-  // will flush the 'create' operation of the newly created file/sub-directory
-  // as a dependency; so we will always get to execute first and hence there is
-  // no problem with respect to ordering the marking and revival of the inode
-  // from the inode-reclaim list.
-  mark_unreachable_inode(subdir_ip->inum, tr);
-
-  // Mark the parent too, if it was also newly created.
-  if (parent_ip)
-    mark_unreachable_inode(parent_ip->inum, tr);
 
   iunlock(subdir_ip);
 }
@@ -357,17 +331,6 @@ mfs_interface::add_dir_entry(u64 mdir_mnum, char *name, u64 dirent_mnum,
   ilock(mdir_ip, WRITELOCK);
   ilock(dirent_ip, WRITELOCK);
   dirlink(mdir_ip, name, dirent_inum, (type == mnode::types::dir)?true:false, tr);
-
-  // Revive the inode from the inode-reclaim list, since we are flushing the
-  // link pointing to it in its parent directory. (The parent itself might be
-  // unreachable, in which case the parent will be in the inode-reclaim list
-  // and the crash-recovery code will reclaim all its files and sub-directories
-  // recursively upon reboot).
-
-  // The link and unlink are atomic for renames; and put together, they don't
-  // alter the reachability of an inode.
-  if (!rename_link)
-    revive_unreachable_inode(dirent_inum, tr);
   iunlock(dirent_ip);
   iunlock(mdir_ip);
 }
@@ -413,16 +376,6 @@ mfs_interface::remove_dir_entry(u64 mdir_mnum, char* name, transaction *tr,
   if (rename_unlink)
     return;
 
-  // The global link-count of this inode might not be zero (perhaps there are
-  // pending links to be flushed from other directories). But if flushing this
-  // unlink drops the inode's link count to zero on the disk (even if
-  // temporarily), and we happen to crash right after that, then the remaining
-  // unflushed links won't matter; and the inode will have to be reclaimed on
-  // reboot as it will be unreachable. So tread carefully here and mark it as
-  // unreachable and fix it up later if/when a link is flushed.
-  if (!target->nlink())
-    mark_unreachable_inode(target->inum, tr);
-
   u64 mnum;
   assert(inum_to_mnum->lookup(target->inum, &mnum));
   dec_mfslog_linkcount(mnum);
@@ -461,9 +414,6 @@ mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
     // mnode_dying == true indicates that the mnode has reached onzero().
     // So it is safe to delete its inode from the disk.
     __delete_mnum_inode(mnum, tr);
-    // We already deleted the inode, so it doesn't need to be on the
-    // inode-reclaim list anymore.
-    revive_unreachable_inode(inum, tr);
     return;
   }
 
@@ -473,15 +423,11 @@ mfs_interface::delete_mnum_inode_safe(u64 mnum, transaction *tr,
     // this mnode, so it is not safe to delete its on-disk inode just yet.
     // So mark it for deletion and postpone it until reboot.
     m->mark_inode_for_deletion();
-    mark_unreachable_inode(inum, tr);
   } else {
     // The mnode is gone (which also implies that all its open file
     // descriptors have been closed as well). So it is safe to delete its
     // inode from the disk.
     __delete_mnum_inode(mnum, tr);
-    // We already deleted the inode, so it doesn't need to be on the
-    // inode-reclaim list anymore.
-    revive_unreachable_inode(inum, tr);
   }
 }
 
@@ -2676,133 +2622,51 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
   return s.get_used();
 }
 
-// Locking considerations for mark/revive_unreachable_inode():
-// ----------------------------------------------------------
-// Even though in principle, different transactions can concurrently invoke
-// mark_unreachable_inode() and/or revive_unreachable_inode() to update the
-// on-disk inode-reclaim file, we don't actually need to perform two-phase
-// locking to preserve the order of updates all the way until those transactions
-// commit and apply to disk. That's because, we already do two-phase locking for
-// inode-blocks, and the set of inodes that a transaction might mark for
-// deletion or revival is a subset of the inodes that we do two-phase locking
-// on. So the same two-phase locking will also provide the necessary
-// synchronization between transactions that update the inode-reclaim file and
-// will also preserve their ordering during commit and apply on the disk.
-
-// The caller must have already acquired the appropriate inode-block locks
-// by invoking acquire_inodebitmap_locks().
 void
-mfs_interface::mark_unreachable_inode(u32 inum, transaction *tr)
+mfs_interface::reclaim_unreachable_inodes()
 {
-  int cpu = myid();
-
-  if (!deadinum_to_cpu->insert(inum, cpu))
-    return; // We must have added it earlier.
-
-  inode_reclaim* fs_irp = fs_inode_reclaim[cpu];
-  sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
-
-  assert(fs_irp->next_offset + sizeof(inum) <= INODE_RECLAIM_SIZE);
-  assert(fs_irp->insert(inum, fs_irp->next_offset));
-
-  ilock(sv6_irp, WRITELOCK);
-  if (writei(sv6_irp, (char *)&inum, fs_irp->next_offset, sizeof(inum), tr)
-             != sizeof(inum))
-    panic("mark_unreachable_inode: Call to writei() failed!\n");
-
-  fs_irp->next_offset += sizeof(inum);
-  iunlock(sv6_irp);
-}
-
-// The caller must have already acquired the appropriate inode-block locks
-// by invoking acquire_inodebitmap_locks().
-void
-mfs_interface::revive_unreachable_inode(u32 inum, transaction *tr)
-{
-  int cpu;
-
-  if (!deadinum_to_cpu->lookup(inum, &cpu))
-    return; // TODO: Determine whether this is fatal depending on the usage.
-
-  if (!deadinum_to_cpu->remove(inum))
-    return; // Someone else beat us to it.
-
-  // Since we were successful in removing the inode from the hash-table,
-  // we are now responsible to remove it from the appropriate on-disk
-  // inode-reclaim file.
-
-  inode_reclaim* fs_irp = fs_inode_reclaim[cpu];
-  sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
-
-  u32 inum_offset;
-  assert(fs_irp->lookup(inum, &inum_offset));
-
-  ilock(sv6_irp, WRITELOCK);
-  assert(fs_irp->remove(inum));
-  u32 zero_inum = 0;
-  if (writei(sv6_irp, (char *)&zero_inum, inum_offset, sizeof(zero_inum), tr)
-             != sizeof(zero_inum))
-    panic("revive_unreachable_inode: Call to writei() failed!\n");
-
-  // Opportunistically shrink the inode-reclaim file, if we happened to remove
-  // the last entry.
-  if (inum_offset + sizeof(zero_inum) == fs_irp->next_offset)
-    fs_irp->next_offset -= sizeof(zero_inum);
-
-  iunlock(sv6_irp);
-}
-
-void
-mfs_interface::reclaim_unreachable_inodes(int cpu)
-{
-  char path[32];
-  bool do_flush = false;
-  snprintf(path, sizeof(path), "/inodereclaim%d", cpu);
-  sv6_inode_reclaim[cpu] = namei(sref<inode>(), path);
-  assert(sv6_inode_reclaim[cpu]);
-
 #if FLASH_FS_AT_BOOT
-  // We don't have to look at the inode-reclaim files since we just flashed a
-  // new filesystem to the disk/memory. However, make sure to initialize the
-  // inode pointers for the inode-reclaim files before returning.
+  // If we just flashed a new filesystem to the disk/memory, there can't be any
+  // unreachable inodes to be reclaimed; so don't bother going through the
+  // inode list.
   return;
 #endif
 
-  sref<inode> sv6_irp = sv6_inode_reclaim[cpu];
+  int cpu = myid();
+  bool do_flush = false;
 
-  u32 dead_inum = 0, zero_inum = 0;
-  ilock(sv6_irp, WRITELOCK);
+  superblock sb;
+  get_superblock(&sb);
 
-  for (int offset = 0; offset < sv6_irp->size; offset += sizeof(dead_inum)) {
-    if (readi(sv6_irp, (char *)&dead_inum, offset, sizeof(dead_inum)
-              != sizeof(dead_inum)))
-      panic("reclaim_unreachable_inodes: Call to readi() failed!\n");
+  for (u32 inum = 0; inum < sb.ninodes; inum += IPB) {
+    sref<buf> bp = buf::get(1, IBLOCK(inum));
+    auto copy = bp->read();
 
-    if (dead_inum == 0)
-      continue;  // Invalid inode number; it just indicates an empty slot.
+    int ninums = std::min((u32)IPB, sb.ninodes - inum);
 
-    transaction *tr = new transaction();
+    for (int i = 0; i < ninums; i++) {
+      const dinode *dip = (const struct dinode*)copy->data + (inum + i)%IPB;
 
-    sref<inode> dead_ip = iget(1, dead_inum);
+      if (dip->nlink != 0)
+        continue;
 
-    ilock(dead_ip, WRITELOCK);
-    itrunc(dead_ip, 0, tr);
-    iunlock(dead_ip);
+      u32 dead_inum = inum + i;
+      sref<inode> dead_ip = iget(1, dead_inum);
 
-    // TODO: This works fine when deleting files or empty directories, but we
-    // will have to do a recursive unlink/delete when dealing with unreachable
-    // non-empty directories.
-    free_inode(dead_ip, tr);
+      transaction *tr = new transaction();
+      ilock(dead_ip, WRITELOCK);
+      itrunc(dead_ip, 0, tr);
+      iunlock(dead_ip);
 
-    if (writei(sv6_irp, (char *)&zero_inum, offset, sizeof(zero_inum), tr)
-               != sizeof(zero_inum))
-      panic("reclaim_unreachable_inodes: Call to writei() failed!\n");
+      // TODO: This works fine when deleting files or empty directories, but we
+      // will have to do a recursive unlink/delete when dealing with unreachable
+      // non-empty directories.
+      free_inode(dead_ip, tr);
 
-    add_transaction_to_queue(tr, cpu);
-    do_flush = true;
+      add_transaction_to_queue(tr, cpu);
+      do_flush = true;
+    }
   }
-
-  iunlock(sv6_irp);
 
   if (do_flush)
     flush_transaction_queue(cpu, true);
@@ -2938,8 +2802,7 @@ initfs()
   // fsync; in that case, its inode cannot be deleted from the disk at the
   // time of fsync, but must be postponed until reboot. We reclaim such
   // dead/unreachable inodes here during reboot.
-  for (int cpu = 0; cpu < NCPU; cpu++)
-    rootfs_interface->reclaim_unreachable_inodes(cpu);
+  rootfs_interface->reclaim_unreachable_inodes();
 
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free

@@ -121,12 +121,6 @@ struct dinode {
 #define NINODEBITMAP_BLKS_PRIME	30011
 #endif
 
-// The on-disk inodereclaim file must be big enough to hold all the inode
-// numbers in the filesystem. [ This macro is not actually used to size the
-// file (that is done out-of-band), but it serves as a note about what
-// factors determine the size of that file ].
-#define INODE_RECLAIM_SIZE (NINODES * sizeof(u32))
-
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 
