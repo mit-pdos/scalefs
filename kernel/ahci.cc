@@ -25,6 +25,10 @@ static struct {
   { "HGST HTS721010A9E630                   ", "      JS10106200NDY" },
   { "HGST HTS721010A9E630                   ", "      JS10106200N5X" },
   { "HGST HTS721010A9E630                   ", "      JS10106200NGG" },
+  { "Samsung SSD 850 PRO 256GB              ", "S39KNX0HC11959N    " },
+  { "Samsung SSD 850 PRO 256GB              ", "S39KNX0HC11970B    " },
+  { "Samsung SSD 850 PRO 256GB              ", "S39KNX0HC12319R    " },
+  { "Samsung SSD 850 PRO 256GB              ", "S39KNX0HC12320V    " },
 };
 
 class ahci_hba;
