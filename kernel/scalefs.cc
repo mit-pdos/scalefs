@@ -2549,13 +2549,13 @@ mfs_interface::free_block(u32 bno)
     auto list_lock = freeblock_bitmap.freelists[cpu].list_lock.guard();
     assert(!bit->is_free);
     bit->is_free = true;
-    freeblock_bitmap.freelists[cpu].bit_freelist.push_front(bit);
+    freeblock_bitmap.freelists[cpu].bit_freelist.push_back(bit);
   } else {
     // This block belongs to the global reserve pool.
     auto list_lock = freeblock_bitmap.reserve_freelist.list_lock.guard();
     assert(!bit->is_free);
     bit->is_free = true;
-    freeblock_bitmap.reserve_freelist.bit_freelist.push_front(bit);
+    freeblock_bitmap.reserve_freelist.bit_freelist.push_back(bit);
   }
 }
 
