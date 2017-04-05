@@ -310,6 +310,7 @@ refcache::cache::reaper()
 uint64_t
 refcache::referenced::get_consistent()
 {
+retry:
   for (;;) {
     uint64_t count = 0;
     seqcount<uint32_t>::reader r[NCPU+1];
@@ -325,7 +326,7 @@ refcache::referenced::get_consistent()
 
     for (int i = 0; i < ncpu+1; i++)
       if (r[i].need_retry())
-        continue;
+        goto retry;
     return count;
   }
 }
