@@ -10,6 +10,7 @@ OBJS = \
 	cmdline.o \
 	condvar.o \
 	console.o \
+	crc16.o \
 	kcpprt.o \
 	e1000.o \
 	ahci.o \
