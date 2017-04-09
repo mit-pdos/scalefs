@@ -394,8 +394,19 @@ class transaction {
     void write_to_disk_and_flush()
     {
       write_to_disk();
-      for (auto d : disks_written)
-        disk_flush(d);
+
+      sref<disk_completion> dc_vec[NDISK];
+
+      for (auto d : disks_written) {
+        dc_vec[d] = make_sref<disk_completion>();
+        disk_flush(d, dc_vec[d]);
+      }
+
+      for (auto d : disks_written) {
+        dc_vec[d]->wait();
+        dc_vec[d].reset();
+      }
+
       disks_written.reset();
     }
 

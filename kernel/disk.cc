@@ -190,9 +190,12 @@ disk_write(u32 dev, const char* buf, u64 nbytes, u64 offset,
 }
 
 void
-disk_flush(u32 dev)
+disk_flush(u32 dev, sref<disk_completion> dc)
 {
   assert(dev < disks.size());
-  disks[dev]->flush();
+  if (dc) // Asynchronous
+    disks[dev]->aflush(dc);
+  else
+    disks[dev]->flush();
 }
 

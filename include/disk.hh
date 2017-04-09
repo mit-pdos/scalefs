@@ -117,7 +117,7 @@ void disk_write(u32 dev, const char* buf, u64 nbytes, u64 offset,
 void disk_writev(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
                  sref<disk_completion> dc = sref<disk_completion>());
 
-void disk_flush(u32 dev);
+void disk_flush(u32 dev, sref<disk_completion> dc = sref<disk_completion>());
 
 
 // A simple block layer for ScaleFS/sv6, that helps accumulate I/O to contiguous
