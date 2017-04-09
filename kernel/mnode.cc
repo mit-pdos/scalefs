@@ -124,11 +124,9 @@ mnode::onzero()
     rootfs_interface->free_metadata_log(mnum_);
     rootfs_interface->free_mnode_lock(mnum_);
 
-    // Delete the on-disk inode corresponding to this mnode.
-    transaction *tr = new transaction();
-    auto guard = rootfs_interface->fs_journal[cpu]->commitq_insert_lock.guard();
-    rootfs_interface->delete_mnum_inode_safe(mnum_, tr, true, true);
-    rootfs_interface->add_transaction_to_queue(tr, cpu);
+    // Mark this inode for lazy deletion.
+    auto l = rootfs_interface->delete_inums[cpu].lock.guard();
+    rootfs_interface->delete_inums[cpu].mnum_list.push_back(mnum_);
   }
 
   if (type() == types::file)

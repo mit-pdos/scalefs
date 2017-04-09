@@ -588,6 +588,22 @@ mfs_interface::process_metadata_log_and_flush(int cpu)
 
   sync_dirty_files_and_dirs(cpu, mnum_list);
 
+  for (int i = 0; i < NCPU; i++)  {
+    auto commit_insert_guard = fs_journal[i]->commitq_insert_lock.guard();
+
+    // Delete all the inodes marked for lazy deletion by mnode::onzero()
+    std::vector<u64> del_mnum_list;
+    {
+      auto l = delete_inums[i].lock.guard();
+      del_mnum_list = std::move(delete_inums[i].mnum_list);
+    }
+    for (auto &del_mnum : del_mnum_list) {
+      transaction *tr = new transaction();
+      delete_mnum_inode_safe(del_mnum, tr, true, true);
+      add_transaction_to_queue(tr, i);
+    }
+  }
+
   // Commit and apply pending transactions from ALL the per-core queues, not
   // just the queue we added transactions to above.
   for (int i = 0; i < NCPU; i++)
@@ -1287,6 +1303,20 @@ mfs_interface::process_metadata_log(u64 max_tsc, u64 mnode_mnum, int cpu)
   int ret;
 
   auto commit_insert_guard = fs_journal[cpu]->commitq_insert_lock.guard();
+
+  // Delete all the inodes marked for lazy deletion by mnode::onzero()
+  {
+    std::vector<u64> del_mnum_list;
+    {
+      auto l = delete_inums[cpu].lock.guard();
+      del_mnum_list = std::move(delete_inums[cpu].mnum_list);
+    }
+    for (auto &del_mnum : del_mnum_list) {
+      transaction *tr = new transaction();
+      delete_mnum_inode_safe(del_mnum, tr, true, true);
+      add_transaction_to_queue(tr, cpu);
+    }
+  }
 
   pending_stack.push_back({mnode_mnum, max_tsc, -1});
 

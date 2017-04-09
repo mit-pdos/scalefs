@@ -868,6 +868,15 @@ class mfs_interface
     // transaction-queue that transaction went into and at what timestamp).
     chainhash<u32, tx_queue_info> *blocknum_to_queue;
 
+    // List of mnums whose mnodes have hit mnode::onzero() and hence their
+    // corresponding on-disk inodes can be deleted.
+    struct delete_inums {
+      std::vector<u64> mnum_list;
+      spinlock lock;
+    };
+    percpu<delete_inums> delete_inums;
+
+
   private:
     chainhash<u64, mfs_logical_log*> *metadata_log_htab; // The logical log
 
