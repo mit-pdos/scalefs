@@ -588,19 +588,30 @@ mfs_interface::process_metadata_log_and_flush(int cpu)
 
   sync_dirty_files_and_dirs(cpu, mnum_list);
 
-  for (int i = 0; i < NCPU; i++)  {
-    auto commit_insert_guard = fs_journal[i]->commitq_insert_lock.guard();
+  {
+    // Commit all these transactions via our CPU's per-core journal.
+    auto commit_insert_guard = fs_journal[cpu]->commitq_insert_lock.guard();
 
-    // Delete all the inodes marked for lazy deletion by mnode::onzero()
-    std::vector<u64> del_mnum_list;
-    {
-      auto l = delete_inums[i].lock.guard();
-      del_mnum_list = std::move(delete_inums[i].mnum_list);
-    }
-    for (auto &del_mnum : del_mnum_list) {
-      transaction *tr = new transaction();
-      delete_mnum_inode_safe(del_mnum, tr, true, true);
-      add_transaction_to_queue(tr, i);
+    for (int i = 0; i < NCPU; i++)  {
+      // Delete all the inodes marked for lazy deletion by mnode::onzero()
+      std::vector<u64> del_mnum_list;
+      {
+        auto l = delete_inums[i].lock.guard();
+        del_mnum_list = std::move(delete_inums[i].mnum_list);
+      }
+
+      for (auto &del_mnum : del_mnum_list) {
+        transaction *tr = new transaction();
+        delete_mnum_inode_safe(del_mnum, tr, true, true);
+
+	// Note: Queueing dependent transactions on different journals will
+	// cause a deadlock here (because we try to flush each journal
+	// completely before moving onto the next one). We sidestep this
+	// deadlock by committing all these transactions via the same journal
+	// (our per-core journal); that's why the second argument has to be
+	// 'cpu', as opposed to 'i'.
+        add_transaction_to_queue(tr, cpu);
+      }
     }
   }
 
