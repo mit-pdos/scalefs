@@ -74,6 +74,8 @@ struct coresocket : public balance_pool<coresocket> {
 struct localsock {
   bool ordered_;
   atomic<coresocket*> pipes[NCPU];
+  spinlock rw_cv_lock[NCPU];
+  condvar rw_cv[NCPU];
   balancer<localsock, coresocket> b;
   atomic<int> nreader;
 
@@ -164,23 +166,30 @@ struct localsock {
         balance();
 #endif
 
+      int cpu = myid();
+      scoped_acquire a(&rw_cv_lock[cpu]);
+
       scoped_acquire l(&cp->lock);
       if (cp->len < QUEUELEN) {
         // cprintf("w %d(%d): coresocket %p\n", myproc()->pid, myproc()->cpuid, cp);
         cp->messages.push_back(m);
         cp->len++;
+        // Wake up the sleeping reader
+        rw_cv[cpu].wake_all();
         return 0;
       }
     }
   }
 
   msghdr* read() {
-    bool toyield = true;
+    //bool toyield = true;
     for (;;) {
       if (myproc()->killed)
         return NULL;
 
       coresocket* cp = mycoresocket();
+
+#if 0 // We would like to avoid spinning...
 
       if (cp->len <= 0 && toyield) {
         // in case another proc is running on hopefully this processor,
@@ -196,6 +205,15 @@ struct localsock {
       else
         kstats::inc(&kstats::socket_local_read);
 
+#else // So sleep on a condition variable instead
+
+      int cpu = myid();
+      scoped_acquire a(&rw_cv_lock[cpu]);
+      while (cp->len <= 0)
+        rw_cv[cpu].sleep(&rw_cv_lock[cpu]);
+
+#endif
+
       scoped_acquire l(&cp->lock);
       if (cp->len > 0) {
         // cprintf("r %d(%d): coresocket %p\n", myproc()->pid, myproc()->cpuid, cp);
@@ -204,7 +222,7 @@ struct localsock {
         cp->len--;
         return &m;
       }
-      toyield = true;   // iterate between yielding and balancing
+      // toyield = true;   // iterate between yielding and balancing
     }
   }
 };
