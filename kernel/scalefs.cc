@@ -7,7 +7,6 @@
 #include "scalefs.hh"
 #include "kstream.hh"
 #include "major.h"
-#include "crc16.hh"
 
 
 mfs_interface::mfs_interface()
@@ -1777,7 +1776,7 @@ mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
 
   // Commit the transaction to the on-disk journal with the given timestamp.
   ilock(sv6_journal[cpu], WRITELOCK);
-  write_journal_commit_block(trans->blocks, timestamp, cpu);
+  write_journal_commit_block(timestamp, cpu);
   iunlock(sv6_journal[cpu]);
 
   post_process_transaction(trans);
@@ -2148,25 +2147,15 @@ mfs_interface::write_journal_transaction_blocks(
     write_journal(b->blockdata, BSIZE, trans, cpu);
 
   // Finally, write the transaction's disk blocks to stable storage (disk).
-  trans->write_to_disk();
+  trans->write_to_disk_and_flush();
 }
 
 // Caller must hold ilock for write on sv6_journal.
 void
-mfs_interface::write_journal_commit_block(
-    const std::vector<std::unique_ptr<transaction_diskblock> >& datablocks,
-    u64 timestamp, int cpu)
+mfs_interface::write_journal_commit_block(u64 timestamp, int cpu)
 {
   // The transaction ends with a commit block containing the same timestamp.
   journal_header_block hdr_commit(timestamp, jrnl_commit);
-
-  // Calculate and include the checksum in the commit block.
-  u16 crc = 0;
-  for (auto &d : datablocks)
-    crc = crc16(crc, (u8*)d->blockdata, BSIZE);
-
-  hdr_commit.crc = crc;
-
   transaction *trans = new transaction();
 
   write_journal((char *)&hdr_commit, sizeof(hdr_commit), trans, cpu);
@@ -2181,8 +2170,6 @@ transaction*
 mfs_interface::process_journal(int cpu)
 {
   // TODO: Implement crash-recovery for the new journal layout.
-  // Also verify the checksum included in the commit block to determine if a
-  // transaction was committed successfully.
 
 #if 0
   u32 offset = 0;

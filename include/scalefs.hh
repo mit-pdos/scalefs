@@ -618,12 +618,9 @@ class mfs_interface
       u64 timestamp; // The transaction timestamp, serves as the transaction ID.
       u8 header_type; // The type of the journal header (start or commit)
 
-      // Some of these fields are used only if this is a start block.
+      // The following fields are used only if this is a start block.
       u8 num_addr_blocks; // No. of address-blocks that follow the start block.
-      union {
-        u8 padding[2];
-        u16 crc; // 16-bit CRC, used when this is a commit block.
-      };
+      u8 padding[2];
       u32 blocknums[1021]; // Block numbers of the data blocks in the transaction.
 
     } journal_header;
@@ -782,9 +779,7 @@ class mfs_interface
     void write_journal_transaction_blocks(const
     std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
     transaction *tr, int cpu);
-    void write_journal_commit_block(
-         const std::vector<std::unique_ptr<transaction_diskblock> >& vec,
-         u64 timestamp, int cpu);
+    void write_journal_commit_block(u64 timestamp, int cpu);
     transaction* process_journal(int cpu);
     void reset_journal(int cpu, bool use_async_io = true);
 
