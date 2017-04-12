@@ -398,7 +398,11 @@ ahci_port::ahci_port(ahci_hba *h, int p, volatile ahci_reg_port* reg)
   }
 
   /* Enable interrupts */
+#if 0
   preg->ie = AHCI_PORT_INTR_DEFAULT | AHCI_PORT_INTR_ERROR;
+#else
+  preg->ie = AHCI_PORT_INTR_DEFAULT;
+#endif
 
   disk_register(this);
 }
@@ -593,8 +597,10 @@ ahci_port::handle_port_irq()
 {
   scoped_acquire a(&cmdslot_alloc_lock);
 
+#if 0
   if (preg->is & AHCI_PORT_INTR_ERROR)
     handle_error(); // Does not return!
+#endif
 
   preg->is = ~0;
 
