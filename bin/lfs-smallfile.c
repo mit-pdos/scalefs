@@ -411,8 +411,8 @@ void delete_dirs(const char *topdir, unsigned long num_dirs)
 					close(fd);
 				}
 
-				if ((ret = unlink(dir)) != 0)
-					die("unlink %s failed %d\n", dir, ret);
+				if ((ret = rmdir(dir)) != 0)
+					die("rmdir %s failed %d\n", dir, ret);
 			}
 
 			fd = open(sub_dir, O_RDONLY|O_DIRECTORY);
@@ -422,8 +422,8 @@ void delete_dirs(const char *topdir, unsigned long num_dirs)
 				close(fd);
 			}
 
-			if ((ret = unlink(sub_dir)) != 0)
-				die("unlink %s failed %d\n", sub_dir, ret);
+			if ((ret = rmdir(sub_dir)) != 0)
+				die("rmdir %s failed %d\n", sub_dir, ret);
 
 			fd = open(topdir, O_RDONLY|O_DIRECTORY);
 			if (fd >= 0) {
@@ -444,8 +444,8 @@ void delete_dirs(const char *topdir, unsigned long num_dirs)
 				close(fd);
 			}
 
-			if ((ret = unlink(dir)) != 0)
-				die("unlink %s failed %d\n", dir, ret);
+			if ((ret = rmdir(dir)) != 0)
+				die("rmdir %s failed %d\n", dir, ret);
 
 			fd = open(topdir, O_RDONLY|O_DIRECTORY);
 			if (fd >= 0) {

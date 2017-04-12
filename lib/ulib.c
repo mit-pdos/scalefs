@@ -148,6 +148,12 @@ mkdir(const char *path, mode_t mode)
 }
 
 int
+rmdir(const char *path)
+{
+  return unlink(path);
+}
+
+int
 lstat(const char *path, struct stat *buf)
 {
   // xv6 has no symlinks
