@@ -1,0 +1,11 @@
+#!/sh
+
+echo
+
+NCPU=80
+
+mkdir temp
+for ncore in {1..$NCPU}; do
+    echo "running on $ncore cpus"
+    lfs-largefile -c $ncore temp > out_cpu$ncore.txt
+done
