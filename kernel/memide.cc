@@ -23,18 +23,27 @@ extern u64 _fs_imgz_size;
 
 static u64 nblocks = NMEGS * BLKS_PER_MEG;
 static const u64 _fs_img_size = nblocks * BSIZE;
-static unsigned char *_fs_img_start;
+//static unsigned char *_fs_img_start;
 
 class memdisk : public disk
 {
 public:
   NEW_DELETE_OPS(memdisk);
 
-  memdisk(u8 *data, u64 nbytes) : data_(data), nbytes_(nbytes)
+  memdisk(u64 nbytes) : data_ptr_(nullptr), nbytes_(nbytes)
   {
     dk_nbytes = nbytes;
     snprintf(dk_busloc, sizeof(dk_busloc), "memide");
     snprintf(dk_model, sizeof(dk_model), "memide");
+
+    u64 dptr_size = sizeof(char *) * (_fs_img_size/BSIZE);
+    data_ptr_ = (u8**)kmalloc(dptr_size, "memide");
+    assert(data_ptr_);
+
+    for (int i = 0; i < _fs_img_size/BSIZE; i++) {
+      data_ptr_[i] = (u8*)kmalloc(BSIZE, "memide_block");
+      assert(data_ptr_[i]);
+    }
   }
 
   void readv(kiovec *iov, int iov_cnt, u64 off) override
@@ -48,7 +57,8 @@ public:
       panic("memdisk::readv: sector out of range: offset %ld, count %ld\n",
             off, count);
 
-    p = data_ + off;
+    assert(off % BSIZE == 0);
+    p = data_ptr_[off / BSIZE];
     memmove(iov[0].iov_base, p, count);
   }
 
@@ -65,11 +75,12 @@ public:
       panic("memdisk::writev: sector out of range: offset %ld, count %ld\n",
              off, iov_cnt * count);
 
-    p = data_ + off;
+    u64 blknum = off / BSIZE;
     for (int i = 0; i < iov_cnt; i++) {
       assert(iov[i].iov_len == BSIZE);
+      p = data_ptr_[blknum];
       memmove(p, iov[i].iov_base, iov[i].iov_len);
-      p += BSIZE;
+      blknum++;
     }
   }
 
@@ -77,10 +88,12 @@ public:
   {
   }
 
-private:
-  u8* const data_;
+public:
+  u8** data_ptr_;
   const u64 nbytes_;
 };
+
+memdisk* md;
 
 void
 write_output(const char *buf, u64 offset, u64 size)
@@ -88,19 +101,19 @@ write_output(const char *buf, u64 offset, u64 size)
   assert(size == BSIZE);
   if ((offset/BSIZE) % 100000 == 0)
     cprintf("Writing block %8lu / %lu\r", offset/BSIZE, _fs_img_size/BSIZE);
-  memcpy(_fs_img_start + offset, buf, BSIZE);
+  memcpy(md->data_ptr_[offset/BSIZE], buf, BSIZE);
 }
 
 void
 initmemdisk(void)
 {
-  _fs_img_start = (unsigned char *)early_kalloc(_fs_img_size, PGSIZE);
+  //_fs_img_start = (unsigned char *)early_kalloc(_fs_img_size, PGSIZE);
 }
 
 void
 initdisk(void)
 {
-  memdisk* md = new memdisk(_fs_img_start, _fs_img_size);
+  md = new memdisk(_fs_img_size);
   disk_register(md);
 
   struct timeval before, after;
