@@ -23,7 +23,6 @@ extern u64 _fs_imgz_size;
 
 static u64 nblocks = NMEGS * BLKS_PER_MEG;
 static const u64 _fs_img_size = nblocks * BSIZE;
-//static unsigned char *_fs_img_start;
 
 class memdisk : public disk
 {
@@ -106,15 +105,18 @@ init_fs_state(const char *buf, u64 offset, u64 size)
   assert(offset % BSIZE == 0 && size == BSIZE);
   current_blknum = offset/BSIZE;
 
+  if (current_blknum % 100000 == 0)
+    cprintf("Writing block %8d / %lu\r", current_blknum, _fs_img_size/BSIZE);
+
   if (!current_blknum) {
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
-    return;
+    goto out;
   }
 
   if (read_upto_blknum && current_blknum > read_upto_blknum) {
     // We should have allocated memory for this block already.
     assert(md->data_ptr_[current_blknum]);
-    return;
+    goto out;
   }
 
   if (current_blknum == 1) {
@@ -122,7 +124,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
     memmove(&sb, buf, sizeof(sb));
     read_upto_blknum = BBLOCK(sb.size - 1, sb.ninodes);
-    return;
+    goto out;
   }
 
   if (current_blknum >= IBLOCK(1) && current_blknum <= IBLOCK(sb.ninodes-1)) {
@@ -140,7 +142,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
           inodeblocks_per_cpu = 1;
       } else {
         md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
-        return;
+        goto out;
       }
     }
 
@@ -151,7 +153,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
       cpuid = 0;
 
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
-    return;
+    goto out;
   }
 
 
@@ -159,7 +161,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
       current_blknum == IBLOCK(sb.ninodes)) {
     // Wasted (unused) block between the inode blocks and the bitmap blocks.
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
-    return;
+    goto out;
   }
 
   // The remaining blocks we look at are bitmap blocks.
@@ -185,24 +187,29 @@ init_fs_state(const char *buf, u64 offset, u64 size)
           md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", 0);
       }
 
-      return;
+      goto out;
     }
   }
 
   assert(first_free_bitmap_block && current_blknum >= first_free_bitmap_block);
 
-  int cpuid = (current_blknum - first_free_bitmap_block) / bitmapblocks_per_cpu;
-  if (cpuid >= NCPU)
-    cpuid = 0;
+  {
+    int cpuid = (current_blknum - first_free_bitmap_block) / bitmapblocks_per_cpu;
+    if (cpuid >= NCPU)
+      cpuid = 0;
 
-  if (!md->data_ptr_[current_blknum])
-    md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+    if (!md->data_ptr_[current_blknum])
+      md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
 
-  u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
-  for (u32 i = start_bit; i < start_bit + BPB; i++) {
-    if (!md->data_ptr_[i])
-      md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+    u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
+    for (u32 i = start_bit; i < start_bit + BPB; i++) {
+      if (!md->data_ptr_[i])
+        md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+    }
   }
+
+out:
+  memmove(md->data_ptr_[current_blknum], buf, BSIZE);
 }
 
 // Check that every logical disk block has a corresponding memory page backing it.
@@ -216,18 +223,8 @@ verify_backing_memory(u64 disk_size_bytes)
 }
 
 void
-write_output(const char *buf, u64 offset, u64 size)
-{
-  assert(size == BSIZE);
-  if ((offset/BSIZE) % 100000 == 0)
-    cprintf("Writing block %8lu / %lu\r", offset/BSIZE, _fs_img_size/BSIZE);
-  memcpy(md->data_ptr_[offset/BSIZE], buf, BSIZE);
-}
-
-void
 initmemdisk(void)
 {
-  //_fs_img_start = (unsigned char *)early_kalloc(_fs_img_size, PGSIZE);
 }
 
 void
@@ -240,15 +237,11 @@ initdisk(void)
 
   cprintf("initdisk: Flashing the filesystem image on the memdisk(s)\n");
 
+  gettimeofday(&before, NULL);
   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
                   _fs_img_size, init_fs_state);
 
   verify_backing_memory(_fs_img_size);
-
-  gettimeofday(&before, NULL);
-  zlib_decompress(_fs_imgz_start, _fs_imgz_size,
-                  _fs_img_size, write_output);
-
   gettimeofday(&after, NULL);
 
   cprintf("Writing block %8lu / %lu\n", _fs_img_size/BSIZE, _fs_img_size/BSIZE);
