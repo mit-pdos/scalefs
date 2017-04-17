@@ -11,56 +11,39 @@
 
 #include "libutil.h"
 
-#define NUMFILES	10000
-#define NUMDIRS		100
-#define FILESIZE	1024
+#define FILESIZE	1024*1024*100
+#define IOSIZE		4096
 
 #define NTEST		100000 /* No. of tests of gettimeofday() */
 
 #define MAXCPUS		128
 
-#define SYNC_NONE	0
-#define SYNC_UNLINK	1
-#define SYNC_CREATE_UNLINK 2
-#define FSYNC_CREATE	3
-
-char *sync_options[] = {"SYNC_NONE", "SYNC_UNLINK", "SYNC_CREATE_UNLINK",
-                        "FSYNC_CREATE"};
-
 int num_cpus;
-unsigned long num_files;
-unsigned long num_dirs;
-unsigned long nfiles_per_dir;
 unsigned long timer_overhead;
 
 char *topdir, *buf;
+unsigned long file_size;
 
 pthread_t tid[MAXCPUS];
 pthread_barrier_t bar;
 
-int sync_when, verbose;
+int verbose;
 int per_cpu_dirs, use_fork;
 
-void *run_benchmark(void *arg);
-void create_dirs(const char *topdir, unsigned long num_dirs);
-void delete_dirs(const char *topdir, unsigned long num_dirs);
-unsigned long  create_files(const char *topdir, char *buf, int cpu);
-unsigned long  read_files(const char *topdir, char *buf, int cpu);
-unsigned long  unlink_files(const char *topdir, char *buf, int cpu);
-unsigned long  sync_files(void);
+void *run_createfile_benchmark(void *arg);
+void *run_overwritefile_benchmark(void *arg);
+void create_dirs(const char *topdir);
+void delete_dirs(const char *topdir);
+void create_largefile(const char *topdir, char *buf, int cpu);
+void overwrite_largefile(const char *topdir, char *buf, int cpu);
+void unlink_all_files(const char *topdir);
 
 void usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-n num_files] [-s spread] [-c cpus] [-p] [-f] "
-		"[-y sync_when] <working directory>\n", prog);
-	fprintf(stderr, "where, sync_when can be:\n"
-		"%d - no sync\n"
-		"%d - sync after unlink\n"
-		"%d - sync after create and unlink\n"
-		"%d - fsync during create\n\n",
-		SYNC_NONE, SYNC_UNLINK, SYNC_CREATE_UNLINK, FSYNC_CREATE);
-	fprintf(stderr, "-p creates files under per-cpu sub-directories\n");
+	fprintf(stderr, "Usage: %s [-c cpus] [-p] [-f] [-i size] <working directory>\n", prog);
+	fprintf(stderr, "-p creates the largefiles under per-cpu sub-directories\n");
 	fprintf(stderr, "-f uses fork instead of pthreads\n");
+	fprintf(stderr, "-i creates a file of size MB (default 100)\n");
 	exit(1);
 }
 
@@ -82,22 +65,14 @@ int main(int argc, char **argv)
 	}
 
 	/* Set the defaults */
-	num_files = NUMFILES;
-	num_dirs = NUMDIRS;
+	file_size = FILESIZE;
 	num_cpus = 1;
 	per_cpu_dirs = 0;
 	use_fork = 0;
-	sync_when = SYNC_UNLINK;
 	verbose = 0;
 
-	while ((ch = getopt(argc, argv, "n:s:c:pfy:v")) != -1) {
+	while ((ch = getopt(argc, argv, "c:pfi:")) != -1) {
 		switch (ch) {
-			case 'n':
-				num_files = atoi(optarg);
-				break;
-			case 's':
-				num_dirs = atoi(optarg);
-				break;
 			case 'c': // Run on these many CPUs. (0 to num_cpus-1)
 				num_cpus = atoi(optarg);
 				if (num_cpus > MAXCPUS)
@@ -109,11 +84,8 @@ int main(int argc, char **argv)
 			case 'f':
 				use_fork = 1;
 				break;
-			case 'y': // When to call sync()
-				sync_when = atoi(optarg);
-				break;
-			case 'v':
-				verbose = 1;
+			case 'i':
+				file_size = atoi(optarg) * 1024 * 1024;
 				break;
 			default:
 				usage(argv[0]);
@@ -125,25 +97,19 @@ int main(int argc, char **argv)
 
 	topdir = argv[0];
 
-	if (num_files < num_dirs)
-		num_dirs = 1;
-
-	nfiles_per_dir = num_files/num_dirs;
-
-	buf = (char *)malloc(FILESIZE);
+	buf = (char *)malloc(IOSIZE);
 	if (!buf) {
 		fprintf(stderr, "ERROR: Failed to allocate buffer");
 		exit(1);
 	}
 
-	for (i = 0; i < FILESIZE; i++)
-		buf[i] = 'a';
+	for (i = 0; i < IOSIZE; i++)
+		buf[i] = (char) i;
 
-	/* Create the directories for the files to be spread amongst */
-	create_dirs(topdir, num_dirs);
+	create_dirs(topdir);
 
-	if (sync_when != SYNC_NONE)
-		sync();
+	sleep(2);
+	sync();
 
 	/* Compute the overhead of the gettimeofday() call */
 
@@ -156,24 +122,17 @@ int main(int argc, char **argv)
 			 (after.tv_usec - before.tv_usec);
 	timer_overhead /= NTEST;
 
-	if (!use_fork)
-		pthread_barrier_init(&bar, 0, num_cpus);
-
 	// Print out benchmark parameters.
 	printf("\n\n\n");
 	fflush(stdout);
-	printf("Running LFS-Smallfile test on %s, on %d CPUs\n", topdir, num_cpus);
-	printf("File Size = %d bytes\n", FILESIZE);
-	printf("No. of files = %ld\n", num_files);
-	printf("No. of dirs (spread) = %ld\n", num_dirs);
-	printf("No. of files per dir = %ld\n", nfiles_per_dir);
+	printf("Running LFS-Largefile test on %s, on %d CPUs\n", topdir, num_cpus);
+	printf("File Size = %lu MB\n", file_size/(1024*1024));
 	printf("Directories are: %s\n", per_cpu_dirs ? "per-cpu" : "shared");
-	printf("Sync/Fsync option: %s\n", sync_options[sync_when]);
 	printf("Running %d parallel benchmark instance(s) using %s\n",
                 num_cpus, use_fork ? "fork" : "pthreads");
 	fflush(stdout);
 
-	/* Time the overall benchmark */
+	/* Time the creation of largefile */
 	usec = 0;
 	gettimeofday(&before, NULL);
 
@@ -181,7 +140,7 @@ int main(int argc, char **argv)
 		for (i = 0; i < num_cpus; i++) {
 			forkret = fork();
 			if (forkret == 0) {
-				run_benchmark((void *) i);
+				run_createfile_benchmark((void *) i);
 				return 0; // Each child exits here.
 			}
 		}
@@ -193,8 +152,9 @@ int main(int argc, char **argv)
 		// Fall-through to print out the statistics and
 		// cleanup the benchmark.
 	} else {
+		pthread_barrier_init(&bar, 0, num_cpus);
 		for (i = 0; i < num_cpus; i++)
-			pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
+			pthread_create(&tid[i], NULL, run_createfile_benchmark, (void *) i);
 
 		for (i = 0; i < num_cpus; i++)
 			pthread_join(tid[i], NULL);
@@ -206,25 +166,63 @@ int main(int argc, char **argv)
 	usec -= timer_overhead;
 
 	sec = (float) usec / 1000000.0;
-	throughput = ((float) (num_files * num_cpus) / sec);
-	printf("\nOverall benchmark (%s) : %7.3f sec throughput : %7.3f files/sec\n",
-		(sync_when == FSYNC_CREATE)?"no sleep used":"including sleep",
+	throughput = (((float)file_size / (1024*1024)) * num_cpus) / sec;
+	printf("\nCreate-file benchmark : %7.3f sec throughput : %7.3f MB/sec\n",
 		sec, throughput);
 
-	delete_dirs(topdir, num_dirs);
+	/* Time the overwrite of largefile */
 
-	if (sync_when != SYNC_NONE)
-		sync();
+	for (i = 0; i < IOSIZE; i++)
+		buf[i] = 'b';
+
+	usec = 0;
+	gettimeofday(&before, NULL);
+
+	if (use_fork) {
+		for (i = 0; i < num_cpus; i++) {
+			forkret = fork();
+			if (forkret == 0) {
+				run_overwritefile_benchmark((void *) i);
+				return 0; // Each child exits here.
+			}
+		}
+
+		// Parent
+		for (i = 0; i < num_cpus; i++)
+			waitpid(-1, NULL, 0);
+
+		// Fall-through to print out the statistics and
+		// cleanup the benchmark.
+	} else {
+		pthread_barrier_init(&bar, 0, num_cpus);
+		for (i = 0; i < num_cpus; i++)
+			pthread_create(&tid[i], NULL, run_overwritefile_benchmark, (void *) i);
+
+		for (i = 0; i < num_cpus; i++)
+			pthread_join(tid[i], NULL);
+	}
+
+	gettimeofday(&after, NULL);
+	usec = (after.tv_sec - before.tv_sec) * 1000000 +
+               (after.tv_usec - before.tv_usec);
+	usec -= timer_overhead;
+
+	sec = (float) usec / 1000000.0;
+	throughput = (((float)file_size / (1024*1024)) * num_cpus) / sec;
+	printf("Overwrite-file benchmark : %7.3f sec throughput : %7.3f MB/sec\n",
+		sec, throughput);
+
+	unlink_all_files(topdir);
+	delete_dirs(topdir);
+
+	sleep(2);
+	sync();
 
 	return 0;
 }
 
-void *run_benchmark(void *arg)
+void *run_createfile_benchmark(void *arg)
 {
-	unsigned long usec;
-	float sec, total_sec;
-	float throughput, avg_throughput;
-
 	int cpu = (uintptr_t)arg;
 
 	if (setaffinity(cpu) < 0) {
@@ -235,94 +233,35 @@ void *run_benchmark(void *arg)
 	if (!use_fork)
 		pthread_barrier_wait(&bar);
 
-	/*
-	 * Now we just do the tests in sequence, printing the timing
-	 * statistics as we go.
-	 */
-	total_sec = 0;
-
-	if (verbose) {
-		printf("Test            Time(sec)       Files/sec\n");
-		printf("----            ---------       ---------\n");
-	}
-
-	usec = create_files(topdir, buf, cpu);
-
-	if (verbose) {
-		sec = (float) usec / 1000000.0;
-		throughput = ((float) num_files / sec);
-		printf("create_files\t%7.3f\t\t%7.3f\n", sec, throughput);
-		fflush(stdout);
-		total_sec += sec;
-	}
-
-	if (sync_when == SYNC_CREATE_UNLINK) {
-		sleep(2);
-
-		usec = sync_files();
-
-		if (verbose) {
-			sec = (float) usec / 1000000.0;
-			throughput = ((float) num_files / sec);
-			printf("sync_files_1\t%7.3f\t\t%7.3f\n", sec, throughput);
-			fflush(stdout);
-			total_sec += sec;
-		}
-	}
-
-	usec = read_files(topdir, buf, cpu);
-
-	if (verbose) {
-		sec = (float) usec / 1000000.0;
-		throughput = ((float) num_files / sec);
-		printf("read_files\t%7.3f\t\t%7.3f\n", sec, throughput);
-		fflush(stdout);
-		total_sec += sec;
-	}
-
-	usec = unlink_files(topdir, buf, cpu);
-
-	if (verbose) {
-		sec = (float) usec / 1000000.0;
-		throughput = ((float) num_files / sec);
-		printf("unlink_files\t%7.3f\t\t%7.3f\n", sec, throughput);
-		fflush(stdout);
-		total_sec += sec;
-	}
-
-	if (sync_when == SYNC_UNLINK || sync_when == SYNC_CREATE_UNLINK) {
-		sleep(2);
-
-		usec = sync_files();
-
-		if (verbose) {
-			sec = (float) usec / 1000000.0;
-			throughput = ((float) num_files / sec);
-			printf("sync_files_2\t%7.3f\t\t%7.3f\n", sec, throughput);
-			fflush(stdout);
-			total_sec += sec;
-		}
-	}
-
-	if (verbose) {
-		avg_throughput = ((float) num_files / total_sec);
-		printf("thread %d total \t%7.3f\t\t%7.3f\n", cpu, total_sec, avg_throughput);
-		fflush(stdout);
-	}
-
+	create_largefile(topdir, buf, cpu);
 	return 0;
 }
 
-void create_dirs(const char *topdir, unsigned long num_dirs)
+void *run_overwritefile_benchmark(void *arg)
+{
+	int cpu = (uintptr_t)arg;
+
+	if (setaffinity(cpu) < 0) {
+		printf("setaffinity failed for cpu %d\n", cpu);
+		return 0;
+	}
+
+	if (!use_fork)
+		pthread_barrier_wait(&bar);
+
+	overwrite_largefile(topdir, buf, cpu);
+	return 0;
+}
+
+void create_dirs(const char *topdir)
 {
 	int ret, fd;
-	unsigned long i, j;
 	char dir[128], sub_dir[128];
 
 	if (per_cpu_dirs) {
-		for (j = 0; j < num_cpus; j++) {
-			setaffinity(j);
-			snprintf(sub_dir, 128, "%s/cpu-%ld", topdir, j);
+		for (int i = 0; i < num_cpus; i++) {
+			setaffinity(i);
+			snprintf(sub_dir, 128, "%s/cpu-%d", topdir, i);
 			if ((ret = mkdir(sub_dir, 0777)) != 0)
 				die("mkdir %s failed %d\n", sub_dir, ret);
 
@@ -339,48 +278,24 @@ void create_dirs(const char *topdir, unsigned long num_dirs)
 					die("fsync %s failed %d\n", topdir, ret);
 				close(fd);
 			}
-
-			for (i = 0; i < num_dirs; i++) {
-				snprintf(dir, 128, "%s/cpu-%ld/dir-%ld", topdir, j, i);
-				if ((ret = mkdir(dir, 0777)) != 0)
-					die("mkdir %s failed %d\n", dir, ret);
-
-				fd = open(dir, O_RDONLY|O_DIRECTORY);
-				if (fd >= 0) {
-					if ((ret = fsync(fd)) < 0)
-						die("fsync %s failed %d\n", dir, ret);
-					close(fd);
-				}
-
-			}
-
-			fd = open(sub_dir, O_RDONLY|O_DIRECTORY);
-			if (fd >= 0) {
-				if ((ret = fsync(fd)) < 0)
-					die("fsync %s failed %d\n", sub_dir, ret);
-				close(fd);
-			}
 		}
 	} else {
-		for (i = 0; i < num_dirs; i++) {
-			setaffinity(i % num_cpus);
-			snprintf(dir, 128, "%s/dir-%ld", topdir, i);
-			if ((ret = mkdir(dir, 0777)) != 0)
-				die("mkdir %s failed %d\n", dir, ret);
+		snprintf(dir, 128, "%s/dir", topdir);
+		if ((ret = mkdir(dir, 0777)) != 0)
+			die("mkdir %s failed %d\n", dir, ret);
 
-			fd = open(dir, O_RDONLY|O_DIRECTORY);
-			if (fd >= 0) {
-				if ((ret = fsync(fd)) < 0)
-					die("fsync %s failed %d\n", dir, ret);
-				close(fd);
-			}
+		fd = open(dir, O_RDONLY|O_DIRECTORY);
+		if (fd >= 0) {
+			if ((ret = fsync(fd)) < 0)
+				die("fsync %s failed %d\n", dir, ret);
+			close(fd);
+		}
 
-			fd = open(topdir, O_RDONLY|O_DIRECTORY);
-			if (fd >= 0) {
-				if ((ret = fsync(fd)) < 0)
-					die("fsync %s failed %d\n", topdir, ret);
-				close(fd);
-			}
+		fd = open(topdir, O_RDONLY|O_DIRECTORY);
+		if (fd >= 0) {
+			if ((ret = fsync(fd)) < 0)
+				die("fsync %s failed %d\n", topdir, ret);
+			close(fd);
 		}
 	}
 
@@ -389,31 +304,16 @@ void create_dirs(const char *topdir, unsigned long num_dirs)
 }
 
 
-void delete_dirs(const char *topdir, unsigned long num_dirs)
+void delete_dirs(const char *topdir)
 {
 	int ret, fd;
-	unsigned long i, j;
 	char dir[128], sub_dir[128];
 
 	if (per_cpu_dirs) {
-		for (j = 0; j < num_cpus; j++) {
-			setaffinity(j);
+		for (int i = 0; i < num_cpus; i++) {
+			setaffinity(i);
 
-			snprintf(sub_dir, 128, "%s/cpu-%ld", topdir, j);
-
-			for (i = 0; i < num_dirs; i++) {
-				snprintf(dir, 128, "%s/cpu-%ld/dir-%ld", topdir, j, i);
-
-				fd = open(dir, O_RDONLY|O_DIRECTORY);
-				if (fd >= 0) {
-					if ((ret = fsync(fd)) < 0)
-						die("fsync %s failed %d\n", dir, ret);
-					close(fd);
-				}
-
-				if ((ret = rmdir(dir)) != 0)
-					die("rmdir %s failed %d\n", dir, ret);
-			}
+			snprintf(sub_dir, 128, "%s/cpu-%d", topdir, i);
 
 			fd = open(sub_dir, O_RDONLY|O_DIRECTORY);
 			if (fd >= 0) {
@@ -433,26 +333,23 @@ void delete_dirs(const char *topdir, unsigned long num_dirs)
 			}
 		}
 	} else {
-		for (i = 0; i < num_dirs; i++) {
-			setaffinity(i % num_cpus);
-			snprintf(dir, 128, "%s/dir-%ld", topdir, i);
+		snprintf(dir, 128, "%s/dir", topdir);
 
-			fd = open(dir, O_RDONLY|O_DIRECTORY);
-			if (fd >= 0) {
-				if ((ret = fsync(fd)) < 0)
-					die("fsync %s failed %d\n", dir, ret);
-				close(fd);
-			}
+		fd = open(dir, O_RDONLY|O_DIRECTORY);
+		if (fd >= 0) {
+			if ((ret = fsync(fd)) < 0)
+				die("fsync %s failed %d\n", dir, ret);
+			close(fd);
+		}
 
-			if ((ret = rmdir(dir)) != 0)
-				die("rmdir %s failed %d\n", dir, ret);
+		if ((ret = rmdir(dir)) != 0)
+			die("rmdir %s failed %d\n", dir, ret);
 
-			fd = open(topdir, O_RDONLY|O_DIRECTORY);
-			if (fd >= 0) {
-				if ((ret = fsync(fd)) < 0)
-					die("fsync %s failed %d\n", topdir, ret);
-				close(fd);
-			}
+		fd = open(topdir, O_RDONLY|O_DIRECTORY);
+		if (fd >= 0) {
+			if ((ret = fsync(fd)) < 0)
+				die("fsync %s failed %d\n", topdir, ret);
+			close(fd);
 		}
 	}
 
@@ -461,138 +358,82 @@ void delete_dirs(const char *topdir, unsigned long num_dirs)
 }
 
 
-unsigned long create_files(const char *topdir, char *buf, int cpu)
+void create_largefile(const char *topdir, char *buf, int cpu)
 {
-	int fd;
-	unsigned long i, j;
-	ssize_t size;
 	char filename[128];
-	unsigned long time;
-	struct timeval before, after;
 
-	time = 0;
-	gettimeofday ( &before, NULL );
-	/* Create phase */
-	for (i = 0, j = 0; i < num_files; i++) {
-		if (per_cpu_dirs)
-			snprintf(filename, 128, "%s/cpu-%d/dir-%ld/file-%d-%ld",
-				topdir, cpu, j, cpu, i);
-		else
-			snprintf(filename, 128, "%s/dir-%ld/file-%d-%ld",
-				topdir, j, cpu, i);
+	/* Create and fsync a large file. */
+	if (per_cpu_dirs)
+		snprintf(filename, 128, "%s/cpu-%d/largefile",
+			topdir, cpu);
+	else
+		snprintf(filename, 128, "%s/dir/largefile-%d",
+			topdir, cpu);
 
-		fd = open(filename, O_WRONLY | O_CREAT | O_EXCL,
+	int fd = open(filename, O_WRONLY | O_CREAT | O_EXCL,
 			S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+	if (fd < 0)
+		die("open");
 
-		if (fd == -1)
-			die("open");
-
-		size = write(fd, buf, FILESIZE);
-		if (size == -1)
+	int count = file_size/IOSIZE;
+	for (int i = 0; i < count; i++) {
+		if (write(fd, buf, IOSIZE) != IOSIZE)
 			die("write");
-
-		if (sync_when == FSYNC_CREATE && fsync(fd) < 0)
-			die("fsync");
-
-		if (close(fd) < 0)
-			die("close");
-
-		if ((i+1) % nfiles_per_dir == 0)
-			j++;
 	}
-	gettimeofday ( &after, NULL );
-	time = time + (after.tv_sec - before.tv_sec) * 1000000 +
-		(after.tv_usec - before.tv_usec);
-	time -= timer_overhead;
-	return time;
+
+	if (fsync(fd) < 0)
+		die("fsync");
+
+	close(fd);
 }
 
-unsigned long read_files(const char *topdir, char *buf, int cpu)
+void overwrite_largefile(const char *topdir, char *buf, int cpu)
 {
-	int fd;
-	unsigned long i, j;
-	ssize_t size;
 	char filename[128];
-	unsigned long time;
-	struct timeval before, after;
 
-	time = 0;
-	gettimeofday ( &before, NULL );
-	/* Read phase */
-	for (i = 0, j = 0; i < num_files; i++) {
-		if (per_cpu_dirs)
-			snprintf(filename, 128, "%s/cpu-%d/dir-%ld/file-%d-%ld",
-				topdir, cpu, j, cpu, i);
-		else
-			snprintf(filename, 128, "%s/dir-%ld/file-%d-%ld",
-				topdir, j, cpu, i);
+	/* Create and fsync a large file. */
+	if (per_cpu_dirs)
+		snprintf(filename, 128, "%s/cpu-%d/largefile",
+			topdir, cpu);
+	else
+		snprintf(filename, 128, "%s/dir/largefile-%d",
+			topdir, cpu);
 
-		fd = open(filename, O_RDONLY);
-		if (fd == -1)
-			die("open");
+	int fd = open(filename, O_WRONLY);
+	if (fd < 0)
+		die("open");
 
-		size = read(fd, buf, FILESIZE);
-		if (size == -1)
-			die("read");
+	if (lseek(fd, 0, SEEK_SET) < 0)
+		die("lseek");
 
-		if (close(fd) < 0)
-			die("close");
-
-		if ((i+1) % nfiles_per_dir == 0)
-			j++;
+	int count = file_size/IOSIZE;
+	for (int i = 0; i < count; i++) {
+		if (write(fd, buf, IOSIZE) != IOSIZE)
+			die("write");
 	}
-	gettimeofday ( &after, NULL );
-	time = time + (after.tv_sec - before.tv_sec) * 1000000 +
-		(after.tv_usec - before.tv_usec);
-	time -= timer_overhead;
-	return time;
+
+	if (fsync(fd) < 0)
+		die("fsync");
+
+	close(fd);
 }
 
-unsigned long unlink_files(const char *topdir, char *buf, int cpu)
+void unlink_all_files(const char *topdir)
 {
-	int ret;
-	unsigned long i, j;
 	char filename[128];
-	unsigned long time;
-	struct timeval before, after;
 
-	time = 0;
-	gettimeofday ( &before, NULL );
-	/* Unlink phase */
-	for (i = 0, j = 0; i < num_files; i++) {
+	for (int cpu = 0; cpu < num_cpus; cpu++) {
+		setaffinity(cpu);
 		if (per_cpu_dirs)
-			snprintf(filename, 128, "%s/cpu-%d/dir-%ld/file-%d-%ld",
-				topdir, cpu, j, cpu, i);
+			snprintf(filename, 128, "%s/cpu-%d/largefile",
+				topdir, cpu);
 		else
-			snprintf(filename, 128, "%s/dir-%ld/file-%d-%ld",
-				topdir, j, cpu, i);
+			snprintf(filename, 128, "%s/dir/largefile-%d",
+				topdir, cpu);
 
-		ret = unlink(filename);
-		if (ret == -1)
+		if (unlink(filename) < 0)
 			die("unlink");
-
-		if ((i+1) % nfiles_per_dir == 0)
-			j++;
 	}
-	gettimeofday ( &after, NULL );
-	time = time + (after.tv_sec - before.tv_sec) * 1000000 +
-		(after.tv_usec - before.tv_usec);
-	time -= timer_overhead;
-	return time;
-}
 
-unsigned long sync_files(void)
-{
-	unsigned long time;
-	struct timeval before, after;
-
-	time = 0;
-	gettimeofday ( &before, NULL );
-	/* Sync everything */
-	sync();
-	gettimeofday ( &after, NULL );
-	time = time + (after.tv_sec - before.tv_sec) * 1000000 +
-		(after.tv_usec - before.tv_usec);
-	time -= timer_overhead;
-	return time;
+	setaffinity(-1);
 }
