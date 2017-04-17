@@ -57,7 +57,7 @@ kminit(void)
 static int
 morecore(int c, int b)
 {
-  char *p = kalloc("kmalloc");
+  char *p = kalloc("kmalloc", PGSIZE, c);
   if(p == 0)
     return -1;
 
@@ -99,10 +99,10 @@ bucket(u64 nbytes)
 }
 
 static void *
-kmalloc_small(size_t b, const char *name)
+kmalloc_small(size_t b, const char *name, int cpu)
 {
   struct header *h;
-  int c = mycpu()->id;
+  int c = cpu >= 0 ? cpu : mycpu()->id;
 
   for (;;) {
     scoped_acquire guard(&freelists[c].buckets[b].lock);
@@ -134,18 +134,18 @@ kmalloc_small(size_t b, const char *name)
 }
 
 void *
-kmalloc(u64 nbytes, const char *name)
+kmalloc(u64 nbytes, const char *name, int cpu)
 {
   void *h;
   uint64_t mbytes = alloc_debug_info::expand_size(nbytes);
 
   if (mbytes > PGSIZE / 2) {
     // Full page allocation
-    h = kalloc(name, round_up_to_pow2(mbytes));
+    h = kalloc(name, round_up_to_pow2(mbytes), cpu);
   } else {
     // Sub-page allocation
     int b = bucket(mbytes);
-    h = kmalloc_small(b, name);
+    h = kmalloc_small(b, name, cpu);
   }
   if (!h)
     return nullptr;

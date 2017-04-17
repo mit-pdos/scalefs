@@ -314,12 +314,12 @@ struct memory {
     mempools.emplace_back(m);
   }
 
-  char* kalloc(const char *name, size_t size)
+  char* kalloc(const char *name, size_t size, int cpu)
   {
     if (!kinited)
       return (char*)early_kalloc(size, size);
     void *res = nullptr;
-    auto mem = mycpu()->mem;
+    auto mem = cpu >= 0 ? cpus[cpu].mem : mycpu()->mem;
     if (size == PGSIZE) {
       // allocate from page cache, if possible
       if (mem->nhot > 0) {
@@ -689,13 +689,13 @@ kmemstatsread(mdev*, char *dst, u32 off, u32 n)
 
 #if KALLOC_LOAD_BALANCE
 char*
-kalloc(const char *name, size_t size)
+kalloc(const char *name, size_t size, int cpu)
 {
   return allmem.kalloc(name, size);
 }
 #else
 char*
-kalloc(const char *name, size_t size)
+kalloc(const char *name, size_t size, int cpu)
 {
   if (!kinited)
     return (char*)early_kalloc(size, size);
@@ -706,7 +706,7 @@ kalloc(const char *name, size_t size)
   if (size == PGSIZE) {
     // Go to the hot list
     scoped_cli cli;
-    auto mem = mycpu()->mem;
+    auto mem = cpu >= 0 ? cpus[cpu].mem : mycpu()->mem;
     if (mem->nhot == 0) {
       // No hot pages; fill half of the cache
       kstats::inc(&kstats::kalloc_hot_list_refill_count);
@@ -730,7 +730,7 @@ kalloc(const char *name, size_t size)
             kstats::inc(&kstats::kalloc_hot_list_steal_count);
 #if PRINT_STEAL
             cprintf("CPU %d stealing hot list from buddy %lu\n",
-                    myid(), *buddyit);
+                    cpu >= 0 ? cpu : myid(), *buddyit);
 #endif
           }
         } else {
@@ -749,13 +749,14 @@ kalloc(const char *name, size_t size)
   general:
     // XXX(Austin) Would it be better to linear scan our local buddies
     // and then randomly traverse the others to avoid hot-spots?
-    for (auto idx : mycpu()->mem->steal) {
+    auto mem = cpu >= 0 ? cpus[cpu].mem : mycpu()->mem;
+    for (auto idx : mem->steal) {
       auto &lb = buddies[idx];
       auto l = lb.lock.guard();
       res = lb.alloc.alloc_nothrow(size);
 #if PRINT_STEAL
-      if (res && mycpu()->mem->steal.is_local(idx))
-        cprintf("CPU %d stole from buddy %lu\n", myid(), idx);
+      if (res && mem->steal.is_local(idx))
+        cprintf("CPU %d stole from buddy %lu\n", cpu >= 0 ? cpu : myid(), idx);
 #endif
       if (res)
         break;
