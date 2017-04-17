@@ -6,8 +6,7 @@
 #include "scalefs.hh"
 
 
-static weakcache<buf::key_t, buf> bufcache(BSIZE << 10);
-            //I don't think this was changed when BSIZE was changed from 512 to 4096
+static weakcache<buf::key_t, buf> bufcache(64 << 20);
 
 
 // Returns true if the specified block is cached in the buffer-cache, false
