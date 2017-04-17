@@ -39,11 +39,7 @@ public:
     u64 dptr_size = sizeof(char *) * (_fs_img_size/BSIZE);
     data_ptr_ = (u8**)kmalloc(dptr_size, "memide");
     assert(data_ptr_);
-
-    for (int i = 0; i < _fs_img_size/BSIZE; i++) {
-      data_ptr_[i] = (u8*)kmalloc(BSIZE, "memide_block");
-      assert(data_ptr_[i]);
-    }
+    memset(data_ptr_, 0, dptr_size);
   }
 
   void readv(kiovec *iov, int iov_cnt, u64 off) override
@@ -93,7 +89,131 @@ public:
   const u64 nbytes_;
 };
 
-memdisk* md;
+static memdisk* md;
+
+// Allocate memory for the ramdisk intelligently:
+// Our filesystem supports per-cpu inode- and block- allocators. So we use the
+// same logic to identify the regions belonging to different CPUs among the disk
+// blocks, and allocate (NUMA) node-local memory for those regions.
+void
+init_fs_state(const char *buf, u64 offset, u64 size)
+{
+  static superblock sb;
+  static u32 current_blknum, read_upto_blknum;
+  static u32 first_free_inode_block, first_free_bitmap_block;
+  static u32 inodeblocks_per_cpu, bitmapblocks_per_cpu;
+
+  assert(offset % BSIZE == 0 && size == BSIZE);
+  current_blknum = offset/BSIZE;
+
+  if (!current_blknum) {
+    md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
+    return;
+  }
+
+  if (read_upto_blknum && current_blknum > read_upto_blknum) {
+    // We should have allocated memory for this block already.
+    assert(md->data_ptr_[current_blknum]);
+    return;
+  }
+
+  if (current_blknum == 1) {
+    // That's the superblock.
+    md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
+    memmove(&sb, buf, sizeof(sb));
+    read_upto_blknum = BBLOCK(sb.size - 1, sb.ninodes);
+    return;
+  }
+
+  if (current_blknum >= IBLOCK(1) && current_blknum <= IBLOCK(sb.ninodes-1)) {
+    // These are inode blocks.
+    if (!first_free_inode_block) {
+      const dinode *dip = (const dinode *) buf;
+      if (!dip->type) {
+        first_free_inode_block = current_blknum;
+        inodeblocks_per_cpu = (sb.ninodes/IPB -
+                              (first_free_inode_block - IBLOCK(1))) / NCPU;
+
+        // Handle the case where there is just 1 inode block, and hence we cannot
+        // split it per-cpu.
+        if (!inodeblocks_per_cpu)
+          inodeblocks_per_cpu = 1;
+      } else {
+        md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
+        return;
+      }
+    }
+
+    assert(first_free_inode_block && current_blknum >= first_free_inode_block);
+
+    int cpuid = (current_blknum - first_free_inode_block) / inodeblocks_per_cpu;
+    if (cpuid >= NCPU)
+      cpuid = 0;
+
+    md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+    return;
+  }
+
+
+  if (IBLOCK(sb.ninodes) != BBLOCK(0, sb.ninodes) &&
+      current_blknum == IBLOCK(sb.ninodes)) {
+    // Wasted (unused) block between the inode blocks and the bitmap blocks.
+    md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
+    return;
+  }
+
+  // The remaining blocks we look at are bitmap blocks.
+  assert(current_blknum >= BBLOCK(0, sb.ninodes));
+
+  if (!first_free_bitmap_block) {
+    u8* p = (u8*) buf;
+    if (p[0] == 0) {
+      first_free_bitmap_block = current_blknum;
+      bitmapblocks_per_cpu = (sb.size/BPB -
+                             (first_free_bitmap_block - BBLOCK(0, sb.ninodes))) / NCPU;
+
+      // Handle the case where there is just 1 bitmap block, and hence we cannot
+      // split it per-cpu.
+      if (!bitmapblocks_per_cpu)
+        bitmapblocks_per_cpu = 1;
+    } else {
+      md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
+
+      u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
+      for (u32 i = start_bit; i < start_bit + BPB; i++) {
+        if (!md->data_ptr_[i])
+          md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", 0);
+      }
+
+      return;
+    }
+  }
+
+  assert(first_free_bitmap_block && current_blknum >= first_free_bitmap_block);
+
+  int cpuid = (current_blknum - first_free_bitmap_block) / bitmapblocks_per_cpu;
+  if (cpuid >= NCPU)
+    cpuid = 0;
+
+  if (!md->data_ptr_[current_blknum])
+    md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+
+  u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
+  for (u32 i = start_bit; i < start_bit + BPB; i++) {
+    if (!md->data_ptr_[i])
+      md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+  }
+}
+
+// Check that every logical disk block has a corresponding memory page backing it.
+void
+verify_backing_memory(u64 disk_size_bytes)
+{
+  u64 nblocks = disk_size_bytes/BSIZE;
+
+  for (int i = 0; i < nblocks; i++)
+    assert(md->data_ptr_[i]);
+}
 
 void
 write_output(const char *buf, u64 offset, u64 size)
@@ -119,6 +239,11 @@ initdisk(void)
   struct timeval before, after;
 
   cprintf("initdisk: Flashing the filesystem image on the memdisk(s)\n");
+
+  zlib_decompress(_fs_imgz_start, _fs_imgz_size,
+                  _fs_img_size, init_fs_state);
+
+  verify_backing_memory(_fs_img_size);
 
   gettimeofday(&before, NULL);
   zlib_decompress(_fs_imgz_start, _fs_imgz_size,
