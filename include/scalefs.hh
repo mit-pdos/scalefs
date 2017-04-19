@@ -149,6 +149,9 @@ class transaction {
 
       if (bqueue_initialized)
         delete bqueue;
+
+      for (auto &b : blocks)
+        delete b;
     }
 
     void add_dirty_blocknum(u32 bno)
@@ -161,15 +164,16 @@ class transaction {
     // out the changes to disk.
     void add_block(u32 bno, char buf[BSIZE])
     {
-      auto b = std::make_unique<transaction_diskblock>(bno, buf);
+      auto b = new transaction_diskblock(bno, buf);
       add_block(std::move(b));
     }
 
-    void add_block(std::unique_ptr<transaction_diskblock> b)
+    void add_block(transaction_diskblock *b)
     {
       blocks.push_back(std::move(b));
     }
 
+#if 0
     // Add a unique diskblock to the transaction. Never add the same diskblock
     // (i.e, the same block-number) twice, even if it has different contents.
     // Instead, update that existing diskblock with the new contents.
@@ -263,9 +267,10 @@ class transaction {
         trans_blocks->insert(blocknum, tdp);
       }
     }
+#endif
 
     // Add multiple disk blocks to a transaction.
-    void add_blocks(std::vector<std::unique_ptr<transaction_diskblock> > bvec)
+    void add_blocks(std::vector<transaction_diskblock*> bvec)
     {
       for (auto &b : bvec)
         blocks.push_back(std::move(b));
@@ -350,9 +355,8 @@ class transaction {
     // increasing order of their timestamps. So while writing out the transaction
     // to the journal, for each block number just the block with the highest
     // timestamp needs to be written to disk. Gets rid of unnecessary I/O.
-    static bool compare_transaction_db(const
-    std::unique_ptr<transaction_diskblock>& b1, const
-    std::unique_ptr<transaction_diskblock>& b2) {
+    static bool compare_transaction_db(const transaction_diskblock *b1,
+                                       const transaction_diskblock *b2) {
       if (b1->blocknum == b2->blocknum)
         return (b1->timestamp < b2->timestamp);
       return (b1->blocknum < b2->blocknum);
@@ -454,7 +458,7 @@ class transaction {
 
   private:
     // List of updated diskblocks
-    std::vector<std::unique_ptr<transaction_diskblock> > blocks;
+    std::vector<transaction_diskblock*> blocks;
 
     std::vector<u32> dirty_blocknums;
 
@@ -784,8 +788,8 @@ class mfs_interface
     bool fits_in_journal(size_t num_trans_blocks, int cpu);
     void write_journal(char *buf, size_t size, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const
-    std::vector<std::unique_ptr<transaction_diskblock> >& vec, const u64 timestamp,
-    transaction *tr, int cpu);
+           std::vector<transaction_diskblock*> &vec, const u64 timestamp,
+           transaction *tr, int cpu);
     void write_journal_commit_block(u64 timestamp, int cpu);
     transaction* process_journal(int cpu);
     void reset_journal(int cpu, bool use_async_io = true);

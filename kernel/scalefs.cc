@@ -2108,7 +2108,7 @@ mfs_interface::write_journal(char *buf, size_t size, transaction *tr, int cpu)
 // Caller must hold ilock for write on sv6_journal.
 void
 mfs_interface::write_journal_transaction_blocks(
-    const std::vector<std::unique_ptr<transaction_diskblock> >& datablocks,
+    const std::vector<transaction_diskblock*> &datablocks,
     const u64 timestamp, transaction *trans, int cpu)
 {
 
