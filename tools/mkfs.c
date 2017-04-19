@@ -90,10 +90,6 @@ main(int argc, char *argv[])
   sb.nblocks = xint(nblocks); // so whole disk is size sectors
   sb.ninodes = xint(ninodes);
 
-  memset(buf, 0, sizeof(buf));
-  memmove(buf, &sb, sizeof(sb));
-  wsect(1, buf);
-
   rootino = ialloc(T_DIR);
   assert(rootino == ROOTINO);
 
@@ -131,11 +127,26 @@ main(int argc, char *argv[])
     strncpy(de.name, argv[i], DIRSIZ);
     iappend(rootino, &de, sizeof(de));
 
+    int jnum;
+
+    if (strncmp(argv[i], "sv6journal", 10) == 0) {
+      jnum = atoi(argv[i]+10);
+      sb.journal_blknums[jnum].start_blknum = xint(freeblock);
+    }
+
     while((cc = read(fd, buf, sizeof(buf))) > 0)
       iappend(inum, buf, cc);
 
+    if (strncmp(argv[i], "sv6journal", 10) == 0) {
+      sb.journal_blknums[jnum].end_blknum = xint(freeblock - 1); // Inclusive
+    }
+
     close(fd);
   }
+
+  memset(buf, 0, sizeof(buf));
+  memmove(buf, &sb, sizeof(sb));
+  wsect(1, buf);
 
   // fix size of root inode dir
   rinode(rootino, &din);

@@ -28,7 +28,12 @@ struct superblock {
   u32 size;         // Size of file system image (blocks)
   u32 nblocks;      // Number of data blocks
   u32 ninodes;      // Number of inodes.
+  struct journal_blknums {
+    u32 start_blknum;
+    u32 end_blknum; // Inclusive
+  } journal_blknums[NCPU];
 };
+
 
 #define NDIRECT 10
 #define NINDIRECT (BSIZE / sizeof(u32))
