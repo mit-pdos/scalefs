@@ -109,6 +109,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
     cprintf("Writing block %8d / %lu\r", current_blknum, _fs_img_size/BSIZE);
 
   if (!current_blknum) {
+    assert(!md->data_ptr_[current_blknum]);
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
     goto out;
   }
@@ -121,9 +122,29 @@ init_fs_state(const char *buf, u64 offset, u64 size)
 
   if (current_blknum == 1) {
     // That's the superblock.
+    assert(!md->data_ptr_[current_blknum]);
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
     memmove(&sb, buf, sizeof(sb));
     read_upto_blknum = BBLOCK(sb.size - 1, sb.ninodes);
+
+    // Setup memory for all the per-cpu journals' datablocks.
+    for (int cpuid = 0; cpuid < NCPU; cpuid++) {
+      for (int blk = sb.journal_blknums[cpuid].start_blknum;
+           blk <= sb.journal_blknums[cpuid].end_blknum; blk++) {
+
+        // Some of these may not be datablocks (could be inode-blocks or
+        // bitmap-blocks). If so, skip them, so that we can allocate memory
+        // for them appropriately later on.
+        if ((blk >= IBLOCK(1) && blk <= IBLOCK(sb.ninodes-1)) ||
+           (blk >= BBLOCK(0, sb.ninodes) && blk <= BBLOCK(sb.size-1, sb.ninodes))) {
+          continue;
+        }
+
+        assert(!md->data_ptr_[blk]);
+        md->data_ptr_[blk] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
+      }
+    }
+
     goto out;
   }
 
@@ -141,6 +162,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
         if (!inodeblocks_per_cpu)
           inodeblocks_per_cpu = 1;
       } else {
+        assert(!md->data_ptr_[current_blknum]);
         md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
         goto out;
       }
@@ -152,6 +174,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
     if (cpuid >= NCPU)
       cpuid = 0;
 
+    assert(!md->data_ptr_[current_blknum]);
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
     goto out;
   }
@@ -160,6 +183,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
   if (IBLOCK(sb.ninodes) != BBLOCK(0, sb.ninodes) &&
       current_blknum == IBLOCK(sb.ninodes)) {
     // Wasted (unused) block between the inode blocks and the bitmap blocks.
+    assert(!md->data_ptr_[current_blknum]);
     md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
     goto out;
   }
@@ -179,6 +203,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
       if (!bitmapblocks_per_cpu)
         bitmapblocks_per_cpu = 1;
     } else {
+      assert(!md->data_ptr_[current_blknum]);
       md->data_ptr_[current_blknum] = (u8*) kmalloc(BSIZE, "memide-data", 0);
 
       u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
