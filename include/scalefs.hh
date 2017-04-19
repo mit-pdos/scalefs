@@ -367,7 +367,7 @@ class transaction {
       }
 
       bqueue->write(dev, buf, BSIZE, blocknum * BSIZE);
-      disks_written.set(offset_to_dev(blocknum));
+      disks_written.set(blknum_to_dev(blocknum));
     }
 
     // Write the blocks in this transaction to disk. Used to write the journal.
@@ -382,7 +382,7 @@ class transaction {
 
       for (auto b = blocks.begin(); b != blocks.end(); b++) {
         bqueue->write(1, (*b)->blockdata, BSIZE, (*b)->blocknum * BSIZE);
-        disks_written.set(offset_to_dev((*b)->blocknum));
+        disks_written.set(blknum_to_dev((*b)->blocknum));
       }
 
       // Make sure all the block-writes complete.

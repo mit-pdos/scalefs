@@ -99,8 +99,8 @@ public:
 };
 
 
-u32 offset_to_dev(u64 offset);
-u64 recalc_offset(u64 offset);
+u32 blknum_to_dev(u32 blknum);
+u32 remap_blknum(u32 blknum);
 u32 num_disks();
 
 void disk_register(disk* d);
@@ -168,8 +168,8 @@ public:
     assert(nbytes == BSIZE && offset % BSIZE == 0);
 
     // Remap offset to the correct disknum and offset when using multiple disks.
-    dev = offset_to_dev(offset/BSIZE);
-    offset = recalc_offset(offset/BSIZE) * BSIZE;
+    dev = blknum_to_dev(offset/BSIZE);
+    offset = remap_blknum(offset/BSIZE) * BSIZE;
 
     dqueue[dev]->add_to_queue(buf, nbytes, offset);
   }

@@ -127,15 +127,15 @@ sys_disktest(void)
 #define STRIPE_SIZE_BLKS		(64 * 1024 / BSIZE)
 
 // Given a block offset as argument, return the disk number that hosts that block.
-u32 offset_to_dev(u64 offset)
+u32 blknum_to_dev(u32 blknum)
 {
-  return (offset / STRIPE_SIZE_BLKS) % num_disks();
+  return (blknum / STRIPE_SIZE_BLKS) % num_disks();
 }
 
-u64 recalc_offset(u64 offset)
+u32 remap_blknum(u32 blknum)
 {
-  return STRIPE_SIZE_BLKS * ((offset / STRIPE_SIZE_BLKS) / num_disks())
-         + (offset % STRIPE_SIZE_BLKS);
+  return STRIPE_SIZE_BLKS * ((blknum / STRIPE_SIZE_BLKS) / num_disks())
+         + (blknum % STRIPE_SIZE_BLKS);
 }
 
 u32 num_disks()
@@ -149,8 +149,8 @@ disk_readv(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
 {
   assert(disks.size() > 0);
   assert(iov_cnt <= IOV_MAX);
-  dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE) * BSIZE;
+  dev = blknum_to_dev(offset/BSIZE);
+  offset = remap_blknum(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
     disks[dev]->areadv(iov, iov_cnt, offset, dc);
@@ -172,8 +172,8 @@ disk_writev(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
 {
   assert(disks.size() > 0);
   assert(iov_cnt <= IOV_MAX);
-  dev = offset_to_dev(offset/BSIZE);
-  offset = recalc_offset(offset/BSIZE) * BSIZE;
+  dev = blknum_to_dev(offset/BSIZE);
+  offset = remap_blknum(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
     disks[dev]->awritev(iov, iov_cnt, offset, dc);
