@@ -1941,6 +1941,7 @@ mfs_interface::apply_all_transactions(int cpu)
 
   while (dependent_txq.size()) {
     transaction *tr = nullptr;
+    bool group_apply = false;
     tx_queue_info txq = dependent_txq.back();
 
     int dep_cpu = txq.id_;
@@ -1987,9 +1988,27 @@ mfs_interface::apply_all_transactions(int cpu)
         continue;
       }
 
-      fs_journal[dep_cpu]->tx_apply_queue.erase(it);
+      it = fs_journal[dep_cpu]->tx_apply_queue.erase(it);
+
+      // Try to group other transactions that don't have any cross-queue
+      // dependencies.
+
+      for ( ; it != fs_journal[dep_cpu]->tx_apply_queue.end(); ) {
+        if ((*it)->dependent_txq.empty() == false)
+          break;
+
+        // We don't have to check fits_in_journal() here.
+        tr->add_blocks(std::move((*it)->blocks));
+        group_apply = true;
+        assert((*it)->last_group_txn_tsc > tr->last_group_txn_tsc);
+        tr->last_group_txn_tsc = (*it)->last_group_txn_tsc;
+        delete *it;
+        it = fs_journal[dep_cpu]->tx_apply_queue.erase(it);
+      }
     }
 
+    if (group_apply)
+      tr->deduplicate_blocks();
     apply_transaction_to_disk(dep_cpu, tr);
 
     if (fs_journal[dep_cpu]->get_applied_tsc() >= dep_tsc)
