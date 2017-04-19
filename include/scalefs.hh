@@ -456,6 +456,9 @@ class transaction {
     // postponed until all these dependent transactions are applied.
     std::vector<tx_queue_info> dependent_txq;
 
+    u64 last_group_txn_tsc;
+    u64 commit_tsc;
+
   private:
     // List of updated diskblocks
     std::vector<transaction_diskblock*> blocks;

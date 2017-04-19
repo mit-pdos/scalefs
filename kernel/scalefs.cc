@@ -1512,6 +1512,7 @@ mfs_interface::add_transaction_to_queue(transaction *tr, int cpu)
   // block and bitmap-block locks and the lock protecting the transaction
   // queue for this journal.
   tr->enq_tsc = get_tsc();
+  tr->last_group_txn_tsc = tr->enq_tsc;
   tr->txq_id = cpu;
 
   tx_queue_info my_txq(tr->txq_id, tr->enq_tsc);
@@ -1773,7 +1774,7 @@ mfs_interface::flush_journal(int cpu, bool apply_all)
 void
 mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
 {
-  u64 timestamp = trans->enq_tsc;
+  u64 timestamp = trans->commit_tsc;
   transaction *jrnl_trans = new transaction();
 
   ilock(sv6_journal[cpu], WRITELOCK);
@@ -1794,7 +1795,7 @@ mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
 
   // Notify transactions (in other journal queues) which were waiting for
   // this particular batch of transactions to get committed.
-  u64 latest_commit_tsc = trans->enq_tsc;
+  u64 latest_commit_tsc = trans->last_group_txn_tsc;
   fs_journal[cpu]->notify_commit(latest_commit_tsc);
 }
 
@@ -1808,7 +1809,7 @@ mfs_interface::apply_transaction_to_disk(int cpu, transaction *trans)
   // Notify transactions (in other journal queues) which were waiting for
   // this particular batch of transactions to get applied to the on-disk
   // filesystem.
-  u64 latest_apply_tsc = trans->enq_tsc;
+  u64 latest_apply_tsc = trans->last_group_txn_tsc;
   fs_journal[cpu]->notify_apply(latest_apply_tsc);
 
   delete trans;
@@ -1875,8 +1876,31 @@ mfs_interface::commit_all_transactions(int cpu)
 
       auto it = fs_journal[cpu]->tx_commit_queue.begin();
       trans = *it;
-      fs_journal[cpu]->tx_commit_queue.erase(it);
+      it = fs_journal[cpu]->tx_commit_queue.erase(it);
+
+      for ( ; it != fs_journal[cpu]->tx_commit_queue.end(); ) {
+        if ((*it)->dependent_txq.empty() == false)
+          break;
+
+        // This transaction doesn't have cross-queue dependencies, so try to
+        // merge it with the other transaction and commit them together.
+        (*it)->deduplicate_blocks();
+        if (!fits_in_journal(trans->blocks.size() + (*it)->blocks.size(), cpu))
+          break;
+
+        trans->add_blocks(std::move((*it)->blocks));
+        trans->deduplicate_blocks();
+        assert(fits_in_journal(trans->blocks.size(), cpu));
+
+        trans->last_group_txn_tsc = (*it)->enq_tsc;
+        assert(trans->last_group_txn_tsc > trans->enq_tsc);
+
+        delete *it;
+        it = fs_journal[cpu]->tx_commit_queue.erase(it);
+      }
     }
+
+    trans->commit_tsc = get_tsc();
 
     commit_transaction_to_disk(cpu, trans);
 
