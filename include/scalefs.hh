@@ -518,9 +518,14 @@ class journal {
       return t1->enq_tsc < t2->enq_tsc;
     }
 
-    u32 current_offset() { return current_off; }
+    u32 current_offset() {
+      scoped_acquire l(&offset_lock);
+      return current_off;
+    }
+
     void update_offset(u32 new_off) {
       assert(new_off <= PHYS_JOURNAL_SIZE);
+      scoped_acquire l(&offset_lock);
       current_off = new_off;
     }
 
@@ -591,6 +596,8 @@ class journal {
 
     // Current size of flushed out transactions on the disk.
     u32 current_off;
+    spinlock offset_lock; // Protects access to current_off.
+
     // The timestamp of the last transaction that was committed to the on-disk
     // filesystem via this journal.
     u64 committed_trans_tsc;

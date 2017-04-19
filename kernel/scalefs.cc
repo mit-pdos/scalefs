@@ -2076,19 +2076,15 @@ mfs_interface::fits_in_journal(size_t num_trans_blocks, int cpu)
   // as well as the start and commit blocks in the journal. (And also an
   // additional address block if necessary).
 
-  // Hold the inode lock for read when accessing the journal's current-offset.
-  ilock(sv6_journal[cpu], READLOCK);
   u64 trans_size = num_trans_blocks * BSIZE + 2 * sizeof(journal_header_block)
                    + sizeof(journal_addr_block);
 
-  assert(trans_size <= PHYS_JOURNAL_SIZE);
-
-  if (fs_journal[cpu]->current_offset() + trans_size > PHYS_JOURNAL_SIZE) {
-    iunlock(sv6_journal[cpu]);
+  if (trans_size > PHYS_JOURNAL_SIZE)
     return false;
-  }
 
-  iunlock(sv6_journal[cpu]);
+  if (fs_journal[cpu]->current_offset() + trans_size > PHYS_JOURNAL_SIZE)
+    return false;
+
   return true;
 }
 
