@@ -102,10 +102,9 @@ xwaitpid(int pid, const char *cmd)
 }
 
 static void
-do_mua(int cpu, string spooldir, string msgpath, string userdir, size_t batch_size,
-       bool verbose)
+do_mua(int cpu, string spooldir, string msgpath, string* userdirs, int nusers,
+       bool roundrobin, size_t batch_size, bool verbose)
 {
-  std::vector<const char*> argv{"./mail-enqueue"};
 #if defined(XV6_USER)
   int errno;
 #endif
@@ -117,19 +116,14 @@ do_mua(int cpu, string spooldir, string msgpath, string userdir, size_t batch_si
   if (msgfd < 0)
     edie("open %s failed", msgpath.c_str());
 
-  // Construct command line
-  if (batch_size)
-    argv.push_back("-b");
-  argv.push_back(spooldir.c_str());
-  argv.push_back(userdir.c_str());
-  argv.push_back(nullptr);
-
   bar.join();
 
   bool mywarmup = true;
   uint64_t mycount = 0;
   pid_t pid = 0;
   int msgpipe[2], respipe[2];
+  int userdir_idx = cpu-1;
+
   while (!stop) {
     if (__builtin_expect(warmup != mywarmup, 0)) {
       mywarmup = warmup;
@@ -137,6 +131,17 @@ do_mua(int cpu, string spooldir, string msgpath, string userdir, size_t batch_si
       start_usec.add(now_usec());
       start_tsc.add(rdtsc());
     }
+
+    std::vector<const char*> argv{"./mail-enqueue"};
+    // Construct command line
+    if (batch_size)
+      argv.push_back("-b");
+    argv.push_back(spooldir.c_str());
+    if (roundrobin) // Deliver messages in a round-robin fashion to all users.
+      argv.push_back(userdirs[(++userdir_idx) % nusers].c_str());
+    else
+      argv.push_back(userdirs[cpu].c_str());
+    argv.push_back(nullptr);
 
     if (pid == 0) {
       posix_spawn_file_actions_t actions;
@@ -262,10 +267,11 @@ main(int argc, char **argv)
   bool verbose = false;
   bool pool = false;
   bool percpu_spooldirs = false;
+  bool roundrobin = false;
   int nusers = 1;
   bool do_warmup = true;
   int opt;
-  while ((opt = getopt(argc, argv, "a:b:pcu:vW")) != -1) {
+  while ((opt = getopt(argc, argv, "a:b:pcru:vW")) != -1) {
     switch (opt) {
     case 'a':
       alt_str = optarg;
@@ -281,6 +287,9 @@ main(int argc, char **argv)
       break;
     case 'c':
       percpu_spooldirs = true;
+      break;
+    case 'r':
+      roundrobin = true;
       break;
     case 'u':
       nusers = atoi(optarg);
@@ -411,8 +420,8 @@ main(int argc, char **argv)
   std::thread *threads = new std::thread[nthreads];
   for (int i = 0; i < nthreads; ++i)
     threads[i] = std::thread(do_mua, i, percpu_spooldirs ? spooldirs[i] : spooldirs[0],
-                             basedir + "/msg", nusers > 1 ? userdirs[i] : userdirs[0],
-                             batch_size, verbose);
+                             basedir + "/msg", userdirs, nusers, roundrobin, batch_size,
+                             verbose);
 
   // Wait
   timer.join();
