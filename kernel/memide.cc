@@ -183,7 +183,12 @@ init_fs_state(const char *buf, u64 offset, u64 size)
 
       u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
       for (u32 i = start_bit; i < start_bit + BPB; i++) {
-        if (!md->data_ptr_[i])
+	// Be careful not to accidentally allocate memory for inode-blocks or
+	// bitmap-blocks here. This loop should only deal with data-blocks.
+	// (Note: the first bitmap block spans blocks starting all the way from
+	// block 0 to BPB, which most likely covers all the inode-blocks and
+	// bitmap-blocks; so we should take care to skip over them).
+        if (i > BBLOCK(sb.size-1, sb.ninodes) && !md->data_ptr_[i])
           md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", 0);
       }
 
@@ -203,7 +208,7 @@ init_fs_state(const char *buf, u64 offset, u64 size)
 
     u32 start_bit = (current_blknum - BBLOCK(0, sb.ninodes)) * BPB;
     for (u32 i = start_bit; i < start_bit + BPB; i++) {
-      if (!md->data_ptr_[i])
+      if (i > BBLOCK(sb.size-1, sb.ninodes) && !md->data_ptr_[i])
         md->data_ptr_[i] = (u8*) kmalloc(BSIZE, "memide-data", cpuid);
     }
   }
