@@ -150,7 +150,7 @@ disk_readv(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
   assert(disks.size() > 0);
   assert(iov_cnt <= IOV_MAX);
   dev = blknum_to_dev(offset/BSIZE);
-  offset = remap_blknum(offset/BSIZE) * BSIZE;
+  offset = (u64)remap_blknum(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
     disks[dev]->areadv(iov, iov_cnt, offset, dc);
@@ -173,7 +173,7 @@ disk_writev(u32 dev, kiovec *iov, int iov_cnt, u64 offset,
   assert(disks.size() > 0);
   assert(iov_cnt <= IOV_MAX);
   dev = blknum_to_dev(offset/BSIZE);
-  offset = remap_blknum(offset/BSIZE) * BSIZE;
+  offset = (u64)remap_blknum(offset/BSIZE) * BSIZE;
 
   if (dc) // Asynchronous
     disks[dev]->awritev(iov, iov_cnt, offset, dc);

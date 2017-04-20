@@ -169,7 +169,7 @@ public:
 
     // Remap offset to the correct disknum and offset when using multiple disks.
     dev = blknum_to_dev(offset/BSIZE);
-    offset = remap_blknum(offset/BSIZE) * BSIZE;
+    offset = (u64) remap_blknum(offset/BSIZE) * BSIZE;
 
     dqueue[dev]->add_to_queue(buf, nbytes, offset);
   }
