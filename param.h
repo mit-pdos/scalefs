@@ -1,7 +1,7 @@
 #pragma once
 #define NPROC        64  // maximum number of processes
 #define KSTACKSIZE 32768 // size of per-process kernel stack
-#define NOFILE     1024  // open files per process
+#define NOFILE      100  // open files per process
 
 #if 0 // These parameters are currently unused.
 #define NFILE       100  // open files per system
