@@ -79,8 +79,8 @@ void all_string_sub(char *s,const char *pattern,const char *insert);
 void single_string_sub(char *s,const char *pattern,const char *insert);
 BOOL next_token(char **ptr,char *buff,char *sep);
 struct timeval timeval_current(void);
-double timeval_elapsed(struct timeval *tv);
-double timeval_elapsed2(struct timeval *tv1, struct timeval *tv2);
+unsigned long timeval_elapsed(struct timeval *tv);
+unsigned long timeval_elapsed2(struct timeval *tv1, struct timeval *tv2);
 void msleep(unsigned int t);
 
 #endif /*  _PROTO_H_  */

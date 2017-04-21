@@ -25,7 +25,15 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef XV6_USER
+#include "types.h"
+#include "fs.h"
+#include "sysstubs.h"
+#include "unistd.h"
+#include "libutil.h"
+#else
 #include <dirent.h>
+#endif
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
@@ -33,6 +41,8 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <time.h>
+
+#if !defined(XV6_USER)
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/mman.h>
@@ -50,11 +60,15 @@
 #include <sys/mount.h>
 #endif
 #include <utime.h>
+#endif
+
 #include <errno.h>
 #include <strings.h>
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
 #endif
+
+#if !defined(XV6_USER)
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
@@ -74,6 +88,12 @@
 #ifdef HAVE_SYS_UIO_H
 #include <sys/uio.h>
 #endif
+#endif
+
+#ifdef XV6_USER
+#define srandom  srand
+#define random   rand
+#endif
 
 #ifndef MSG_WAITALL
 #define MSG_WAITALL 0x100
@@ -83,6 +103,10 @@
 
 #ifndef MIN
 #define MIN(x,y) ((x)<(y)?(x):(y))
+#endif
+
+#ifndef MAX
+#define MAX(x,y) ((x)>(y)?(x):(y))
 #endif
 
 #define TCP_PORT 7003

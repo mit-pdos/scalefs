@@ -319,8 +319,7 @@ void child_run(struct child_struct *child0, const char *loadfile)
 	char **sparams, **params;
 	char *p;
 	const char *status;
-	gzFile *gzf;
-	pid_t parent = getppid();
+	gzFile gzf;
 	double targett;
 	struct child_struct *child;
 	int have_random = 0;
@@ -329,13 +328,18 @@ void child_run(struct child_struct *child0, const char *loadfile)
 
 	gzf = gzopen(loadfile, "r");
 	if (gzf == NULL) {
+#ifdef XV6_USER
+		die("loadfile");
+#else
 		perror(loadfile);
+#endif
 		exit(1);
 	}
 
 	for (child=child0;child<child0+options.clients_per_process;child++) {
 		child->line = 0;
-		asprintf(&child->cname,"client%d", child->id);
+		child->cname = (char *)malloc(10);
+		snprintf(child->cname, 10, "client%d", child->id);
 	}
 
 	sparams = calloc(20, sizeof(char *));
@@ -359,10 +363,6 @@ again:
 
 
 		params = sparams;
-
-		if (kill(parent, 0) == -1) {
-			exit(1);
-		}
 
 loop_again:
 		/* if this is a "LOOP <xxx>" line, 
