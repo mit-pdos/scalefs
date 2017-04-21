@@ -1,0 +1,120 @@
+VERSION=4.00
+
+srcdir=@srcdir@
+VPATH=@srcdir@
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+bindir=@bindir@
+mandir=@mandir@
+datadir=@datadir@
+docdir=@datadir@/doc/dbench
+XSLTPROC = /usr/bin/xsltproc
+INSTALLCMD=@INSTALL@
+LIBS=@LIBS@ -lpopt -lz @LIBSMBCLIENT@ @LIBISCSI@
+DESTDIR=/
+CC=@CC@
+CFLAGS=@CFLAGS@ -I. -DVERSION=\"$(VERSION)\" -DDATADIR=\"$(datadir)\"
+EXEEXT=@EXEEXT@
+
+LIBNFS_OBJ = libnfs.o mount_client.o nfs_client.o mount_xdr.o nfs_xdr.o
+
+DB_OBJS = fileio.o util.o dbench.o child.o system.o snprintf.o sockio.o nfsio.o libnfs.a socklib.o @LINUXSCSI@ iscsi.o libiscsi.o @SMBO@
+SRV_OBJS = util.o tbench_srv.o socklib.o
+
+all: dbench doc
+
+dbench: $(DB_OBJS)
+	$(CC) -o $@ $(DB_OBJS) $(LIBS)
+
+tbench_srv: $(SRV_OBJS)
+	$(CC) -o $@ $(SRV_OBJS) $(LIBS)
+
+tbench: dbench
+	ln -sf dbench tbench
+
+libnfs.a: $(LIBNFS_OBJ) 
+	@echo Creating library $@
+	ar r libnfs.a $(LIBNFS_OBJ) 
+	ranlib libnfs.a
+
+nfsio.o: nfsio.c mount.h nfs.h
+	@echo Compiling $@
+	gcc -g -c nfsio.c -o $@
+
+libnfs.o: libnfs.c libnfs.h mount.h nfs.h
+	@echo Compiling $@
+	gcc -g -c libnfs.c -o $@
+
+mount.h: mount.x
+	@echo Generating $@
+	rpcgen -h mount.x > mount.h
+
+nfs.h: nfs.x
+	@echo Generating $@
+	rpcgen -h nfs.x > nfs.h
+
+mount_xdr.o: mount_xdr.c mount.h
+	@echo Compiling $@
+	gcc -g -c mount_xdr.c -o $@
+
+mount_xdr.c: mount.x
+	@echo Generating $@
+	rpcgen -c mount.x > mount_xdr.c
+
+mount_client.o: mount_client.c mount.h
+	@echo Compiling $@
+	gcc -g -c mount_client.c -o $@
+
+mount_client.c: mount.x
+	@echo Generating $@
+	rpcgen -l mount.x > mount_client.c
+
+nfs_xdr.o: nfs_xdr.c nfs.h
+	@echo Compiling $@
+	gcc -g -c nfs_xdr.c -o $@
+
+nfs_xdr.c: nfs.x
+	@echo Generating $@
+	rpcgen -c nfs.x > nfs_xdr.c
+
+nfs_client.o: nfs_client.c nfs.h
+	@echo Compiling $@
+	gcc -g -c nfs_client.c -o $@
+
+nfs_client.c: nfs.x
+	@echo Generating $@
+	rpcgen -l nfs.x > nfs_client.c
+
+doc/dbench.1.html: doc/dbench.1.xml
+	-test -z "$(XSLTPROC)" || $(XSLTPROC) -o $@ http://docbook.sourceforge.net/release/xsl/current/html/docbook.xsl $<
+
+doc/dbench.1: doc/dbench.1.xml
+	-test -z "$(XSLTPROC)" || $(XSLTPROC) -o $@ http://docbook.sourceforge.net/release/xsl/current/manpages/docbook.xsl $<
+
+doc: doc/dbench.1 doc/dbench.1.html
+
+# Careful here: don't install client.txt over itself.
+install: all
+	mkdir -p $(DESTDIR)$(bindir)
+	mkdir -p $(DESTDIR)$(docdir)/loadfiles
+	mkdir -p $(DESTDIR)$(mandir)/man1
+	${INSTALLCMD} dbench $(DESTDIR)$(bindir)
+	${INSTALLCMD} loadfiles/client.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/nfs.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/nfs_2.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/smb.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/smb_1.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/smb_2.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/smb_3.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/iscsi.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} loadfiles/scsi.txt $(DESTDIR)$(docdir)/loadfiles
+	${INSTALLCMD} -m644 dbench.1 $(DESTDIR)$(mandir)/man1
+
+clean:
+	rm -f *.[ao] *~ dbench tbench_srv
+	rm -f mount.h mount_xdr.c mount_client.c
+	rm -f nfs.h nfs_xdr.c nfs_client.c 
+
+proto:
+	./mkproto.pl *.c > proto.h
