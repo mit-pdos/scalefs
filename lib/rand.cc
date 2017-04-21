@@ -9,5 +9,6 @@ srand(unsigned int seed)
 int
 rand(void)
 {
-  return rdtsc();
+  int t = rdtsc();
+  return (t >= 0) ? t : 0 - t;
 }
