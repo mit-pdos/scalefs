@@ -47,91 +47,32 @@ static int find_handle(struct child_struct *child, int handle)
    are meant to be synchronous on NFSv2. */
 static void sync_parent(struct child_struct *child, const char *fname)
 {
-	char *copy_name;
+	char copy_name[64];
 	int dir_fd;
 	char *slash;
 
 	if (strchr(fname, '/')) {
-		copy_name = strdup(fname);
+		strncpy(copy_name, fname, sizeof(copy_name));
 		slash = strrchr(copy_name, '/');
 		*slash = '\0';
 	} else {
-		copy_name = strdup(".");
-	} 
-	
+		strncpy(copy_name, ".", sizeof(copy_name));
+	}
+
 	dir_fd = open(copy_name, O_RDONLY);
 	if (dir_fd == -1) {
-		printf("[%d] open directory \"%s\" for sync failed: %s\n",
-		       child->line, copy_name, strerror(errno));
+		printf("[%d] open directory \"%s\" for sync failed\n",
+		       child->line, copy_name);
 	} else {
-#if defined(HAVE_FDATASYNC)
-		if (fdatasync(dir_fd) == -1) {
-#else
 		if (fsync(dir_fd) == -1) {
-#endif
-			printf("[%d] datasync directory \"%s\" failed: %s\n",
-			       child->line, copy_name,
-			       strerror(errno));
+			printf("[%d] datasync directory \"%s\" failed\n",
+			       child->line, copy_name);
 		}
 		if (close(dir_fd) == -1) {
-			printf("[%d] close directory failed: %s\n",
-			       child->line, strerror(errno));
+			printf("[%d] close directory failed\n",
+			       child->line);
 		}
 	}
-	free(copy_name);
-}
-
-static void xattr_fd_read_hook(struct child_struct *child, int fd)
-{
-#if HAVE_EA_SUPPORT
-	char buf[44];
-	if (options.ea_enable) {
-		memset(buf, 0, sizeof(buf));
-		sys_fgetxattr(fd, "user.DosAttrib", buf, sizeof(buf));
-	}
-#else
-	(void)fd;
-#endif
-	(void)child;
-}
-
-static void xattr_fname_read_hook(struct child_struct *child, const char *fname)
-{
-#if HAVE_EA_SUPPORT
-	if (options.ea_enable) {
-		char buf[44];
-		sys_getxattr(fname, "user.DosAttrib", buf, sizeof(buf));
-	}
-#else
-	(void)fname;
-#endif
-	(void)child;
-}
-
-static void xattr_fd_write_hook(struct child_struct *child, int fd)
-{
-#if HAVE_EA_SUPPORT
-	if (options.ea_enable) {
-		struct timeval tv;
-		char buf[44];
-		sys_fgetxattr(fd, "user.DosAttrib", buf, sizeof(buf));
-		memset(buf, 0, sizeof(buf));
-		/* give some probability of sharing */
-		if (random() % 10 < 2) {
-			*(time_t *)buf = time(NULL);
-		} else {
-			gettimeofday(&tv, NULL);
-			memcpy(buf, &tv, sizeof(tv));
-		}
-		if (sys_fsetxattr(fd, "user.DosAttrib", buf, sizeof(buf), 0) != 0) {
-			printf("[%d] fsetxattr failed - %s\n", 
-			       child->line, strerror(errno));
-			exit(1);
-		}
-	}
-#else
-	(void)fd;
-#endif
 }
 
 static int expected_status(const char *status)
@@ -152,38 +93,50 @@ static int expected_status(const char *status)
 static void resolve_name(struct child_struct *child, const char *name)
 {
 	struct stat st;
-	char *dname, *fname;
+	char dname[64], *fname;
+#ifdef XV6_USER
+	int dirfd;
+	char *prevname = NULL;
+	char namebuf[DIRSIZ+1];
+#else
 	DIR *dir;
-	char *p;
 	struct dirent *d;
+#endif
+	char *p;
 
 	if (name == NULL) return;
 
-	if (stat(name, &st) == 0) {
-		xattr_fname_read_hook(child, name);
+	if (stat(name, &st) == 0)
 		return;
-	}
 
 	if (options.no_resolve) {
 		return;
 	}
 
-	dname = strdup(name);
+	strncpy(dname, name, sizeof(dname));
 	p = strrchr(dname, '/');
 	if (!p) return;
 	*p = 0;
 	fname = p+1;
 
-	dir = opendir(dname);
-	if (!dir) {
-		free(dname);
+#ifdef XV6_USER
+	dirfd = open(dname, O_RDONLY|O_DIRECTORY);
+	if (dirfd < 0)
 		return;
+	while (readdir(dirfd, prevname, namebuf) > 0) {
+		if (strcasecmp(fname, namebuf) == 0)
+			break;
 	}
+	close(dirfd);
+#else
+	dir = opendir(dname);
+	if (!dir)
+		return;
 	while ((d = readdir(dir))) {
 		if (strcasecmp(fname, d->d_name) == 0) break;
 	}
 	closedir(dir);
-	free(dname);
+#endif
 }
 
 static void failed(struct child_struct *child)
@@ -207,8 +160,8 @@ static void fio_unlink(struct dbench_op *op)
 	resolve_name(op->child, op->fname);
 
 	if (unlink(op->fname) != expected_status(op->status)) {
-		printf("[%d] unlink %s failed (%s) - expected %s\n", 
-		       op->child->line, op->fname, strerror(errno), op->status);
+		printf("[%d] unlink %s failed - expected %s\n", 
+		       op->child->line, op->fname, op->status);
 		failed(op->child);
 	}
 	if (options.sync_dirs) sync_parent(op->child, op->fname);
@@ -235,8 +188,8 @@ static void fio_rmdir(struct dbench_op *op)
 	}
 
 	if (rmdir(op->fname) != expected_status(op->status)) {
-		printf("[%d] rmdir %s failed (%s) - expected %s\n", 
-		       op->child->line, op->fname, strerror(errno), op->status);
+		printf("[%d] rmdir %s failed - expected %s\n", 
+		       op->child->line, op->fname, op->status);
 		failed(op->child);
 	}
 	if (options.sync_dirs) sync_parent(op->child, op->fname);
@@ -253,8 +206,6 @@ static void fio_createx(struct dbench_op *op)
 	struct ftable *ftable = (struct ftable *)op->child->private;
 
 	resolve_name(op->child, op->fname);
-
-	if (options.sync_open) flags |= O_SYNC;
 
 	if (create_disposition == FILE_CREATE) {
 		if (options.stat_check && stat(op->fname, &st) == 0) {
@@ -279,14 +230,14 @@ static void fio_createx(struct dbench_op *op)
 	if (create_options & FILE_DIRECTORY_FILE) flags = O_RDONLY|O_DIRECTORY;
 
 	fd = open(op->fname, flags, 0600);
-	if (fd == -1 && errno == EISDIR) {
+	if (fd < 0) {
 		flags = O_RDONLY|O_DIRECTORY;
 		fd = open(op->fname, flags, 0600);
 	}
 	if (fd == -1) {
 		if (expected_status(op->status) == 0) {
-			printf("[%d] open %s failed for handle %d (%s)\n", 
-			       op->child->line, op->fname, fnum, strerror(errno));
+			printf("[%d] open %s failed for handle %d\n", 
+			       op->child->line, op->fname, fnum);
 		}
 		return;
 	}
@@ -304,15 +255,13 @@ static void fio_createx(struct dbench_op *op)
 		printf("file table full for %s\n", op->fname);
 		exit(1);
 	}
-	ftable[i].name = strdup(op->fname);
+
+	ftable[i].name = (char *)malloc(64);
+	strncpy(ftable[i].name, op->fname, 64);
 	ftable[i].handle = fnum;
 	ftable[i].fd = fd;
 
 	fstat(fd, &st);
-
-	if (!S_ISDIR(st.st_mode)) {
-		xattr_fd_write_hook(op->child, fd);
-	}
 }
 
 static void fio_writex(struct dbench_op *op)
@@ -345,18 +294,13 @@ static void fio_writex(struct dbench_op *op)
 				op->child->bytes += size;
 				return;
 			}
-		} else if (((unsigned char *)buf)[0] == 0) {
-			ftruncate(ftable[i].fd, offset+1);
-			free(buf);
-			op->child->bytes += size;
-			return;
-		} 
+		}
 	}
 
 	ret = pwrite(ftable[i].fd, buf, size, offset);
 	if (ret == -1) {
-		printf("[%d] write failed on handle %d (%s)\n", 
-		       op->child->line, handle, strerror(errno));
+		printf("[%d] write failed on handle %d\n", 
+		       op->child->line, handle);
 		exit(1);
 	}
 	if (ret != ret_size) {
@@ -391,8 +335,8 @@ static void fio_readx(struct dbench_op *op)
 	buf = malloc(size);
 
 	if (pread(ftable[i].fd, buf, size, offset) != ret_size) {
-		printf("[%d] read failed on handle %d (%s)\n", 
-		       op->child->line, handle, strerror(errno));
+		printf("[%d] read failed on handle %d\n", 
+		       op->child->line, handle);
 	}
 
 	free(buf);
@@ -430,8 +374,8 @@ static void fio_rename(struct dbench_op *op)
 	}
 
 	if (rename(old, new) != expected_status(op->status)) {
-		printf("[%d] rename %s %s failed (%s) - expected %s\n", 
-		       op->child->line, old, new, strerror(errno), op->status);
+		printf("[%d] rename %s %s failed - expected %s\n", 
+		       op->child->line, old, new, op->status);
 		failed(op->child);
 	}
 	if (options.sync_dirs) sync_parent(op->child, new);
@@ -460,17 +404,6 @@ static void fio_qfileinfo(struct dbench_op *op)
 	(void)op->child;
 	(void)level;
 	fstat(ftable[i].fd, &st);
-	xattr_fd_read_hook(op->child, ftable[i].fd);
-}
-
-static void fio_qfsinfo(struct dbench_op *op)
-{
-	int level = op->params[0];
-	struct statvfs st;
-
-	(void)level;
-
-	statvfs(op->child->directory, &st);
 }
 
 static void fio_findfirst(struct dbench_op *op)
@@ -478,8 +411,14 @@ static void fio_findfirst(struct dbench_op *op)
 	int level = op->params[0];
 	int maxcnt = op->params[1];
 	int count = op->params[2];
+#ifdef XV6_USER
+	int dirfd;
+	char *prevname = NULL;
+	char namebuf[DIRSIZ+1];
+#else
 	DIR *dir;
 	struct dirent *d;
+#endif
 	char *p;
 
 	(void)op->child;
@@ -488,35 +427,57 @@ static void fio_findfirst(struct dbench_op *op)
 
 	resolve_name(op->child, op->fname);
 
+#ifdef XV6_USER
+	if (strchr(op->fname, '<') == NULL &&
+	    strchr(op->fname, '>') == NULL &&
+	    strchr(op->fname, '*') == NULL &&
+	    strchr(op->fname, '?') == NULL &&
+	    strchr(op->fname, '"') == NULL)
+		return;
+#else
 	if (strpbrk(op->fname, "<>*?\"") == NULL) {
 		return;
 	}
+#endif
 
 	p = strrchr(op->fname, '/');
 	if (!p) return;
 	*p = 0;
+#ifdef XV6_USER
+	dirfd = open(op->fname, O_RDONLY|O_DIRECTORY);
+	if (dirfd < 0)
+		return;
+	while (maxcnt && (readdir(dirfd, prevname, namebuf) > 0))
+		maxcnt--;
+	close(dirfd);
+#else
 	dir = opendir(op->fname);
 	if (!dir) return;
 	while (maxcnt && (d = readdir(dir))) maxcnt--;
 	closedir(dir);
+#endif
 }
 
 static void fio_deltree(struct dbench_op *op)
 {
-	DIR *d;
-	struct dirent *de;
-	
-	d = opendir(op->fname);
-	if (d == NULL) return;
+#ifdef XV6_USER
+	int dirfd, ret = 0;
+	char *prevname = NULL;
+	char namebuf[DIRSIZ+1];
 
-	for (de=readdir(d);de;de=readdir(d)) {
+	dirfd = open(op->fname, O_RDONLY|O_DIRECTORY);
+	if (dirfd < 0)
+		return;
+
+	for (ret = readdir(dirfd, prevname, namebuf);
+		ret > 0; ret = readdir(dirfd, prevname, namebuf)) {
 		struct stat st;
-		char *fname = NULL;
-		if (strcmp(de->d_name, ".") == 0 ||
-		    strcmp(de->d_name, "..") == 0) {
+		char *fname = (char *)malloc(64);
+		if (strcmp(namebuf, ".") == 0 ||
+		    strcmp(namebuf, "..") == 0) {
 			continue;
 		}
-		asprintf(&fname, "%s/%s", op->fname, de->d_name);
+		snprintf(fname, 64, "%s/%s", op->fname, namebuf);
 		if (fname == NULL) {
 			printf("Out of memory\n");
 			exit(1);
@@ -530,114 +491,83 @@ static void fio_deltree(struct dbench_op *op)
 			fio_deltree(&op2);
 		} else {
 			if (unlink(fname) != 0) {
-				printf("[%d] unlink '%s' failed - %s\n",
-				       op->child->line, fname, strerror(errno));
+				printf("[%d] unlink '%s' failed\n",
+				       op->child->line, fname);
+			}
+		}
+		free(fname);
+	}
+	close(dirfd);
+#else
+	DIR *d;
+	struct dirent *de;
+
+	d = opendir(op->fname);
+	if (d == NULL) return;
+
+	for (de=readdir(d);de;de=readdir(d)) {
+		struct stat st;
+		char *fname = (char *)malloc(64);
+		if (strcmp(de->d_name, ".") == 0 ||
+		    strcmp(de->d_name, "..") == 0) {
+			continue;
+		}
+		snprintf(fname, 64, "%s/%s", op->fname, de->d_name);
+		if (fname == NULL) {
+			printf("Out of memory\n");
+			exit(1);
+		}
+		if (stat(fname, &st) != 0) {
+			continue;
+		}
+		if (S_ISDIR(st.st_mode)) {
+			struct dbench_op op2 = *op;
+			op2.fname = fname;
+			fio_deltree(&op2);
+		} else {
+			if (unlink(fname) != 0) {
+				printf("[%d] unlink '%s' failed\n",
+				       op->child->line, fname);
 			}
 		}
 		free(fname);
 	}
 	closedir(d);
+#endif
 }
 
 static void fio_cleanup(struct child_struct *child)
 {
-	char *dname;
+	char *dname = (char *)malloc(64);
 	struct dbench_op op;
 
 	ZERO_STRUCT(op);
 
-	asprintf(&dname, "%s/clients/client%d", child->directory, child->id);
+	snprintf(dname, 64, "%s/clients/client%d", child->directory, child->id);
 	op.child = child;
 	op.fname = dname;
 	fio_deltree(&op);
 	free(dname);
 
-	asprintf(&dname, "%s%s", child->directory, "/clients");
+	dname = (char *)malloc(64);
+	snprintf(dname, 64, "%s%s", child->directory, "/clients");
 	rmdir(dname);
 	free(dname);
-}
-
-
-static void fio_sfileinfo(struct dbench_op *op)
-{
-	int handle = op->params[0];
-	int level = op->params[1];
-	struct ftable *ftable = (struct ftable *)op->child->private;
-	int i = find_handle(op->child, handle);
-	struct utimbuf tm;
-	struct stat st;
-	(void)op->child;
-	(void)handle;
-	(void)level;
-	xattr_fd_read_hook(op->child, ftable[i].fd);
-
-	fstat(ftable[i].fd, &st);
-
-	tm.actime = st.st_atime - 10;
-	tm.modtime = st.st_mtime - 12;
-
-	utime(ftable[i].name, &tm);
-
-	if (!S_ISDIR(st.st_mode)) {
-		xattr_fd_write_hook(op->child, ftable[i].fd);
-	}
-}
-
-static void fio_lockx(struct dbench_op *op)
-{
-	int handle = op->params[0];
-	uint32_t offset = op->params[1];
-	int size = op->params[2];
-	struct ftable *ftable = (struct ftable *)op->child->private;
-	int i = find_handle(op->child, handle);
-	struct flock lock;
-
-	(void)op->child;
-
-	lock.l_type = F_WRLCK;
-	lock.l_whence = SEEK_SET;
-	lock.l_start = offset;
-	lock.l_len = size;
-	lock.l_pid = 0;
-
-	fcntl(ftable[i].fd, F_SETLKW, &lock);
-}
-
-static void fio_unlockx(struct dbench_op *op)
-{
-	int handle = op->params[0];
-	uint32_t offset = op->params[1];
-	int size = op->params[2];
-	struct ftable *ftable = (struct ftable *)op->child->private;
-	int i = find_handle(op->child, handle);
-	struct flock lock;
-
-	lock.l_type = F_UNLCK;
-	lock.l_whence = SEEK_SET;
-	lock.l_start = offset;
-	lock.l_len = size;
-	lock.l_pid = 0;
-
-	fcntl(ftable[i].fd, F_SETLKW, &lock);
 }
 
 static struct backend_op ops[] = {
 	{ "Deltree", fio_deltree },
 	{ "Flush", fio_flush },
 	{ "Close", fio_close },
-	{ "LockX", fio_lockx },
 	{ "Rmdir", fio_rmdir },
 	{ "Mkdir", fio_mkdir },
 	{ "Rename", fio_rename },
 	{ "ReadX", fio_readx },
 	{ "WriteX", fio_writex },
 	{ "Unlink", fio_unlink },
-	{ "UnlockX", fio_unlockx },
 	{ "FIND_FIRST", fio_findfirst },
-	{ "SET_FILE_INFORMATION", fio_sfileinfo },
 	{ "QUERY_FILE_INFORMATION", fio_qfileinfo },
 	{ "QUERY_PATH_INFORMATION", fio_qpathinfo },
-	{ "QUERY_FS_INFORMATION", fio_qfsinfo },
 	{ "NTCreateX", fio_createx },
 	{ NULL, NULL}
 };
