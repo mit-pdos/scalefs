@@ -212,8 +212,10 @@ static void child_op(struct child_struct *child, const char *opname,
 		}
 	}
 
+#if 0
 	printf("[%u] Unknown operation %s in pid %u\n", 
 	       child->line, op.op, (unsigned)getpid());
+#endif
 }
 
 #define MAX_RND_STR 10
@@ -278,10 +280,16 @@ again:
 
 
 finished:
+#if 0
 	if (sscanf(line, "RANDOMSTRING %u %s\n", &idx, str) != 2) {
 		fprintf(stderr, "Invalid RANDOMSTRING line : [%s]\n", line);
 		return 1;
 	}
+#else
+	// fileio benchmark doesn't have RANDOMSTRING in client.txt
+	fprintf(stderr, "Invalid RANDOMSTRING line : [%s]\n", line);
+	return 1;
+#endif
 	/* remote initial " */
 	while (str[0] == '"') {
 		memcpy(str, str+1, sizeof(str)-1);
@@ -369,10 +377,16 @@ loop_again:
 		 * remember the current file position and move to the next line
 		 */
 		if (strncmp(line, "LOOP", 4) == 0) {
+#if 0
 			if (sscanf(line, "LOOP %u\n", &loop_count) != 1) {
 				fprintf(stderr, "Incorrect LOOP at line %d\n", child0->line);
 				goto done;
 			}
+#else
+			// fileio benchmark doesn't have LOOP in client.txt
+			fprintf(stderr, "Incorrect LOOP at line %d\n", child0->line);
+			goto done;
+#endif
 
 	       		for (child=child0;child<child0+options.clients_per_process;child++) {
 				child->line++;
@@ -390,19 +404,25 @@ loop_again:
 			if (loop_count > 0) {
 				gzseek(gzf, loop_start, SEEK_SET);
 			}
-			
+
 			gzgets(gzf, line, sizeof(line)-1);
 			goto loop_again;
-		}			
+		}
 
 		/* if this is a "REPEAT <xxx>" line, just replace the
 		 * currently read line with the next line
 		 */
 		if (strncmp(line, "REPEAT", 6) == 0) {
+#if 0
 			if (sscanf(line, "REPEAT %u\n", &repeat_count) != 1) {
 				fprintf(stderr, "Incorrect REPEAT at line %d\n", child0->line);
 				goto done;
 			}
+#else
+			// fileio benchmark doesn't have REPEAT in client.txt
+			fprintf(stderr, "Incorrect REPEAT at line %d\n", child0->line);
+			goto done;
+#endif
 
 	       		for (child=child0;child<child0+options.clients_per_process;child++) {
 				child->line++;
@@ -480,6 +500,7 @@ loop_again:
 			exit(1);
 		}
 
+#if 0
 		if (i > 0 && isdigit(params[0][0])) {
 			targett = strtod(params[0], NULL);
 			params++;
@@ -487,6 +508,9 @@ loop_again:
 		} else {
 			targett = 0.0;
 		}
+#else
+		targett = 0.0;
+#endif
 
 		if (strncmp(params[i-1], "NT_STATUS_", 10) != 0 &&
 		    strncmp(params[i-1], "0x", 2) != 0 &&
