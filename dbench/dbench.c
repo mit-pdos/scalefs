@@ -23,14 +23,12 @@
    can choose what kind it wants for each OPEN operation. */
 
 #include "dbench.h"
-#include "popt.h"
-#include <sys/sem.h>
 #include <zlib.h>
 
 struct options options = {
 	.backend             = "fileio",
-	.timelimit           = 600,
-	.loadfile            = DATADIR "/client.txt",
+	.timelimit           = 60,
+	.loadfile            = "client.txt",
 	.directory           = ".",
 	.tcp_options         = TCP_OPTIONS,
 	.nprocs              = 10,
@@ -61,14 +59,13 @@ int global_random;
 
 static gzFile *open_loadfile(void)
 {
-	gzFile		*f;
+	gzFile		f;
 
 	if ((f = gzopen(options.loadfile, "rt")) != NULL)
 		return f;
 
 	fprintf(stderr,
-		"dbench: error opening '%s': %s\n", options.loadfile,
-		strerror(errno));
+		"dbench: error opening '%s'\n", options.loadfile);
 
 	return NULL;
 }
@@ -305,7 +302,6 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 		if (fork() == 0) {
 			int j;
 
-			setlinebuf(stdout);
 			srandom(getpid() ^ time(NULL));
 
 			for (j=0;j<options.clients_per_process;j++) {
@@ -319,7 +315,7 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 			}
 
 			fn(&children[i*options.clients_per_process], options.loadfile);
-			_exit(0);
+			exit(0);
 		}
 	}
 
@@ -371,8 +367,9 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 
 
 
-static void process_opts(int argc, const char **argv)
+static void process_opts(int argc, char **argv)
 {
+#if 0
 	const char **extra_argv;
 	int extra_argc = 0;
 	struct poptOption popt_options[] = {
@@ -481,19 +478,52 @@ static void process_opts(int argc, const char **argv)
 	if (extra_argc >= 2) {
 		options.server = extra_argv[1];
 	}
+#else
+	char ch;
+
+	// dbench [-t timelimit -s -f] nprocs dir
+	while ((ch = getopt(argc, argv, "t:sf")) != -1) {
+		switch (ch) {
+		case 't':
+			options.timelimit = atoi(optarg);
+			break;
+		case 's':
+			options.sync_dirs = 1;
+			break;
+		case 'f':
+			options.do_fsync = 1;
+			break;
+		}
+	}
+	argc -= optind;
+	argv += optind;
+
+	options.nprocs = atoi(argv[0]);
+	options.directory = argv[1];
+
+	printf("dbench options are:\n");
+
+	printf("options.backend %s\n", options.backend);
+	printf("options.timelimit %d\n", options.timelimit);
+	printf("options.warmup %d\n", options.warmup);
+	printf("options.sync_dirs %d\n", options.sync_dirs);
+	printf("options.do_fsync %d\n", options.do_fsync);
+	printf("options.nprocs %d\n", options.nprocs);
+	printf("options.directory %s\n", options.directory);
+
+	printf("\n\n");
+#endif
 }
 
 
 
- int main(int argc, const char *argv[])
+ int main(int argc, char *argv[])
 {
 	double total_bytes = 0;
-	double t, latency=0;
+	double latency=0;
 	int i;
 
-	setlinebuf(stdout);
-
-	printf("dbench version %s - Copyright Andrew Tridgell 1999-2004\n\n", VERSION);
+	printf("dbench - Copyright Andrew Tridgell 1999-2004\n\n");
 
 	if (strstr(argv[0], "dbench")) {
 		options.backend = "fileio";
@@ -515,25 +545,6 @@ static void process_opts(int argc, const char **argv)
 	if (strcmp(options.backend, "fileio") == 0) {
 		extern struct nb_operations fileio_ops;
 		nb_ops = &fileio_ops;
-	} else if (strcmp(options.backend, "sockio") == 0) {
-		extern struct nb_operations sockio_ops;
-		nb_ops = &sockio_ops;
-	} else if (strcmp(options.backend, "nfs") == 0) {
-		extern struct nb_operations nfs_ops;
-		nb_ops = &nfs_ops;
-#ifdef HAVE_LINUX_SCSI_SG
-	} else if (strcmp(options.backend, "scsi") == 0) {
-		extern struct nb_operations scsi_ops;
-		nb_ops = &scsi_ops;
-#endif /* HAVE_LINUX_SCSI_SG */
-	} else if (strcmp(options.backend, "iscsi") == 0) {
-		extern struct nb_operations iscsi_ops;
-		nb_ops = &iscsi_ops;
-#ifdef HAVE_LIBSMBCLIENT
-	} else if (strcmp(options.backend, "smb") == 0) {
-		extern struct nb_operations smb_ops;
-		nb_ops = &smb_ops;
-#endif
 	} else {
 		printf("Unknown backend '%s'\n", options.backend);
 		exit(1);
@@ -559,8 +570,6 @@ static void process_opts(int argc, const char **argv)
 		total_bytes += children[i].bytes - children[i].bytes_done_warmup;
 		latency = MAX(latency, children[i].worst_latency);
 	}
-
-	t = timeval_elapsed2(&tv_start, &tv_end);
 
 	if (options.machine_readable) {
 		printf(";%g;%d;%d;%.03f;\n", 
