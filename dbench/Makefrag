@@ -32,11 +32,10 @@ $(O)/dbench/%.o: dbench/%.c $(O)/sysroot
 $(O)/dbench/dbench.unstripped: $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(ULIB_END) $(UPROGS_LIBS)
 	@echo "  LD	$@"
 	$(Q)mkdir -p $(@D)
-	$(Q)$(LINK_CMD_BEGIN) -o $@ $(ULIB_BEGIN) $< $(LINK_CMD_END)
+	$(Q)$(LINK_CMD_BEGIN) -lz -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(LINK_CMD_END)
 
 $(O)/dbench/dbench : $(O)/dbench/dbench.unstripped
 	@echo "  STRIP $@"
 	$(Q)mkdir -p $(@D)
 	$(Q)$(STRIP) -o $@ $<
-
-DBENCH_BIN := dbench/dbench
+	$(Q)$(shell) cp $(O)/dbench/dbench $(O)/bin/

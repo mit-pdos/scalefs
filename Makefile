@@ -180,9 +180,9 @@ else
 FSEXTRA += sv6journal* testfile1 README
 endif
 
-$(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS)
+$(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS) $(O)/dbench/dbench
 	@echo "  MKFS   $@"
-	$(Q)$(O)/tools/mkfs $@ $(FSEXTRA) $(UPROGS)
+	$(Q)$(O)/tools/mkfs $@ $(FSEXTRA) $(UPROGS) $(O)/bin/dbench
 
 $(O)/fs.imgz: $(O)/tools/zlib-1.2.8/zlib-compress $(O)/fs.img $(O)/libz.a
 	@echo "  ZLIB   $@"
