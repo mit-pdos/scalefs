@@ -163,7 +163,7 @@ LINK_CMD_END := $(LINK_CMD_END) -static
 LINK_CMD_BEGIN += -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 
 # Build an initramfs
-$(O)/initramfs: $(addprefix $(O)/bin/, $(UPROGS_NATIVE))
+$(O)/initramfs: $(addprefix $(O)/bin/, $(UPROGS_NATIVE)) $(O)/dbench/dbench
 	@echo "  CPIO   $@"
 	$(Q)(cd $(<D); ls -1 $(^F) | cpio -o -H newc) > $@
 ALL += $(O)/initramfs

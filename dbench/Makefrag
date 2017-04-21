@@ -9,8 +9,26 @@ ifeq ($(PLATFORM),xv6)
 DBENCH_CFLAGS += -DXV6_USER
 endif
 
-LINK_CMD_BEGIN := $(Q)$(LD) $(LDFLAGS)
-LINK_CMD_END :=  --start-group $(UPROGS_LIBS) --end-group $(ULIB_END)
+ifeq ($(PLATFORM),native)
+LOCAL_LINK_CMD_BEGIN := $(Q)$(CC) $(CFLAGS)
+LOCAL_LINK_CMD_END :=  -Wl,--start-group $(UPROGS_LIBS) -Wl,--end-group $(ULIB_END)
+else
+LOCAL_LINK_CMD_BEGIN := $(Q)$(LD) $(LDFLAGS) 
+LOCAL_LINK_CMD_END :=  --start-group $(UPROGS_LIBS) --end-group $(ULIB_END)
+endif
+
+
+ifeq ($(PLATFORM),native)
+# Statically link for the Linux environment so we can create a trivial
+# initramfs without libraries
+LOCAL_LINK_CMD_END := $(LOCAL_LINK_CMD_END) -static
+# Unfortunately, the weak symbols in libpthread mean pthreads don't
+# work with static linking unless we force the linker to include the
+# whole archive.  This is, apparently, "not a bug"
+# (http://gcc.gnu.org/bugzilla/show_bug.cgi?id=52590).
+LOCAL_LINK_CMD_BEGIN += -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+endif
+
 
 DBENCH_SRCFILES := \
 	dbench/child.c \
@@ -32,7 +50,11 @@ $(O)/dbench/%.o: dbench/%.c $(O)/sysroot
 $(O)/dbench/dbench.unstripped: $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(ULIB_END) $(UPROGS_LIBS)
 	@echo "  LD	$@"
 	$(Q)mkdir -p $(@D)
-	$(Q)$(LINK_CMD_BEGIN) -lz -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(LINK_CMD_END)
+ifeq ($(PLATFORM),native)
+	$(Q)$(LOCAL_LINK_CMD_BEGIN) -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) -lz $(LOCAL_LINK_CMD_END)
+else
+	$(Q)$(LOCAL_LINK_CMD_BEGIN) -lz -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(LOCAL_LINK_CMD_END)
+endif
 
 $(O)/dbench/dbench : $(O)/dbench/dbench.unstripped
 	@echo "  STRIP $@"
