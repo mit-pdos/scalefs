@@ -130,6 +130,7 @@ include tools/Makefrag
 include tools/zlib-1.2.8/Makefrag
 include metis/Makefrag
 include fxmark/Makefrag
+include dbench/Makefrag
 
 $(O)/%.o: %.c $(O)/sysroot
 	@echo "  CC     $@"
@@ -294,6 +295,7 @@ bench:
 clean:
 	rm -fr $(O)
 	cd tools/zlib-1.2.8/; make clean; cd ../../;
+	cd dbench; make clean; cd ../;
 
 all:	$(ALL)
 

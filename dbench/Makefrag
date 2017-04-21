@@ -1,0 +1,42 @@
+# -*- makefile-gmake -*-
+
+-include $(O)/dbench/*.d
+
+DBENCH_CFLAGS := -Wall -g -O3 -D_GNU_SOURCE
+DBENCH_INCLUDES := -I. -Idbench -I$(O)/dbench
+
+ifeq ($(PLATFORM),xv6)
+DBENCH_CFLAGS += -DXV6_USER
+endif
+
+LINK_CMD_BEGIN := $(Q)$(LD) $(LDFLAGS)
+LINK_CMD_END :=  --start-group $(UPROGS_LIBS) --end-group $(ULIB_END)
+
+DBENCH_SRCFILES := \
+	dbench/child.c \
+	dbench/dbench.c \
+	dbench/fileio.c \
+	dbench/util.c
+
+DBENCH_OBJFILES := $(patsubst %.c, $(O)/%.o, $(DBENCH_SRCFILES))
+
+ifeq ($(PLATFORM),xv6)
+DBENCH_OBJFILES: $(O)/include/sysstubs.h
+endif
+
+$(O)/dbench/%.o: dbench/%.c $(O)/sysroot
+	@echo "  CC	$@"
+	$(Q)mkdir -p $(@D)
+	$(Q)$(CC) $(CFLAGS) -c -o $@ $< $(DBENCH_CFLAGS) $(DBENCH_INCLUDES)
+
+$(O)/dbench/dbench.unstripped: $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(ULIB_END) $(UPROGS_LIBS)
+	@echo "  LD	$@"
+	$(Q)mkdir -p $(@D)
+	$(Q)$(LINK_CMD_BEGIN) -o $@ $(ULIB_BEGIN) $< $(LINK_CMD_END)
+
+$(O)/dbench/dbench : $(O)/dbench/dbench.unstripped
+	@echo "  STRIP $@"
+	$(Q)mkdir -p $(@D)
+	$(Q)$(STRIP) -o $@ $<
+
+DBENCH_BIN := dbench/dbench
