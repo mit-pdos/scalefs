@@ -103,7 +103,7 @@ xwaitpid(int pid, const char *cmd)
 
 static void
 do_mua(int cpu, string spooldir, string msgpath, string* userdirs, int nusers,
-       bool roundrobin, size_t batch_size, bool verbose)
+       bool random_order, size_t batch_size, bool verbose)
 {
 #if defined(XV6_USER)
   int errno;
@@ -122,7 +122,6 @@ do_mua(int cpu, string spooldir, string msgpath, string* userdirs, int nusers,
   uint64_t mycount = 0;
   pid_t pid = 0;
   int msgpipe[2], respipe[2];
-  int userdir_idx = cpu-1;
 
   while (!stop) {
     if (__builtin_expect(warmup != mywarmup, 0)) {
@@ -137,8 +136,8 @@ do_mua(int cpu, string spooldir, string msgpath, string* userdirs, int nusers,
     if (batch_size)
       argv.push_back("-b");
     argv.push_back(spooldir.c_str());
-    if (roundrobin) // Deliver messages in a round-robin fashion to all users.
-      argv.push_back(userdirs[(++userdir_idx) % nusers].c_str());
+    if (random_order) // Pick a user at random to deliver mail to.
+      argv.push_back(userdirs[(unsigned int)rand() % nusers].c_str());
     else
       argv.push_back(userdirs[cpu].c_str());
     argv.push_back(nullptr);
@@ -230,9 +229,9 @@ create_spool(const string &base, int cpu)
 }
 
 static void
-create_maildir(const string &base, int cpu)
+create_maildir(const string &base, int userid, int nthreads)
 {
-  setaffinity(cpu);
+  setaffinity(userid % nthreads);
   xmkdir(base);
   xmkdir(base + "/tmp");
   xmkdir(base + "/new");
@@ -253,11 +252,16 @@ usage(const char *argv0)
   fprintf(stderr, "     inf    Spool in unbounded batches\n");
   fprintf(stderr, "  -p        Use delivery process pooling\n");
   fprintf(stderr, "  -c        Use nthreads spool directories\n");
-  fprintf(stderr, "  -u N      Use N user mailboxes (N should be 1 or nthreads)\n");
+  fprintf(stderr, "  -u N      Use N user mailboxes (N should be between 1 and 1000)\n");
+  fprintf(stderr, "  -r        Pick users at random for message delivery\n");
   fprintf(stderr, "  -v        Verbose\n");
   fprintf(stderr, "  -W        Disable warmup phase\n");
   exit(2);
 }
+
+// Allocating this large array on the stack can crash applications on sv6;
+// that's why it is not declared as a local array inside main().
+string userdirs[1000];
 
 int
 main(int argc, char **argv)
@@ -267,7 +271,7 @@ main(int argc, char **argv)
   bool verbose = false;
   bool pool = false;
   bool percpu_spooldirs = false;
-  bool roundrobin = false;
+  bool random_order = false;
   int nusers = 1;
   bool do_warmup = true;
   int opt;
@@ -289,7 +293,7 @@ main(int argc, char **argv)
       percpu_spooldirs = true;
       break;
     case 'r':
-      roundrobin = true;
+      random_order = true;
       break;
     case 'u':
       nusers = atoi(optarg);
@@ -314,14 +318,8 @@ main(int argc, char **argv)
   if (nthreads <= 0)
     usage(argv[0]);
 
-  if (nusers <= 0)
+  if (nusers <= 0 || nusers > 10000)
     usage(argv[0]);
-
-  // Currently we support only nusers = 1 or nusers = nthreads.
-  if (!(nusers == 1 || nusers == nthreads)) {
-    printf("Number of user mailboxes should be either 1 or nthreads\n");
-    usage(argv[0]);
-  }
 
   if (nusers > 1 && !percpu_spooldirs) {
     printf("Please setup nthreads spool dirs when using multiple user mailboxes\n");
@@ -350,12 +348,11 @@ main(int argc, char **argv)
   xmkdir(mailroot);
 
   // Associate a different user mailbox with each CPU, if the options permit.
-  string userdirs[128];
   for (int i = 0; i < nusers; i++) {
     char str[32];
     snprintf(str, sizeof(str), "/user%d", i);
     userdirs[i] = str;
-    create_maildir(mailroot + userdirs[i], i);
+    create_maildir(mailroot + userdirs[i], i, nthreads);
   }
 
   sync();
@@ -420,7 +417,7 @@ main(int argc, char **argv)
   std::thread *threads = new std::thread[nthreads];
   for (int i = 0; i < nthreads; ++i)
     threads[i] = std::thread(do_mua, i, percpu_spooldirs ? spooldirs[i] : spooldirs[0],
-                             basedir + "/msg", userdirs, nusers, roundrobin, batch_size,
+                             basedir + "/msg", userdirs, nusers, random_order, batch_size,
                              verbose);
 
   // Wait
