@@ -22,8 +22,12 @@
    doesn't matter.  On NFSv4 it might be interesting, since the client
    can choose what kind it wants for each OPEN operation. */
 
+#include <pthread.h>
 #include "dbench.h"
 #include <zlib.h>
+
+#include <assert.h>
+#include "libutil.h"
 
 struct options options = {
 	.backend             = "fileio",
@@ -52,12 +56,14 @@ struct options options = {
 
 static struct timeval tv_start;
 static struct timeval tv_end;
-static int barrier=-1;
+pthread_barrier_t bar;
+pthread_t tid[NCPU] __mpalign__ ;
+pthread_t timer_tid;
 static double throughput;
 struct nb_operations *nb_ops;
 int global_random;
 
-static gzFile *open_loadfile(void)
+static gzFile open_loadfile(void)
 {
 	gzFile		f;
 
@@ -71,14 +77,9 @@ static gzFile *open_loadfile(void)
 }
 
 
-static struct child_struct *children;
+static struct child_struct children[NCPU] __mpalign__ ;
 
-static void sem_cleanup() {
-	if (!(barrier==-1)) 
-		semctl(barrier,0,IPC_RMID);
-}
-
-static void sig_alarm(int sig)
+static void *timer_thread(void *arg)
 {
 	double total_bytes = 0;
 	int total_lines = 0;
@@ -91,7 +92,8 @@ static void sig_alarm(int sig)
 	struct timeval tnow;
 	int num_active = 0;
 	int num_finished = 0;
-	(void)sig;
+
+	pthread_barrier_wait(&bar);
 
 	tnow = timeval_current();
 
@@ -178,8 +180,9 @@ static void sig_alarm(int sig)
 
 	fflush(stdout);
 next:
-	signal(SIGALRM, sig_alarm);
-	alarm(PRINT_FREQ);
+	sleep(1);
+
+	return 0;
 }
 
 
@@ -241,17 +244,34 @@ static void report_latencies(void)
 	}
 }
 
+struct thread_args {
+	void (*fn)(struct child_struct *, const char *);
+} thread_args[NCPU] __mpalign__ ;
+
+void *run_benchmark(void *arg)
+{
+	int cpu = (uintptr_t)arg;
+
+	if (setaffinity(cpu) < 0) {
+		printf("setaffinity failed for cpu %d\n", cpu);
+		return 0;
+	}
+
+	for (int j = 0; j < options.clients_per_process; j++)
+		nb_ops->setup(&children[cpu*options.clients_per_process + j]);
+
+	pthread_barrier_wait(&bar);
+
+	thread_args[cpu].fn(&children[cpu * options.clients_per_process], options.loadfile);
+	return 0;
+}
+
 /* this creates the specified number of child processes and runs fn()
    in all of them */
 static void create_procs(int nprocs, void (*fn)(struct child_struct *, const char *))
 {
 	int nclients = nprocs * options.clients_per_process;
-	int i, status;
-	int synccount;
-	struct timeval tv;
-	gzFile *load;
-	struct sembuf sbuf;
-	double t;
+	gzFile load;
 
 	load = open_loadfile();
 	if (load == NULL) {
@@ -265,15 +285,9 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 		return;
 	}
 
-	children = shm_setup(sizeof(struct child_struct)*nclients);
-	if (!children) {
-		printf("Failed to setup shared memory\n");
-		return;
-	}
+	assert(options.clients_per_process == 1);
 
-	memset(children, 0, sizeof(*children)*nclients);
-
-	for (i=0;i<nclients;i++) {
+	for (int i = 0; i < nclients; i++) {
 		children[i].id = i;
 		children[i].num_clients = nclients;
 		children[i].cleanup = 0;
@@ -282,83 +296,21 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 		children[i].lasttime = timeval_current();
 	}
 
-	if (atexit(sem_cleanup) != 0) {
-		printf("can't register cleanup function on exit\n");
-		exit(1);
-	}
-	sbuf.sem_num =  0;
-	if ( !(barrier = semget(IPC_PRIVATE,1,IPC_CREAT | S_IRUSR | S_IWUSR)) ) {
-		printf("failed to create barrier semaphore \n");
-	}
-	sbuf.sem_flg =  SEM_UNDO;
-	sbuf.sem_op  =  1;
-	if (semop(barrier, &sbuf, 1) == -1) {
-		printf("failed to initialize the barrier semaphore\n");
-		exit(1);
-	}
-	sbuf.sem_flg =  0;
+	pthread_barrier_init(&bar, 0, nprocs+1);
 
-	for (i=0;i<nprocs;i++) {
-		if (fork() == 0) {
-			int j;
+	pthread_create(&timer_tid, NULL, timer_thread, NULL);
 
-			srandom(getpid() ^ time(NULL));
-
-			for (j=0;j<options.clients_per_process;j++) {
-				nb_ops->setup(&children[i*options.clients_per_process + j]);
-			}
-
-			sbuf.sem_op = 0;
-			if (semop(barrier, &sbuf, 1) == -1) {
-				printf("failed to use the barrier semaphore in child %d\n",getpid());
-				exit(1);
-			}
-
-			fn(&children[i*options.clients_per_process], options.loadfile);
-			exit(0);
-		}
-	}
-
-	synccount = 0;
-	tv = timeval_current();
-	do {
-		synccount = semctl(barrier,0,GETZCNT);
-		t = timeval_elapsed(&tv);
-		printf("%d of %d processes prepared for launch %3.0f sec\n", synccount, nprocs, t);
-		if (synccount == nprocs) break;
-		usleep(100*1000);
-	} while (timeval_elapsed(&tv) < 30);
-
-	if (synccount != nprocs) {
-		printf("FAILED TO START %d CLIENTS (started %d)\n", nprocs, synccount);
-		return;
+	for (uint64_t i = 0; i < nprocs; i++) {
+		thread_args[i].fn = fn;
+		pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
 	}
 
 	printf("releasing clients\n");
 	tv_start = timeval_current();
-	sbuf.sem_op  =  -1;
-	if (semop(barrier, &sbuf, 1) == -1) {
-		printf("failed to release barrier\n");
-		exit(1);
-	}
 
-	signal(SIGALRM, sig_alarm);
-	alarm(PRINT_FREQ);
-
-	for (i=0;i<nprocs;) {
-		if (waitpid(0, &status, 0) == -1) continue;
-		if (WEXITSTATUS(status) != 0) {
-			printf("Child failed with status %d\n",
-			       WEXITSTATUS(status));
-			exit(1);
-		}
-		i++;
-	}
-
-	alarm(0);
-	sig_alarm(SIGALRM);
-
-	semctl(barrier,0,IPC_RMID);
+	pthread_join(timer_tid, NULL);
+	for (int i = 0; i < nprocs; i++)
+		pthread_join(tid[i], NULL);
 
 	printf("\n");
 
