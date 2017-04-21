@@ -9,7 +9,6 @@ dbench
 nfsbench
 tbench
 tbench_srv
-config.h
 mount.h
 mount_xdr.c
 nfs.h
