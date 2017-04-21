@@ -68,6 +68,13 @@ sys_getpid(void)
 }
 
 //SYSCALL
+int
+sys_getppid(void)
+{
+  return myproc()->parent->pid;
+}
+
+//SYSCALL
 char*
 sys_sbrk(int n)
 {

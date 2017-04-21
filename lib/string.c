@@ -74,6 +74,19 @@ memchr(const void *s, int c, size_t n)
   return NULL;
 }
 
+void*
+index(const void *s, int c)
+{
+  for (size_t i = 0; ; ++i) {
+    if (((unsigned char*)s)[i] == c)
+      return &((unsigned char*)s)[i];
+
+    if (((unsigned char*)s)[i] == 0)
+      return NULL;
+  }
+  return NULL;
+}
+
 int
 strncmp(const char *p, const char *q, size_t n)
 {
@@ -124,6 +137,16 @@ strchr(const char *s, int c)
     if (*s == c)
       return (char*)s;
   return 0;
+}
+
+char*
+strrchr(const char *s, int c)
+{
+  char *p = NULL;
+  for (; *s; s++)
+    if (*s == c)
+      p = (char *)s;
+  return p;
 }
 
 size_t

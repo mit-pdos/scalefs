@@ -131,6 +131,102 @@ strtol(const char *s, char **endptr, int base)
   return (neg ? -val : val);
 }
 
+long long
+strtoll(const char *s, char **endptr, int base)
+{
+  int neg = 0;
+  long long val = 0;
+
+  // gobble initial whitespace
+  while (*s && strchr(" \n\r\t\f\v", *s))
+    s++;
+
+  // plus/minus sign
+  if (*s == '+')
+    s++;
+  else if (*s == '-')
+    s++, neg = 1;
+
+  // hex or octal base prefix
+  if ((base == 0 || base == 16) && (s[0] == '0' && s[1] == 'x'))
+    s += 2, base = 16;
+  else if (base == 0 && s[0] == '0')
+    s++, base = 8;
+  else if (base == 0)
+    base = 10;
+
+  // digits
+  while (1) {
+    int dig;
+
+    if (*s >= '0' && *s <= '9')
+      dig = *s - '0';
+    else if (*s >= 'a' && *s <= 'z')
+      dig = *s - 'a' + 10;
+    else if (*s >= 'A' && *s <= 'Z')
+      dig = *s - 'A' + 10;
+    else
+      break;
+    if (dig >= base)
+      break;
+    s++;
+    val = (val * base) + dig;
+    // we don't properly detect overflow!
+  }
+
+  if (endptr)
+    *endptr = (char *) s;
+  return (neg ? -val : val);
+}
+
+unsigned long
+strtoul(const char *s, char **endptr, int base)
+{
+  int neg = 0;
+  unsigned long val = 0;
+
+  // gobble initial whitespace
+  while (*s && strchr(" \n\r\t\f\v", *s))
+    s++;
+
+  // plus/minus sign
+  if (*s == '+')
+    s++;
+  else if (*s == '-')
+    s++, neg = 1;
+
+  // hex or octal base prefix
+  if ((base == 0 || base == 16) && (s[0] == '0' && s[1] == 'x'))
+    s += 2, base = 16;
+  else if (base == 0 && s[0] == '0')
+    s++, base = 8;
+  else if (base == 0)
+    base = 10;
+
+  // digits
+  while (1) {
+    int dig;
+
+    if (*s >= '0' && *s <= '9')
+      dig = *s - '0';
+    else if (*s >= 'a' && *s <= 'z')
+      dig = *s - 'a' + 10;
+    else if (*s >= 'A' && *s <= 'Z')
+      dig = *s - 'A' + 10;
+    else
+      break;
+    if (dig >= base)
+      break;
+    s++;
+    val = (val * base) + dig;
+    // we don't properly detect overflow!
+  }
+
+  if (endptr)
+    *endptr = (char *) s;
+  return (neg ? -val : val);
+}
+
 int
 open(const char *path, int omode, ...)
 {
@@ -170,6 +266,13 @@ unsigned
 sleep(unsigned secs)
 {
   nsleep((uint64_t)secs * 1000000000);
+  return 0;
+}
+
+unsigned
+usleep(unsigned usecs)
+{
+  nsleep((uint64_t)usecs * 1000);
   return 0;
 }
 

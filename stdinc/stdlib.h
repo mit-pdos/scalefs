@@ -24,6 +24,8 @@ void* realloc(void*, size_t);
 int atoi(const char*);
 long atol(const char*);
 long int strtol(const char *s, char **endptr, int base);
+long long strtoll(const char *s, char **endptr, int base);
+unsigned long strtoul(const char *s, char **endptr, int base);
 
 void exit(int status)
   __attribute__((__noreturn__));

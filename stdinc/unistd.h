@@ -26,7 +26,9 @@ void sync(void);
 int fsync(int fd);
 
 unsigned sleep(unsigned);
+unsigned usleep(unsigned);
 pid_t getpid(void);
+pid_t getppid(void);
 pid_t fork(void);
 
 extern char* optarg;

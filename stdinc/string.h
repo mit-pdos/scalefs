@@ -17,8 +17,10 @@ void *memmove(void *s1, const void *s2, size_t n) XV6_STRING_NOEXCEPT;
 int memcmp(const void *s1, const void *s2, size_t n);
 void *memset(void *s, int c, size_t n);
 void *memchr(const void *s, int c, size_t n);
+void *index(const void *s, int c);
 
 char *strchr(const char *s, int c);
+char *strrchr(const char *s, int c);
 size_t strlen(const char *s);
 char* strcpy(char*, const char*);
 char* strncpy(char *s, const char *t, size_t n) XV6_STRING_NOEXCEPT;
