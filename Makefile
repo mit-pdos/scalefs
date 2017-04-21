@@ -182,7 +182,7 @@ endif
 
 $(O)/fs.img: $(O)/tools/mkfs $(FSEXTRA) $(UPROGS) $(O)/dbench/dbench
 	@echo "  MKFS   $@"
-	$(Q)$(O)/tools/mkfs $@ $(FSEXTRA) $(UPROGS) $(O)/bin/dbench
+	$(Q)$(O)/tools/mkfs $@ $(FSEXTRA) $(UPROGS) $(O)/bin/dbench $(O)/bin/client.txt
 
 $(O)/fs.imgz: $(O)/tools/zlib-1.2.8/zlib-compress $(O)/fs.img $(O)/libz.a
 	@echo "  ZLIB   $@"

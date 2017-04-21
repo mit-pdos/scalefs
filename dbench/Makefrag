@@ -61,3 +61,4 @@ $(O)/dbench/dbench : $(O)/dbench/dbench.unstripped
 	$(Q)mkdir -p $(@D)
 	$(Q)$(STRIP) -o $@ $<
 	$(Q)$(shell) cp $(O)/dbench/dbench $(O)/bin/
+	$(Q)$(shell) cp dbench/loadfiles/client.txt $(O)/bin/
