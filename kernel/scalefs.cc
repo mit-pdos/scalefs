@@ -1579,6 +1579,9 @@ mfs_interface::pre_process_transaction(transaction *tr)
 void
 mfs_interface::post_process_transaction(transaction *tr)
 {
+  tr->deduplicate_freeblock_list();
+  tr->deduplicate_freeinum_list();
+
   // Now that the transaction has been committed, mark the freed blocks as
   // free in the in-memory free-bit-vector.
   for (auto &f : tr->free_block_list)
@@ -1891,6 +1894,9 @@ mfs_interface::commit_all_transactions(int cpu)
         trans->add_blocks(std::move((*it)->blocks));
         trans->deduplicate_blocks();
         assert(fits_in_journal(trans->blocks.size(), cpu));
+
+        trans->add_free_blocks(std::move((*it)->free_block_list));
+        trans->add_free_inums(std::move((*it)->free_inum_list));
 
         trans->last_group_txn_tsc = (*it)->enq_tsc;
         assert(trans->last_group_txn_tsc > trans->enq_tsc);

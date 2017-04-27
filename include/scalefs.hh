@@ -276,6 +276,18 @@ class transaction {
         blocks.push_back(std::move(b));
     }
 
+    void add_free_blocks(std::vector<u32> free_list)
+    {
+      for (auto &f : free_list)
+        free_block_list.push_back(std::move(f));
+    }
+
+    void add_free_inums(std::vector<u32> free_list)
+    {
+      for (auto &f : free_list)
+        free_inum_list.push_back(std::move(f));
+    }
+
     void add_allocated_block(u32 bno)
     {
       allocated_block_list.push_back(bno);
@@ -324,6 +336,42 @@ class transaction {
 
       for (auto &idx : erase_indices)
         dirty_blocknums.erase(dirty_blocknums.begin() + idx);
+    }
+
+    void deduplicate_freeblock_list()
+    {
+      std::sort(free_block_list.begin(), free_block_list.end());
+
+      std::vector<unsigned long> erase_indices;
+      for (auto b = free_block_list.begin(); b != free_block_list.end(); b++) {
+        if ((b+1) != free_block_list.end() && (*b) == (*(b+1))) {
+          erase_indices.push_back(b - free_block_list.begin());
+        }
+      }
+
+      std::sort(erase_indices.begin(), erase_indices.end(),
+                std::greater<unsigned long>());
+
+      for (auto &idx : erase_indices)
+        free_block_list.erase(free_block_list.begin() + idx);
+    }
+
+    void deduplicate_freeinum_list()
+    {
+      std::sort(free_inum_list.begin(), free_inum_list.end());
+
+      std::vector<unsigned long> erase_indices;
+      for (auto b = free_inum_list.begin(); b != free_inum_list.end(); b++) {
+        if ((b+1) != free_inum_list.end() && (*b) == (*(b+1))) {
+          erase_indices.push_back(b - free_inum_list.begin());
+        }
+      }
+
+      std::sort(erase_indices.begin(), erase_indices.end(),
+                std::greater<unsigned long>());
+
+      for (auto &idx : erase_indices)
+        free_inum_list.erase(free_inum_list.begin() + idx);
     }
 
     void deduplicate_blocks()
