@@ -393,8 +393,10 @@ class transaction {
       std::sort(erase_indices.begin(), erase_indices.end(),
                 std::greater<unsigned long>());
 
-      for (auto &idx : erase_indices)
+      for (auto &idx : erase_indices) {
+        delete blocks[idx];
         blocks.erase(blocks.begin() + idx);
+      }
     }
 
     // Comparison function to order diskblock updates. Diskblocks are ordered in
