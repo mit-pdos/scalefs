@@ -2043,17 +2043,117 @@ mfs_interface::write_journal_commit_block(u64 timestamp, int cpu)
   delete jrnl_trans;
 }
 
+mfs_interface::journal_header*
+mfs_interface::get_txn_start_block(int cpu)
+{
+  static char startbuf[BSIZE], zerobuf[BSIZE];
+  size_t hdr_size = sizeof(journal_header_block);
+  u32 offset = fs_journal[cpu]->current_offset();
+
+  if (readi(sv6_journal[cpu], startbuf, offset, hdr_size) != hdr_size)
+    return nullptr;
+
+  fs_journal[cpu]->update_offset(offset + hdr_size);
+
+  if (!memcmp((void *)startbuf, zerobuf, hdr_size))
+    return nullptr; // Zero-filled block is invalid.
+
+  journal_header *hdstartptr = (journal_header *)startbuf;
+
+  if (hdstartptr->header_type != JOURNAL_TXN_START)
+    return nullptr;
+
+  return hdstartptr;
+}
+
+bool
+mfs_interface::get_txn_data_blocks(int cpu, journal_header *hdstartptr,
+                                   transaction *trans)
+{
+  static char databuf[BSIZE];
+  u32 offset = fs_journal[cpu]->current_offset();
+  int num_blks = sizeof(hdstartptr->blocknums) / sizeof(u32);
+  u32 datablock_offset = hdstartptr->num_addr_blocks ?
+                         offset + sizeof(journal_addr_block) : offset;
+
+  for (int i = 0; i < num_blks && hdstartptr->blocknums[i]; i++) {
+
+    if (readi(sv6_journal[cpu], databuf, datablock_offset, BSIZE) != BSIZE) {
+      delete trans;
+      return false;
+    }
+
+    datablock_offset += BSIZE;
+    trans->add_block(hdstartptr->blocknums[i], databuf);
+  }
+
+  assert(!hdstartptr->num_addr_blocks); // TODO: Handle this case later.
+  fs_journal[cpu]->update_offset(datablock_offset);
+  return true;
+}
+
+bool
+mfs_interface::get_txn_commit_block(int cpu, transaction *trans)
+{
+  static char commitbuf[BSIZE];
+  size_t hdr_size = sizeof(journal_header_block);
+  u32 offset = fs_journal[cpu]->current_offset();
+
+  if (readi(sv6_journal[cpu], commitbuf, offset, hdr_size) != hdr_size) {
+    delete trans;
+    return false;
+  }
+
+  fs_journal[cpu]->update_offset(offset + hdr_size);
+
+  journal_header *hdcommitptr = (journal_header *)commitbuf;
+
+  if (hdcommitptr->header_type != JOURNAL_TXN_COMMIT ||
+      hdcommitptr->timestamp != trans->commit_tsc) {
+    delete trans;
+    return false;
+  }
+
+  return true;
+}
+
+
 // Called on reboot after a crash. Returns the transaction last committed
 // to this journal (but perhaps not yet applied to the disk filesystem).
 void
 mfs_interface::recover_journal(int cpu, std::vector<transaction*> &trans_vec)
 {
-  // TODO: Implement crash-recovery for the new journal layout.
-
   char jrnl_name[32];
   snprintf(jrnl_name, sizeof(jrnl_name), "/sv6journal%d", cpu);
   sv6_journal[cpu] = namei(sref<inode>(), jrnl_name);
   assert(sv6_journal[cpu]);
+
+  u64 last_tsc = 0;
+
+  ilock(sv6_journal[cpu], WRITELOCK);
+
+  while (fs_journal[cpu]->current_offset() < PHYS_JOURNAL_SIZE) {
+
+    journal_header *hdstartptr = get_txn_start_block(cpu);
+    if (!hdstartptr || hdstartptr->timestamp < last_tsc)
+      break;
+
+    last_tsc = hdstartptr->timestamp;
+
+    transaction *trans = new transaction(hdstartptr->timestamp);
+    trans->commit_tsc = hdstartptr->timestamp;
+
+    if (!get_txn_data_blocks(cpu, hdstartptr, trans))
+      break;
+
+    if (!get_txn_commit_block(cpu, trans))
+      break;
+
+    assert(trans);
+    trans_vec.push_back(trans);
+  }
+
+  iunlock(sv6_journal[cpu]);
 }
 
 // Reset the journal so that we can start writing to it again, from the

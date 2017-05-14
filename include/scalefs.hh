@@ -476,7 +476,7 @@ class journal {
     // comparison function to order journal transactions in timestamp order
     static bool compare_txn_tsc(transaction *t1, transaction *t2)
     {
-      return t1->enq_tsc < t2->enq_tsc;
+      return t1->commit_tsc < t2->commit_tsc;
     }
 
     u32 current_offset() {
@@ -738,6 +738,11 @@ class mfs_interface
            std::vector<transaction_diskblock*> &vec, const u64 timestamp,
            int cpu);
     void write_journal_commit_block(u64 timestamp, int cpu);
+
+    journal_header *get_txn_start_block(int cpu);
+    bool get_txn_data_blocks(int cpu, journal_header *hdstartptr,
+                             transaction *trans);
+    bool get_txn_commit_block(int cpu, transaction *trans);
     void recover_journal(int cpu, std::vector<transaction*> &trans_vec);
     void reset_journal(int cpu, bool use_async_io = true);
 
