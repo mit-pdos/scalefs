@@ -1834,6 +1834,8 @@ mfs_interface::apply_all_transactions(int cpu)
         group_apply = true;
         assert((*it)->last_group_txn_tsc > tr->last_group_txn_tsc);
         tr->last_group_txn_tsc = (*it)->last_group_txn_tsc;
+        assert((*it)->commit_tsc > tr->commit_tsc);
+        tr->commit_tsc = (*it)->commit_tsc;
         delete *it;
         it = fs_journal[dep_cpu]->tx_apply_queue.erase(it);
       }
