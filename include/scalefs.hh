@@ -349,6 +349,19 @@ class transaction {
       bqueue_initialized = false;
     }
 
+    // Same as write_to_disk_and_flush(), except that this uses synchronous I/O,
+    // and does not make the process sleep/wait (which can be troublesome at
+    // early boot before the process is fully setup for scheduling).
+    void write_to_disk_and_flush_raw()
+    {
+      write_to_disk_raw();
+
+      for (auto d : disks_written)
+        disk_flush(d);
+
+      disks_written.reset();
+    }
+
     void write_to_disk_and_flush()
     {
       write_to_disk();
@@ -456,7 +469,8 @@ class journal {
   friend mfs_interface;
   public:
     NEW_DELETE_OPS(journal);
-    journal() : current_off(0), committed_trans_tsc(0), applied_trans_tsc(0)
+    journal() : last_applied_commit_tsc(0), current_off(0),
+                committed_trans_tsc(0), applied_trans_tsc(0)
     {
       apply_dedup_trans = new transaction();
     }
@@ -544,6 +558,8 @@ class journal {
     sleeplock commitq_insert_lock, commitq_remove_lock;
     sleeplock applyq_insert_lock, applyq_remove_lock;
 
+    u64 last_applied_commit_tsc;
+
   private:
     transaction *apply_dedup_trans;
 
@@ -615,6 +631,7 @@ class mfs_interface
     enum : u8 {
       JOURNAL_TXN_START = 1,     // Start block
       JOURNAL_TXN_COMMIT,        // Commit block
+      JOURNAL_TXN_SKIP,          // Skip block
     };
 
     struct pending_metadata {
@@ -738,13 +755,17 @@ class mfs_interface
            std::vector<transaction_diskblock*> &vec, const u64 timestamp,
            int cpu);
     void write_journal_commit_block(u64 timestamp, int cpu);
+    void write_journal_skip_block(u64 timestamp, int cpu,
+                                  bool use_async_io = true);
 
+    bool get_txn_skip_block(int cpu, u64 *skip_upto_tsc);
     journal_header *get_txn_start_block(int cpu);
     bool get_txn_data_blocks(int cpu, journal_header *hdstartptr,
                              transaction *trans);
     bool get_txn_commit_block(int cpu, transaction *trans);
     void recover_journal(int cpu, std::vector<transaction*> &trans_vec);
-    void reset_journal(int cpu, bool use_async_io = true);
+    void reset_journal(int cpu);
+    void init_journal(int cpu);
 
     // Metadata functions
     void alloc_mnode_lock(u64 mnum);

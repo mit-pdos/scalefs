@@ -1598,6 +1598,14 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
   // This transaction has been committed to the journal. Writeback the changes
   // to the original locations on the disk.
   tr->write_to_disk_and_flush();
+
+  // Update the on-disk journal's skip block to indicate that this transaction
+  // should not be re-applied during crash-recovery.
+  int cpu = tr->txq_id;
+  u32 orig_offset = fs_journal[cpu]->current_offset();
+  fs_journal[cpu]->update_offset(0);
+  write_journal_skip_block(tr->commit_tsc, cpu);
+  fs_journal[cpu]->update_offset(orig_offset);
 }
 
 void
@@ -1836,7 +1844,15 @@ mfs_interface::apply_all_transactions(int cpu)
 
     if (group_apply)
       tr->deduplicate_blocks();
+
+    ilock(sv6_journal[dep_cpu], WRITELOCK);
+
     apply_transaction_to_disk(dep_cpu, tr);
+
+    assert(tr->commit_tsc > fs_journal[dep_cpu]->last_applied_commit_tsc);
+    fs_journal[dep_cpu]->last_applied_commit_tsc = tr->commit_tsc;
+
+    iunlock(sv6_journal[dep_cpu]);
 
     if (fs_journal[dep_cpu]->get_applied_tsc() >= dep_tsc)
       dependent_txq.pop_back();
@@ -2043,10 +2059,54 @@ mfs_interface::write_journal_commit_block(u64 timestamp, int cpu)
   delete jrnl_trans;
 }
 
+// Caller must hold ilock for write on sv6_journal.
+void
+mfs_interface::write_journal_skip_block(u64 timestamp, int cpu,
+                                        bool use_async_io)
+{
+  assert(fs_journal[cpu]->current_offset() == 0);
+
+  journal_header_block hdr_skip(timestamp, JOURNAL_TXN_SKIP);
+
+  transaction *jrnl_trans = new transaction();
+  write_journal((char *)&hdr_skip, sizeof(hdr_skip), jrnl_trans, cpu);
+
+  if (use_async_io)
+    jrnl_trans->write_to_disk_and_flush();
+  else
+    jrnl_trans->write_to_disk_and_flush_raw();
+
+  delete jrnl_trans;
+}
+
+bool
+mfs_interface::get_txn_skip_block(int cpu, u64 *skip_upto_tsc)
+{
+  static char skipbuf[BSIZE], zerobuf[BSIZE];
+  size_t hdr_size = sizeof(journal_header_block);
+  u32 offset = fs_journal[cpu]->current_offset();
+
+  if (readi(sv6_journal[cpu], skipbuf, offset, hdr_size) != hdr_size)
+    return false;
+
+  fs_journal[cpu]->update_offset(offset + hdr_size);
+
+  if (!memcmp((void *)skipbuf, zerobuf, hdr_size))
+    return false;
+
+  journal_header *hdskipptr = (journal_header *)skipbuf;
+
+  if (hdskipptr->header_type != JOURNAL_TXN_SKIP)
+    return false;
+
+  *skip_upto_tsc = hdskipptr->timestamp;
+  return true;
+}
+
 mfs_interface::journal_header*
 mfs_interface::get_txn_start_block(int cpu)
 {
-  static char startbuf[BSIZE], zerobuf[BSIZE];
+  static char startbuf[BSIZE];
   size_t hdr_size = sizeof(journal_header_block);
   u32 offset = fs_journal[cpu]->current_offset();
 
@@ -2054,9 +2114,6 @@ mfs_interface::get_txn_start_block(int cpu)
     return nullptr;
 
   fs_journal[cpu]->update_offset(offset + hdr_size);
-
-  if (!memcmp((void *)startbuf, zerobuf, hdr_size))
-    return nullptr; // Zero-filled block is invalid.
 
   journal_header *hdstartptr = (journal_header *)startbuf;
 
@@ -2128,17 +2185,25 @@ mfs_interface::recover_journal(int cpu, std::vector<transaction*> &trans_vec)
   sv6_journal[cpu] = namei(sref<inode>(), jrnl_name);
   assert(sv6_journal[cpu]);
 
-  u64 last_tsc = 0;
+  bool dont_apply;
+  u64 last_tsc = 0, skip_upto_tsc = 0;
 
   ilock(sv6_journal[cpu], WRITELOCK);
 
+  if (!get_txn_skip_block(cpu, &skip_upto_tsc))
+    goto out;
+
   while (fs_journal[cpu]->current_offset() < PHYS_JOURNAL_SIZE) {
+    dont_apply = false;
 
     journal_header *hdstartptr = get_txn_start_block(cpu);
     if (!hdstartptr || hdstartptr->timestamp < last_tsc)
       break;
 
     last_tsc = hdstartptr->timestamp;
+
+    if (hdstartptr->timestamp <= skip_upto_tsc)
+      dont_apply = true;
 
     transaction *trans = new transaction(hdstartptr->timestamp);
     trans->commit_tsc = hdstartptr->timestamp;
@@ -2150,49 +2215,58 @@ mfs_interface::recover_journal(int cpu, std::vector<transaction*> &trans_vec)
       break;
 
     assert(trans);
-    trans_vec.push_back(trans);
+
+    if (dont_apply) {
+      cprintf("recover_journal: skipping transaction %lu (skip-upto %lu)\n",
+              trans->commit_tsc, skip_upto_tsc);
+      delete trans;
+    } else {
+      trans_vec.push_back(trans);
+    }
   }
 
+out:
   iunlock(sv6_journal[cpu]);
 }
 
+void
+mfs_interface::init_journal(int cpu)
+{
+  fs_journal[cpu]->update_offset(0);
+  write_journal_skip_block(0, cpu, false); // Use synchronous I/O.
+
+  journal_header_block hdr_zero;
+
+  memset((char *)&hdr_zero, 0, sizeof(hdr_zero));
+
+  while (fs_journal[cpu]->current_offset() < PHYS_JOURNAL_SIZE) {
+
+    transaction *jrnl_trans = new transaction();
+    write_journal((char *)&hdr_zero, sizeof(hdr_zero), jrnl_trans, cpu);
+
+    jrnl_trans->write_to_disk_and_flush_raw();
+    delete jrnl_trans;
+  }
+
+  fs_journal[cpu]->update_offset(sizeof(hdr_zero));
+}
+
 // Reset the journal so that we can start writing to it again, from the
-// beginning. Writing a zero header at the very beginning of the journal
-// ensures that if we crash and reboot, none of the transactions in the
-// journal will be reapplied. Further, when this zero header gets overwritten
-// by a subsequent (possibly partially written) transaction, the timestamps
-// embedded in each transaction help identify blocks belonging to it, which
-// in turn helps us avoid applying partial or corrupted transactions upon
-// reboot.
+// beginning. This is called after applying all the transactions committed to
+// this journal. To reset, we simply update the skip block of the journal with
+// the commit_tsc of the last transaction that was applied from this journal.
+// That ensures that we will never re-apply any of the transactions that the
+// journal currently holds, during crash-recovery. On the other hand, any new
+// transaction that gets committed after we finish resetting the journal, will
+// have a higher timestamp than the one recorded in the skip block, and hence
+// those transactions will get applied during crash-recovery.
 //
 // Caller must hold the journal lock and also ilock for write on sv6_journal.
 void
-mfs_interface::reset_journal(int cpu, bool use_async_io)
+mfs_interface::reset_journal(int cpu)
 {
   fs_journal[cpu]->update_offset(0);
-
-  // TODO: After booting, we might have to really reset the journal (by adding a
-  // zero block etc) to avoid unnecessarily reapplying stale committed
-  // transactions after a subsequent reboot.
-#if 0
-  size_t hdr_size = sizeof(journal_block_header);
-  char buf[hdr_size];
-
-  memset(buf, 0, sizeof(buf));
-
-  transaction *tr = new transaction(0);
-
-  if (writei(sv6_journal[cpu], buf, 0 /* offset */, hdr_size, tr) != hdr_size)
-    panic("reset_journal() failed\n");
-
-  if (use_async_io)
-    tr->write_to_disk();
-  else
-    tr->write_to_disk_raw();
-  delete tr;
-
-  fs_journal[cpu]->update_offset(0);
-#endif
+  write_journal_skip_block(fs_journal[cpu]->last_applied_commit_tsc, cpu);
 }
 
 sref<mnode>
@@ -2714,6 +2788,9 @@ recover_scalefs()
 
     txns_to_apply.clear();
   }
+
+  for (int cpu = 0; cpu < NCPU; cpu++)
+    rootfs_interface->init_journal(cpu);
 
   // If a newly created file (or directory) is fsynced, but its link in the
   // parent is not flushed (by fsyncing the parent directory), the file is
