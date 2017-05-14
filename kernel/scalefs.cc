@@ -2281,6 +2281,7 @@ mfs_interface::mnode_alloc(u64 inum, u8 mtype)
 sref<mnode>
 mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent)
 {
+  scoped_cli cli;
   u64 mnum;
   sref<mnode> m = mnode_lookup(inum, &mnum);
   if (m)
@@ -2298,15 +2299,6 @@ mfs_interface::load_dir_entry(u64 inum, sref<mnode> parent)
 
   default:
     return sref<mnode>();
-  }
-
-  // Link to parent directory created so that the parent's link count is
-  // correctly updated.
-  if (m->type() == mnode::types::dir) {
-    strbuf<DIRSIZ> parent_name("..");
-    mlinkref mlink(parent);
-    mlink.acquire();
-    m->as_dir()->insert(parent_name, &mlink);
   }
 
   return m;
@@ -2327,15 +2319,22 @@ mfs_interface::load_dir(sref<inode> i, sref<mnode> m)
 
     strbuf<DIRSIZ> name(de.name);
     // No links are held to the directory itself (via ".")
-    // A link to the parent was already created at the time of mnode creation.
     // The root directory is an exception.
     if (name == "." || (name == ".." && i->inum != 1))
       continue;
 
     mlinkref mlink(mf);
     mlink.acquire();
-    m->as_dir()->insert(name, &mlink);
+    assert(m->as_dir()->insert(name, &mlink));
     mnum_name_insert(mf->mnum_, name);
+
+    // Add a link to the parent directory.
+    if (mf->mnum_ != root_mnum && mf->type() == mnode::types::dir) {
+      strbuf<DIRSIZ> parent_name("..");
+      mlinkref mlink(m);
+      mlink.acquire();
+      assert(mf->as_dir()->insert(parent_name, &mlink));
+    }
   }
 }
 
