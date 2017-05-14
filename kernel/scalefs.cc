@@ -2590,7 +2590,7 @@ mfs_interface::release_inodebitmap_locks(transaction *tr)
 }
 
 void
-initfs()
+recover_scalefs()
 {
   root_fs = new mfs();
   anon_fs = new mfs();
@@ -2606,6 +2606,8 @@ initfs()
               journal::compare_txn_tsc);
 
     for (auto &tr : txns_to_apply) {
+      cprintf("recover_scalefs: applying transaction with commit timestamp %lu\n",
+              tr->commit_tsc);
       tr->write_to_disk_update_bufcache();
       delete tr;
     }
@@ -2624,7 +2626,11 @@ initfs()
   // time of fsync, but must be postponed until reboot. We reclaim such
   // dead/unreachable inodes here during reboot.
   rootfs_interface->reclaim_unreachable_inodes();
+}
 
+void
+init_scalefs()
+{
   // Initialize the free-bit-vector *after* processing the journal,
   // because those transactions could include updates to the free
   // bitmap blocks too!

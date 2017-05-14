@@ -421,8 +421,9 @@ free_inode_number(u32 inum)
   }
 }
 
+// This is invoked before performing filesystem crash-recovery.
 void
-initinode(void)
+initinode_early(void)
 {
   scoped_gc_epoch e;
 
@@ -431,9 +432,18 @@ initinode(void)
 
   the_root = inode::alloc(ROOTDEV, ROOTINO);
   if (!ins->insert(make_pair(the_root->dev, the_root->inum), the_root.get()))
-    panic("initinode: Failed to insert the root inode into the cache\n");
+    panic("initinode_early: Failed to insert the root inode into the cache\n");
   the_root->init();
 
+}
+
+// This is invoked after performing filesystem crash-recovery.
+void
+initinode_late(void)
+{
+  // Re-initialize the root directory after crash-recovery, so as to reflect the
+  // most up-to-date state.
+  the_root->init();
   initialize_freeinum_bitmap();
 }
 

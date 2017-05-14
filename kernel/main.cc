@@ -38,7 +38,9 @@ void initkalloc(void);
 void initz(void);
 void initrcu(void);
 void initproc(void);
-void initinode(void);
+void initinode_early(void);
+void recover_scalefs(void);
+void initinode_late(void);
 void initdisk(void);
 void inituser(void);
 void initsamp(void);
@@ -65,7 +67,7 @@ void inithpet(void);
 void initrtc(void);
 void initmfs(void);
 void idleloop(void);
-void initfs(void);
+void init_scalefs(void);
 
 #define IO_RTC  0x70
 
@@ -244,7 +246,11 @@ cmain(u64 mbmagic, u64 mbaddr)
   initrtc();               // Requires inithpet
   initdev();               // Misc /dev nodes
   initdisk();      // disk
-  initinode();     // inode cache
+
+  initinode_early();     // inode cache
+  recover_scalefs();
+  initinode_late();
+
   initmfs();
 
   if (VERBOSE)
@@ -253,8 +259,8 @@ cmain(u64 mbmagic, u64 mbaddr)
   inituser();      // first user process
   initdblflt();    // Requires inittrap
   initnmi();
-  
-  initfs();
+
+  init_scalefs();
 
 #if CODEX
   initcodex();

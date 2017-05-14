@@ -258,7 +258,8 @@ private:
   NEW_DELETE_OPS(inode)
 
   static sref<inode> alloc(u32 dev, u32 inum);
-  friend void initinode();
+  friend void initinode_early();
+  friend void initinode_late();
   friend sref<inode> iget(u32, u32);
 
 protected:
