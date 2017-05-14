@@ -1603,21 +1603,14 @@ mfs_interface::apply_trans_on_disk(transaction *tr)
 void
 mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
 {
-  u64 timestamp = trans->commit_tsc;
-  transaction *jrnl_trans = new transaction();
-
   ilock(sv6_journal[cpu], WRITELOCK);
 
   // Write the transaction's start block and the data blocks to the on-disk
   // journal.
-  write_journal_transaction_blocks(trans->blocks, timestamp, jrnl_trans,
-                                   cpu);
-  iunlock(sv6_journal[cpu]);
-  delete jrnl_trans;
+  write_journal_transaction_blocks(trans->blocks, trans->commit_tsc, cpu);
 
   // Commit the transaction to the on-disk journal with the given timestamp.
-  ilock(sv6_journal[cpu], WRITELOCK);
-  write_journal_commit_block(timestamp, cpu);
+  write_journal_commit_block(trans->commit_tsc, cpu);
   iunlock(sv6_journal[cpu]);
 
   post_process_transaction(trans);
@@ -1986,15 +1979,14 @@ mfs_interface::write_journal(char *buf, size_t size, transaction *tr, int cpu)
 void
 mfs_interface::write_journal_transaction_blocks(
     const std::vector<transaction_diskblock*> &datablocks,
-    const u64 timestamp, transaction *trans, int cpu)
+    const u64 timestamp, int cpu)
 {
-
   journal_header_block hdr_start;
   journal_addr_block hdr_addr;
   memset(&hdr_start, 0, sizeof(hdr_start));
   memset(&hdr_addr, 0, sizeof(hdr_addr));
   hdr_start.timestamp = timestamp;
-  hdr_start.header_type = jrnl_start;
+  hdr_start.header_type = JOURNAL_TXN_START;
 
   // No. of block addresses that can fit in the start and the address blocks.
   u32 nslots_startblk = sizeof(hdr_start.blocknums) / sizeof(u32);
@@ -2020,18 +2012,22 @@ mfs_interface::write_journal_transaction_blocks(
 
   // Write out the start block, (the addr block) and the data blocks.
 
-  write_journal((char *)&hdr_start, sizeof(hdr_start), trans, cpu);
+  transaction *jrnl_trans = new transaction();
+
+  write_journal((char *)&hdr_start, sizeof(hdr_start), jrnl_trans, cpu);
 
   // Write out the address block(s), if we have any.
   if (hdr_start.num_addr_blocks)
-    write_journal((char *)&hdr_addr, sizeof(hdr_addr), trans, cpu);
+    write_journal((char *)&hdr_addr, sizeof(hdr_addr), jrnl_trans, cpu);
 
   // Write out the data blocks themselves to the in-memory journal.
   for (auto &b : datablocks)
-    write_journal(b->blockdata, BSIZE, trans, cpu);
+    write_journal(b->blockdata, BSIZE, jrnl_trans, cpu);
 
   // Finally, write the transaction's disk blocks to stable storage (disk).
-  trans->write_to_disk_and_flush();
+  jrnl_trans->write_to_disk_and_flush();
+
+  delete jrnl_trans;
 }
 
 // Caller must hold ilock for write on sv6_journal.
@@ -2039,36 +2035,20 @@ void
 mfs_interface::write_journal_commit_block(u64 timestamp, int cpu)
 {
   // The transaction ends with a commit block containing the same timestamp.
-  journal_header_block hdr_commit(timestamp, jrnl_commit);
-  transaction *trans = new transaction();
+  journal_header_block hdr_commit(timestamp, JOURNAL_TXN_COMMIT);
 
-  write_journal((char *)&hdr_commit, sizeof(hdr_commit), trans, cpu);
-
-  trans->write_to_disk_and_flush();
-  delete trans;
+  transaction *jrnl_trans = new transaction();
+  write_journal((char *)&hdr_commit, sizeof(hdr_commit), jrnl_trans, cpu);
+  jrnl_trans->write_to_disk_and_flush();
+  delete jrnl_trans;
 }
 
 // Called on reboot after a crash. Returns the transaction last committed
 // to this journal (but perhaps not yet applied to the disk filesystem).
-transaction*
-mfs_interface::process_journal(int cpu)
+void
+mfs_interface::recover_journal(int cpu, std::vector<transaction*> &trans_vec)
 {
   // TODO: Implement crash-recovery for the new journal layout.
-
-#if 0
-  u32 offset = 0;
-  u64 current_transaction = 0;
-  transaction *trans = new transaction(0);
-  std::vector<std::unique_ptr<transaction_diskblock> > block_vec;
-
-  size_t hdr_size = sizeof(journal_block_header);
-  char hdbuf[hdr_size];
-  char hdcmp[hdr_size];
-  char databuf[BSIZE];
-  bool jrnl_error = false;
-
-  memset(&hdcmp, 0, sizeof(hdcmp));
-#endif
 
   char jrnl_name[32];
   snprintf(jrnl_name, sizeof(jrnl_name), "/sv6journal%d", cpu);
@@ -2079,66 +2059,7 @@ mfs_interface::process_journal(int cpu)
   // We don't have to look at the journal files since we just flashed a new
   // filesystem to the disk/memory. However, make sure to initialize the inode
   // pointers for the journal files before returning.
-  return nullptr;
-#endif
-
-#if 0
-  ilock(sv6_journal[cpu], WRITELOCK);
-
-  while (!jrnl_error) {
-
-    if (readi(sv6_journal[cpu], hdbuf, offset, hdr_size) != hdr_size)
-      break;
-
-    if (!memcmp(hdcmp, hdbuf, hdr_size))
-      break;  // Zero-filled block indicates end of journal
-
-    offset += hdr_size;
-
-    if (readi(sv6_journal[cpu], databuf, offset, BSIZE) != BSIZE)
-      break;
-
-    offset += BSIZE;
-
-    journal_block_header hd;
-    memmove(&hd, hdbuf, sizeof(hd));
-
-    switch (hd.block_type) {
-
-      case jrnl_start:
-        current_transaction = hd.timestamp;
-        block_vec.clear();
-        break;
-
-      case jrnl_data:
-        if (hd.timestamp == current_transaction)
-          block_vec.push_back(std::make_unique<transaction_diskblock>(hd.blocknum, databuf));
-        else
-          jrnl_error = true;
-        break;
-
-      case jrnl_commit:
-        if (hd.timestamp == current_transaction)
-          trans->add_blocks(std::move(block_vec));
-        else
-          jrnl_error = true;
-        break;
-
-      default:
-        jrnl_error = true;
-        break;
-    }
-  }
-
-  reset_journal(cpu, false); // Don't use async I/O.
-  iunlock(sv6_journal[cpu]);
-
-  if (!jrnl_error) {
-    trans->enq_tsc = current_transaction;
-    return trans;
-  }
-
-  return nullptr;
+  return;
 #endif
 }
 
@@ -2688,12 +2609,9 @@ initfs()
   rootfs_interface = new mfs_interface();
 
   // Check all the journals and reapply committed transactions
-  transaction *tr;
   std::vector<transaction*> txns_to_apply;
-  for (int cpu = 0; cpu < NCPU; cpu++) {
-    if ((tr = rootfs_interface->process_journal(cpu)) && tr)
-      txns_to_apply.push_back(tr);
-  }
+  for (int cpu = 0; cpu < NCPU; cpu++)
+    rootfs_interface->recover_journal(cpu, txns_to_apply);
 
   if (!txns_to_apply.empty()) {
     std::sort(txns_to_apply.begin(), txns_to_apply.end(),

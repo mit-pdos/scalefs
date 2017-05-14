@@ -613,8 +613,8 @@ class mfs_interface
 
     // Types of journal headers
     enum : u8 {
-      jrnl_start = 1,     // Start block
-      jrnl_commit,        // Commit block
+      JOURNAL_TXN_START = 1,     // Start block
+      JOURNAL_TXN_COMMIT,        // Commit block
     };
 
     struct pending_metadata {
@@ -736,9 +736,9 @@ class mfs_interface
     void write_journal(char *buf, size_t size, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const
            std::vector<transaction_diskblock*> &vec, const u64 timestamp,
-           transaction *tr, int cpu);
+           int cpu);
     void write_journal_commit_block(u64 timestamp, int cpu);
-    transaction* process_journal(int cpu);
+    void recover_journal(int cpu, std::vector<transaction*> &trans_vec);
     void reset_journal(int cpu, bool use_async_io = true);
 
     // Metadata functions
