@@ -2054,13 +2054,6 @@ mfs_interface::recover_journal(int cpu, std::vector<transaction*> &trans_vec)
   snprintf(jrnl_name, sizeof(jrnl_name), "/sv6journal%d", cpu);
   sv6_journal[cpu] = namei(sref<inode>(), jrnl_name);
   assert(sv6_journal[cpu]);
-
-#if FLASH_FS_AT_BOOT
-  // We don't have to look at the journal files since we just flashed a new
-  // filesystem to the disk/memory. However, make sure to initialize the inode
-  // pointers for the journal files before returning.
-  return;
-#endif
 }
 
 // Reset the journal so that we can start writing to it again, from the
@@ -2461,13 +2454,7 @@ blkstatsread(mdev*, char *dst, u32 off, u32 n)
 void
 mfs_interface::reclaim_unreachable_inodes()
 {
-#if FLASH_FS_AT_BOOT
-  // If we just flashed a new filesystem to the disk/memory, there can't be any
-  // unreachable inodes to be reclaimed; so don't bother going through the
-  // inode list.
-  return;
-#endif
-
+#if 0 // Resurrect this after rewriting the recovery code.
   int cpu = myid();
   bool do_flush = false;
 
@@ -2506,6 +2493,7 @@ mfs_interface::reclaim_unreachable_inodes()
 
   if (do_flush)
     flush_transaction_queue(cpu, true);
+#endif
 }
 
 // Allocates a lock for every inode block and every bitmap block.

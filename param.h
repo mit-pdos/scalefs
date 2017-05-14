@@ -65,10 +65,6 @@
 #define RANDOMIZE_KMALLOC 1
 // Track kernel memory usage
 #define KERNEL_HEAP_PROFILE 0
-// Whether or not the on-disk filesystem is flashed to the disk from the
-// kernel image at the end of booting. Helps us skip crash-recovery, since
-// the filesystem will be brand new.
-#define FLASH_FS_AT_BOOT 1
 
 // Configuring MEMIDE/AHCIIDE in param.h is deprecated.
 // Use include/ideconfig.hh instead.
