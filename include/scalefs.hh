@@ -822,20 +822,10 @@ class mfs_interface
     void pre_process_transaction(transaction *tr);
     void post_process_transaction(transaction *tr);
     void apply_trans_on_disk(transaction *tr);
-#if 0
-    void commit_transactions(std::vector<transaction*> &tx_queue,
-                             transaction *dedup_trans, int cpu);
-    void apply_transactions(std::vector<transaction*> &tx_queue,
-                            transaction *dedup_trans, int cpu);
-#endif
     void commit_transaction_to_disk(int cpu, transaction *trans);
     void apply_transaction_to_disk(int cpu, transaction *trans);
     void commit_all_transactions(int cpu);
     void apply_all_transactions(int cpu);
-#if 0
-    void flush_journal_locked(int cpu, bool apply_all = false);
-    void flush_journal(int cpu, bool apply_all = false);
-#endif
     void flush_transaction_queue(int cpu, bool apply_transactions = false);
     void print_txq_stats();
     bool fits_in_journal(size_t num_trans_blocks, int cpu);
