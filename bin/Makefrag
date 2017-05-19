@@ -73,6 +73,7 @@ UPROGS_BIN= \
 	synctest \
 	dd \
 	testrecovery \
+	dirloop \
 
 ifeq ($(HAVE_LWIP),y)
 UPROGS_BIN += \
@@ -115,6 +116,7 @@ UPROGS_NATIVE := \
 	sync \
 	fsync \
 	testrecovery \
+	dirloop \
 
 ifeq ($(HAVE_TESTGEN),y)
 UPROGS_BIN    += fstest
