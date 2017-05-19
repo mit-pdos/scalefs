@@ -17,7 +17,7 @@ NTRIAL=1
 for alt in all; do
     for ncore in {1..80}; do
         for trial in {1..$NTRIAL}; do
-            ./mailbench -a $alt -c -r -u $ncore . $ncore
+            ./mailbench -a $alt -c -u $ncore . $ncore
             rm -r spool mail
             sleep 1
         done
