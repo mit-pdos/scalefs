@@ -74,6 +74,7 @@ UPROGS_BIN= \
 	dd \
 	testrecovery \
 	dirloop \
+	rename-chain \
 
 ifeq ($(HAVE_LWIP),y)
 UPROGS_BIN += \
@@ -117,6 +118,7 @@ UPROGS_NATIVE := \
 	fsync \
 	testrecovery \
 	dirloop \
+	rename-chain \
 
 ifeq ($(HAVE_TESTGEN),y)
 UPROGS_BIN    += fstest
