@@ -7,6 +7,6 @@ NCPU=80
 mkdir temp
 for ncore in {1..$NCPU}; do
     echo "running on $ncore cpus"
-    lfs-smallfile -p -f -y 3 -c $ncore temp > out_cpu$ncore.txt
+    lfs-smallfile -f -y 3 -c $ncore temp > out_cpu$ncore.txt
 done
 
