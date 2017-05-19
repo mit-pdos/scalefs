@@ -387,7 +387,6 @@ main(int argc, char **argv)
       if (posix_spawn(&qman_pid[i], qman[0], nullptr, nullptr,
                       const_cast<char *const*>(qman.data()), environ) != 0)
         die("posix_spawn %s failed", qman[0]);
-      sleep(1);
 
       if (!percpu_spooldirs)
         break;
