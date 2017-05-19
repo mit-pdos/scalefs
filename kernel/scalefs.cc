@@ -1683,6 +1683,12 @@ mfs_interface::commit_all_transactions(int cpu)
 
     if (!fits_in_journal(blocks_size, cpu)) {
       apply_all_transactions(cpu);
+
+      if (!fits_in_journal(blocks_size, cpu)) {
+        cprintf("fits_in_journal failed, blocks-size %lu cpu %d "
+                "journal offset %d limit %lu\n", blocks_size, cpu,
+                fs_journal[cpu]->current_offset(), PHYS_JOURNAL_SIZE);
+      }
       assert(fits_in_journal(blocks_size, cpu));
     }
 
@@ -1725,6 +1731,11 @@ mfs_interface::commit_all_transactions(int cpu)
         for (auto d : (*it)->disks_written)
           trans->disks_written.set(d);
 
+        if (!fits_in_journal(trans->blocks.size(), cpu)) {
+          cprintf("fits_in_journal failed, blocks-size %lu cpu %d "
+                  "journal offset %d limit %lu\n", trans->blocks.size(), cpu,
+                  fs_journal[cpu]->current_offset(), PHYS_JOURNAL_SIZE);
+        }
         assert(fits_in_journal(trans->blocks.size(), cpu));
 
         trans->add_free_blocks(std::move((*it)->free_block_list));
