@@ -1615,7 +1615,8 @@ mfs_interface::commit_transaction_to_disk(int cpu, transaction *trans)
 
   // Write the transaction's start block and the data blocks to the on-disk
   // journal.
-  write_journal_transaction_blocks(trans->blocks, trans->commit_tsc, cpu);
+  write_journal_transaction_blocks(trans->blocks, trans->commit_tsc,
+                                   trans->disks_written, cpu);
 
   // Commit the transaction to the on-disk journal with the given timestamp.
   write_journal_commit_block(trans->commit_tsc, cpu);
@@ -1720,6 +1721,10 @@ mfs_interface::commit_all_transactions(int cpu)
 
         trans->add_blocks(std::move((*it)->blocks));
         trans->deduplicate_blocks();
+
+        for (auto d : (*it)->disks_written)
+          trans->disks_written.set(d);
+
         assert(fits_in_journal(trans->blocks.size(), cpu));
 
         trans->add_free_blocks(std::move((*it)->free_block_list));
@@ -1995,7 +2000,7 @@ mfs_interface::write_journal(char *buf, size_t size, transaction *tr, int cpu)
 void
 mfs_interface::write_journal_transaction_blocks(
     const std::vector<transaction_diskblock*> &datablocks,
-    const u64 timestamp, int cpu)
+    const u64 timestamp, bitset<NDISK> &disks_written, int cpu)
 {
   journal_header_block hdr_start;
   journal_addr_block hdr_addr;
@@ -2039,6 +2044,11 @@ mfs_interface::write_journal_transaction_blocks(
   // Write out the data blocks themselves to the in-memory journal.
   for (auto &b : datablocks)
     write_journal(b->blockdata, BSIZE, jrnl_trans, cpu);
+
+  // Merge the disks_written obtained from any previous disk writes by the
+  // given transaction.
+  for (auto d : disks_written)
+    jrnl_trans->disks_written.set(d);
 
   // Finally, write the transaction's disk blocks to stable storage (disk).
   jrnl_trans->write_to_disk_and_flush();

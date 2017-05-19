@@ -753,7 +753,7 @@ class mfs_interface
     void write_journal(char *buf, size_t size, transaction *tr, int cpu);
     void write_journal_transaction_blocks(const
            std::vector<transaction_diskblock*> &vec, const u64 timestamp,
-           int cpu);
+           bitset<NDISK> &disks_written, int cpu);
     void write_journal_commit_block(u64 timestamp, int cpu);
     void write_journal_skip_block(u64 timestamp, int cpu,
                                   bool use_async_io = true);
