@@ -388,8 +388,10 @@ class transaction {
     {
       deduplicate_blocks();
 
-      for (auto b = blocks.begin(); b != blocks.end(); b++)
+      for (auto b = blocks.begin(); b != blocks.end(); b++) {
         (*b)->writeback();
+        disks_written.set(blknum_to_dev((*b)->blocknum));
+      }
     }
 
     // Writes the blocks in the transaction to disk, and updates the
