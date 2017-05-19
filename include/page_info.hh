@@ -75,6 +75,7 @@ public:
   // corresponding to this page_info. Rmap is implemented using oplog and is
   // used when a file page is no longer valid and the vmaps mapping it need to
   // be informed of the change.
+  #define MAX_OPS 1000000
   class rmap: public tsc_logged_object {
     public:
       rmap(bool use_sleeplock) : tsc_logged_object(use_sleeplock) {}
@@ -149,7 +150,8 @@ public:
 
   page_info() {
     rmap_pte = new rmap(false); // use_sleeplock = false.
-    outstanding_ops = 0;
+    for (int cpu = 0; cpu < NCPU; cpu++)
+      outstanding_ops[cpu] = 0;
   }
 
   ~page_info() {
@@ -201,36 +203,39 @@ public:
   // Add an entry to the rmap for this page
   void add_pte(rmap_entry map) {
     assert(rmap_pte);
-    if (outstanding_ops > 100) {
+    int cpu = myid();
+    if (outstanding_ops[cpu] > MAX_OPS) {
       rmap_pte->sync();
-      outstanding_ops = 0;
+      outstanding_ops[cpu] = 0;
     }
     rmap_pte->add_mapping(map);
-    outstanding_ops++;
+    outstanding_ops[cpu]++;
   }
 
   // Remove an entry from the rmap for this page
   void remove_pte(rmap_entry map) {
     assert(rmap_pte);
-    if (outstanding_ops > 100) {
+    int cpu = myid();
+    if (outstanding_ops[cpu] > MAX_OPS) {
       rmap_pte->sync();
-      outstanding_ops = 0;
+      outstanding_ops[cpu] = 0;
     }
     rmap_pte->remove_mapping(map);
-    outstanding_ops++;
+    outstanding_ops[cpu]++;
   }
-  
+
   // Synchronizes the oplog-maintained rmap and returns the <vmap, vaddr> pairs
   // that have this page mapped.
   void get_rmap_vector(std::vector<rmap_entry> &vec) {
     assert(rmap_pte);
+    int cpu = myid();
     rmap_pte->sync(vec);
-    outstanding_ops = 0;
+    outstanding_ops[cpu] = 0;
   }
 
 private:
   rmap *rmap_pte;
-  int outstanding_ops;
+  percpu<u64> outstanding_ops;
 
 } __attribute__((aligned(16)));
 
