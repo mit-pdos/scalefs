@@ -157,7 +157,7 @@ public:
 
   sref<mnode> mget(u64 mnum);
   mlinkref alloc(u8 type, u64 parent_mnum = 0);
-  spinlock dir_rename_lock __mpalign__;
+  sleeplock dir_rename_lock __mpalign__;
 };
 
 

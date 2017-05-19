@@ -399,7 +399,7 @@ sys_rename(userptr_str old_path, userptr_str new_path)
       return 0;
     }
 
-    scoped_acquire lk;
+    lock_guard<sleeplock> lk;
 
     if (mdold != mdnew && mfold->type() == mnode::types::dir) {
       lk = root_fs->dir_rename_lock.guard(); // Filesystem-wide lock.
