@@ -504,12 +504,12 @@ static void process_opts(int argc, char **argv)
 	}
 
 	if (options.machine_readable) {
-		printf(";%g;%d;%d;%.03f;\n", 
+		printf(";%f;%d;%d;%.03f;\n",
 			       throughput,
 			       options.nprocs*options.clients_per_process,
 			       options.nprocs, latency*1000);
 	} else {
-		printf("Throughput %g MB/sec%s%s  %d clients  %d procs  max_latency=%.03f ms\n", 
+		printf("Throughput %f MB/sec%s%s  %d clients  %d procs  max_latency=%.03f ms\n",
 			       throughput,
 			       options.sync_open ? " (sync open)" : "",
 			       options.sync_dirs ? " (sync dirs)" : "", 
