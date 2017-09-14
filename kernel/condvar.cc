@@ -28,15 +28,17 @@ wakeup(struct proc *p)
 u64
 nsectime(void)
 {
+#if 0 // HPET temporarily unused, as it kills dbench performance.
   static bool used_ticks;
   if (the_hpet) {
     assert(!used_ticks);
     return the_hpet->read_nsec();
   }
+#endif
   // XXX Ticks don't happen when interrupts are disabled, which means
   // we lose track of wall-clock time, but if we don't have a HPET,
   // this is the best we can do.
-  used_ticks = true;
+  //used_ticks = true;
   u64 msec = ticks*QUANTUM;
   return msec*1000000;
 }
