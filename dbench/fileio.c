@@ -124,6 +124,7 @@ static void resolve_name(struct child_struct *child, const char *name)
 	if (dirfd < 0)
 		return;
 	while (readdir(dirfd, prevname, namebuf) > 0) {
+		prevname = namebuf;
 		if (strcasecmp(fname, namebuf) == 0)
 			break;
 	}
@@ -447,8 +448,10 @@ static void fio_findfirst(struct dbench_op *op)
 	dirfd = open(op->fname, O_RDONLY|O_DIRECTORY);
 	if (dirfd < 0)
 		return;
-	while (maxcnt && (readdir(dirfd, prevname, namebuf) > 0))
+	while (maxcnt && (readdir(dirfd, prevname, namebuf) > 0)) {
+		prevname = namebuf;
 		maxcnt--;
+	}
 	close(dirfd);
 #else
 	dir = opendir(op->fname);
@@ -461,7 +464,7 @@ static void fio_findfirst(struct dbench_op *op)
 static void fio_deltree(struct dbench_op *op)
 {
 #ifdef XV6_USER
-	int dirfd, ret = 0;
+	int dirfd;
 	char *prevname = NULL;
 	char namebuf[DIRSIZ+1];
 
@@ -469,8 +472,9 @@ static void fio_deltree(struct dbench_op *op)
 	if (dirfd < 0)
 		return;
 
-	for (ret = readdir(dirfd, prevname, namebuf);
-		ret > 0; ret = readdir(dirfd, prevname, namebuf)) {
+	while (readdir(dirfd, prevname, namebuf) > 0) {
+		prevname = namebuf;
+
 		struct stat st;
 		char *fname = (char *)malloc(64);
 		if (strcmp(namebuf, ".") == 0 ||
