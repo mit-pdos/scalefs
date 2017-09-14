@@ -413,16 +413,16 @@ static void process_opts(int argc, char **argv)
 #else
 	char ch;
 
-	// dbench [-t timelimit -s -f] nprocs dir
-	while ((ch = getopt(argc, argv, "t:sf")) != -1) {
+	// dbench [-t timelimit -S -F] nprocs dir
+	while ((ch = getopt(argc, argv, "t:SF")) != -1) {
 		switch (ch) {
 		case 't':
 			options.timelimit = atoi(optarg);
 			break;
-		case 's':
+		case 'S':
 			options.sync_dirs = 1;
 			break;
-		case 'f':
+		case 'F':
 			options.do_fsync = 1;
 			break;
 		}
