@@ -58,6 +58,64 @@ fread(void *ptr, size_t size, size_t nmemb, FILE *fp)
   return r;
 }
 
+
+char*
+fgets(char *buf, int max, FILE *fp)
+{
+  int cc;
+  char *ptr;
+
+  cc = fread(buf, max-1, 1, fp);
+  if (cc < 1)
+    return NULL;
+
+  buf[cc] = '\0';
+
+  int last = 0;
+  if ((ptr = strchr(buf, '\n'))) {
+    *(++ptr) = '\0';
+    last = ptr - buf;
+    fp->off -= (cc - last);
+  }
+  return buf;
+}
+
+int
+fseek(FILE *fp, long offset, int whence)
+{
+  switch (whence) {
+  case SEEK_SET:
+    fp->off = offset;
+    break;
+
+  case SEEK_CUR:
+    fp->off += offset;
+    break;
+
+  case SEEK_END:
+    long end = lseek(fp->fd, 0L, SEEK_END);
+    if (offset < 0 && end + offset < 0)
+      return -1; // Attempt to seek before the beginning of the file.
+  }
+
+  return 0;
+}
+
+off_t
+ftell(FILE *fp)
+{
+  return fp->off;
+}
+
+void
+rewind(FILE *fp)
+{
+  fseek(fp, 0L, SEEK_SET);
+  assert(ftell(fp) == 0);
+  fp->eof = 0;
+  fp->err = 0;
+}
+
 int
 feof(FILE *fp)
 {

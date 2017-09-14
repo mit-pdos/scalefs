@@ -22,6 +22,10 @@ int    fflush(FILE *stream);
 FILE  *fdopen(int fd, const char *mode);
 int    fclose(FILE *fp);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *fp);
+char  *fgets(char *buf, int max, FILE *fp);
+int    fseek(FILE *fp, long offset, int whence);
+off_t  ftell(FILE *fp);
+void   rewind(FILE *fp);
 int    feof(FILE *fp);
 int    ferror(FILE *fp);
 
