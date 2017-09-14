@@ -74,7 +74,9 @@ mfs_interface::alloc_metadata_log(u64 mnum)
   mfs_logical_log *mfs_log = new mfs_logical_log(mnum);
 
   for (int cpu = 0; cpu < NCPU; cpu++) {
-    scoped_acquire a(&mfs_log->link_lock[cpu]);
+    // We don't need to acquire the per-cpu link_lock here to initialize the
+    // counter, as the newly created mfs_log object has not been published to
+    // the outside world yet.
     mfs_log->link_count[cpu] = 0;
   }
 
