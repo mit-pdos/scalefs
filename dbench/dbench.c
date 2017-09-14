@@ -63,20 +63,6 @@ static double throughput;
 struct nb_operations *nb_ops;
 int global_random;
 
-static gzFile open_loadfile(void)
-{
-	gzFile		f;
-
-	if ((f = gzopen(options.loadfile, "rt")) != NULL)
-		return f;
-
-	fprintf(stderr,
-		"dbench: error opening '%s'\n", options.loadfile);
-
-	return NULL;
-}
-
-
 static struct child_struct children[NCPU] __mpalign__ ;
 
 static void *timer_thread(void *arg)
@@ -271,12 +257,6 @@ void *run_benchmark(void *arg)
 static void create_procs(int nprocs, void (*fn)(struct child_struct *, const char *))
 {
 	int nclients = nprocs * options.clients_per_process;
-	gzFile load;
-
-	load = open_loadfile();
-	if (load == NULL) {
-		exit(1);
-	}
 
 	if (nprocs < 1) {
 		fprintf(stderr,

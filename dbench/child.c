@@ -327,15 +327,19 @@ void child_run(struct child_struct *child0, const char *loadfile)
 	char **sparams, **params;
 	char *p;
 	const char *status;
-	gzFile gzf;
+	int file_fd;
+	FILE *file_ptr;
 	double targett;
 	struct child_struct *child;
 	int have_random = 0;
 	unsigned loop_count = 0;
 	z_off_t loop_start = 0;
 
-	gzf = gzopen(loadfile, "r");
-	if (gzf == NULL) {
+	file_fd = open(loadfile, O_RDONLY);
+	file_ptr = fdopen(file_fd, "r");
+
+	if (file_fd < 0 || file_ptr == NULL) {
+
 #ifdef XV6_USER
 		die("loadfile");
 #else
@@ -361,7 +365,7 @@ again:
 		nb_time_reset(child);
 	}
 
-	while (gzgets(gzf, line, sizeof(line)-1)) {
+	while (fgets(line, sizeof(line)-1, file_ptr)) {
 		unsigned repeat_count = 1;
 
 		for (child=child0;child<child0+options.clients_per_process;child++) {
@@ -391,21 +395,22 @@ loop_again:
 	       		for (child=child0;child<child0+options.clients_per_process;child++) {
 				child->line++;
 			}
-			loop_start = gztell(gzf);
-			gzgets(gzf, line, sizeof(line)-1);
+
+			loop_start = ftell(file_ptr);
+			fgets(line, sizeof(line)-1, file_ptr);
 			goto loop_again;
 	        }
 
 		if (strncmp(line, "ENDLOOP", 7) == 0) {
 			loop_count--;
 
-			gzgets(gzf, line, sizeof(line)-1);
+			fgets(line, sizeof(line)-1, file_ptr);
 
 			if (loop_count > 0) {
-				gzseek(gzf, loop_start, SEEK_SET);
+				fseek(file_ptr, loop_start, SEEK_SET);
 			}
 
-			gzgets(gzf, line, sizeof(line)-1);
+			fgets(line, sizeof(line)-1, file_ptr);
 			goto loop_again;
 		}
 
@@ -427,7 +432,8 @@ loop_again:
 	       		for (child=child0;child<child0+options.clients_per_process;child++) {
 				child->line++;
 			}
-			gzgets(gzf, line, sizeof(line)-1);
+
+			fgets(line, sizeof(line)-1, file_ptr);
 	        }
 
 
@@ -557,11 +563,12 @@ loop_again:
 		goto done;
 	}
 
-	gzrewind(gzf);
+	rewind(file_ptr);
 	goto again;
 
 done:
-	gzclose(gzf);
+	fclose(file_ptr);
+
 	for (child=child0;child<child0+options.clients_per_process;child++) {
 		child->cleanup = 1;
 		fflush(stdout);

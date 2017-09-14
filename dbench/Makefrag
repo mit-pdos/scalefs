@@ -51,9 +51,9 @@ $(O)/dbench/dbench.unstripped: $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(ULIB_END) $(UP
 	@echo "  LD	$@"
 	$(Q)mkdir -p $(@D)
 ifeq ($(PLATFORM),native)
-	$(Q)$(LOCAL_LINK_CMD_BEGIN) -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) -lz $(LOCAL_LINK_CMD_END)
+	$(Q)$(LOCAL_LINK_CMD_BEGIN) -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(LOCAL_LINK_CMD_END)
 else
-	$(Q)$(LOCAL_LINK_CMD_BEGIN) -lz -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(LOCAL_LINK_CMD_END)
+	$(Q)$(LOCAL_LINK_CMD_BEGIN) -o $@ $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(LOCAL_LINK_CMD_END)
 endif
 
 $(O)/dbench/dbench : $(O)/dbench/dbench.unstripped
