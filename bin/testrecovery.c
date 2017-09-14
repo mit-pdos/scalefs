@@ -1,8 +1,14 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#if !defined(XV6_USER)
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
 
 #include "libutil.h"
 

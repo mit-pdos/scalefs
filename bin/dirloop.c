@@ -1,9 +1,15 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include "libutil.h"
+
+#if !defined(XV6_USER)
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
 
 int main(int argc, char **argv)
 {
