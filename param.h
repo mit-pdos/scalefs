@@ -1,7 +1,12 @@
 #pragma once
 #define NPROC        64  // maximum number of processes
 #define KSTACKSIZE 32768 // size of per-process kernel stack
-#define NOFILE      100  // open files per process
+
+// Originally NOFILE was 100. We increased it to 250 for dbench.
+// Be careful though; using large values for NOFILE can slow down
+// fork/exec/clone/spawn etc because filetable::copy() will take
+// longer to complete.
+#define NOFILE      250  // open files per process
 
 #if 0 // These parameters are currently unused.
 #define NFILE       100  // open files per system
