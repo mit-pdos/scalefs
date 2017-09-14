@@ -28,6 +28,7 @@
 
 #include <assert.h>
 #include "libutil.h"
+#include <sys/mman.h>
 
 struct options options = {
 	.backend             = "fileio",
@@ -56,15 +57,16 @@ struct options options = {
 
 static struct timeval tv_start;
 static struct timeval tv_end;
-pthread_barrier_t bar;
-pthread_t tid[NCPU] __mpalign__ ;
+#ifndef XV6_USER
+pthread_barrierattr_t bar_attr;
+#endif
+pthread_barrier_t *bar_ptr __mpalign__ ;
 pthread_t timer_tid;
+struct child_struct *children __mpalign__ ;
 static volatile int stop __mpalign__ ;
 static double throughput;
 struct nb_operations *nb_ops;
 int global_random;
-
-static struct child_struct children[NCPU] __mpalign__ ;
 
 static void do_timer_thread(void)
 {
@@ -170,7 +172,7 @@ next:
 
 static void *timer_thread(void *arg)
 {
-	pthread_barrier_wait(&bar);
+	pthread_barrier_wait(bar_ptr);
 
 	while (!stop) {
 		do_timer_thread();
@@ -239,26 +241,19 @@ static void report_latencies(void)
 	}
 }
 
-struct thread_args {
-	void (*fn)(struct child_struct *, const char *);
-} thread_args[NCPU] __mpalign__ ;
-
-void *run_benchmark(void *arg)
+void run_benchmark(int cpu, void (*fn)(struct child_struct *, const char *))
 {
-	int cpu = (uintptr_t)arg;
-
 	if (setaffinity(cpu) < 0) {
 		printf("setaffinity failed for cpu %d\n", cpu);
-		return 0;
+		return;
 	}
 
 	for (int j = 0; j < options.clients_per_process; j++)
 		nb_ops->setup(&children[cpu*options.clients_per_process + j]);
 
-	pthread_barrier_wait(&bar);
+	pthread_barrier_wait(bar_ptr);
 
-	thread_args[cpu].fn(&children[cpu * options.clients_per_process], options.loadfile);
-	return 0;
+	fn(&children[cpu * options.clients_per_process], options.loadfile);
 }
 
 /* this creates the specified number of child processes and runs fn()
@@ -266,6 +261,7 @@ void *run_benchmark(void *arg)
 static void create_procs(int nprocs, void (*fn)(struct child_struct *, const char *))
 {
 	int nclients = nprocs * options.clients_per_process;
+	int status;
 
 	if (nprocs < 1) {
 		fprintf(stderr,
@@ -276,6 +272,16 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 
 	assert(options.clients_per_process == 1);
 
+	children = mmap(NULL, sizeof(struct child_struct) * nclients,
+                        PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+
+	if (!children) {
+		printf("Failed to mmap shared memory\n");
+		return;
+	}
+
+	memset(children, 0, sizeof(*children) * nclients);
+
 	for (int i = 0; i < nclients; i++) {
 		children[i].id = i;
 		children[i].num_clients = nclients;
@@ -285,11 +291,28 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 		children[i].lasttime = timeval_current();
 	}
 
-	pthread_barrier_init(&bar, 0, nprocs+1);
+	bar_ptr = mmap(NULL, sizeof(pthread_barrier_t), PROT_READ | PROT_WRITE,
+			MAP_ANONYMOUS | MAP_SHARED, -1, 0);
 
-	for (uint64_t i = 0; i < nprocs; i++) {
-		thread_args[i].fn = fn;
-		pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
+	if (!bar_ptr) {
+		printf("Failed to setup pthread barrier\n");
+		return;
+	}
+
+#ifdef XV6_USER
+	pthread_barrier_init(bar_ptr, 0, nprocs+1);
+#else
+	pthread_barrierattr_init(&bar_attr);
+	pthread_barrierattr_setpshared(&bar_attr, PTHREAD_PROCESS_SHARED);
+	pthread_barrier_init(bar_ptr, &bar_attr, nprocs+1);
+#endif
+
+	for (int i = 0; i < nprocs; i++) {
+		int pid = fork();
+		if (pid == 0) {
+			run_benchmark(i, fn);
+			exit(0);
+		}
 	}
 
 	printf("releasing clients\n");
@@ -297,8 +320,18 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 
 	pthread_create(&timer_tid, NULL, timer_thread, NULL);
 
-	for (int i = 0; i < nprocs; i++)
-		pthread_join(tid[i], NULL);
+	for (int i = 0; i < nprocs; ) {
+		if (waitpid(-1, &status, 0) == -1)
+			continue;
+
+		if (WEXITSTATUS(status) != 0) {
+			printf("Child failed with status %d\n",
+				WEXITSTATUS(status));
+			exit(1);
+		}
+
+		i++;
+	}
 
 	stop = 1;
 
