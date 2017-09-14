@@ -117,7 +117,7 @@ struct timeval timeval_current(void)
 /*
   return the number of seconds elapsed since a given time
 */
-unsigned long timeval_elapsed(struct timeval *tv)
+double timeval_elapsed(struct timeval *tv)
 {
         struct timeval tv2 = timeval_current();
         return (tv2.tv_sec - tv->tv_sec) + 
@@ -127,7 +127,7 @@ unsigned long timeval_elapsed(struct timeval *tv)
 /*
   return the number of seconds elapsed since a given time
 */
-unsigned long timeval_elapsed2(struct timeval *tv1, struct timeval *tv2)
+double timeval_elapsed2(struct timeval *tv1, struct timeval *tv2)
 {
         return (tv2->tv_sec - tv1->tv_sec) + 
                (tv2->tv_usec - tv1->tv_usec)*1.0e-6;
