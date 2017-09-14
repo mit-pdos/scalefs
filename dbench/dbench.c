@@ -59,13 +59,14 @@ static struct timeval tv_end;
 pthread_barrier_t bar;
 pthread_t tid[NCPU] __mpalign__ ;
 pthread_t timer_tid;
+static volatile int stop __mpalign__ ;
 static double throughput;
 struct nb_operations *nb_ops;
 int global_random;
 
 static struct child_struct children[NCPU] __mpalign__ ;
 
-static void *timer_thread(void *arg)
+static void do_timer_thread(void)
 {
 	double total_bytes = 0;
 	int total_lines = 0;
@@ -78,8 +79,6 @@ static void *timer_thread(void *arg)
 	struct timeval tnow;
 	int num_active = 0;
 	int num_finished = 0;
-
-	pthread_barrier_wait(&bar);
 
 	tnow = timeval_current();
 
@@ -166,7 +165,17 @@ static void *timer_thread(void *arg)
 
 	fflush(stdout);
 next:
-	sleep(1);
+	;
+}
+
+static void *timer_thread(void *arg)
+{
+	pthread_barrier_wait(&bar);
+
+	while (!stop) {
+		do_timer_thread();
+		sleep(1);
+	}
 
 	return 0;
 }
@@ -278,8 +287,6 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 
 	pthread_barrier_init(&bar, 0, nprocs+1);
 
-	pthread_create(&timer_tid, NULL, timer_thread, NULL);
-
 	for (uint64_t i = 0; i < nprocs; i++) {
 		thread_args[i].fn = fn;
 		pthread_create(&tid[i], NULL, run_benchmark, (void *) i);
@@ -288,9 +295,14 @@ static void create_procs(int nprocs, void (*fn)(struct child_struct *, const cha
 	printf("releasing clients\n");
 	tv_start = timeval_current();
 
-	pthread_join(timer_tid, NULL);
+	pthread_create(&timer_tid, NULL, timer_thread, NULL);
+
 	for (int i = 0; i < nprocs; i++)
 		pthread_join(tid[i], NULL);
+
+	stop = 1;
+
+	pthread_join(timer_tid, NULL);
 
 	printf("\n");
 
