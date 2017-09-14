@@ -270,7 +270,7 @@ mscan.sorted: mscan.out $(MTRACESRC)/mtrace-tools/sersec-sort
 	$(MTRACESRC)/mtrace-tools/sersec-sort < $< > $@
 
 PRXYCMD = 'ProxyCommand=ssh login.csail.mit.edu nc %h %p'
-JARVIS  = alarm@jarvis.pdos.csail.mit.edu
+JARVIS  = arch@jarvis.pdos.csail.mit.edu
 
 scp:    $(KERN)
 	scp -o $(PRXYCMD) $(KERN) $(JARVIS):/srv/atftp/kernel.xv6
