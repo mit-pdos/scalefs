@@ -2,7 +2,7 @@
 
 -include $(O)/dbench/*.d
 
-DBENCH_CFLAGS := -Wall -g -O3 -D_GNU_SOURCE
+DBENCH_CFLAGS := $(CFLAGS) -D_GNU_SOURCE
 DBENCH_INCLUDES := -I. -Idbench -I$(O)/dbench
 
 ifeq ($(PLATFORM),xv6)
@@ -45,7 +45,7 @@ endif
 $(O)/dbench/%.o: dbench/%.c $(O)/sysroot
 	@echo "  CC	$@"
 	$(Q)mkdir -p $(@D)
-	$(Q)$(CC) $(CFLAGS) -c -o $@ $< $(DBENCH_CFLAGS) $(DBENCH_INCLUDES)
+	$(Q)$(CC) $(DBENCH_CFLAGS) $(DBENCH_INCLUDES) -c -o $@ $<
 
 $(O)/dbench/dbench.unstripped: $(DBENCH_OBJFILES) $(ULIB_BEGIN) $(ULIB_END) $(UPROGS_LIBS)
 	@echo "  LD	$@"
