@@ -40,6 +40,7 @@ int lstat(const char*, struct stat*);
 int fstat(int fd, struct stat *buf);
 
 // xv6-specific
+int statx(const char*, struct stat*, int flags);
 int fstatx(int fd, struct stat *buf, enum stat_flags flags);
 
 END_DECLS

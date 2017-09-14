@@ -19,6 +19,8 @@
 */
 
 #include "dbench.h"
+#include "libutil.h"
+#include "xsys.h"
 
 #define MAX_FILES 200
 
@@ -106,7 +108,7 @@ static void resolve_name(struct child_struct *child, const char *name)
 
 	if (name == NULL) return;
 
-	if (stat(name, &st) == 0)
+	if (statx(name, &st, STAT_OMIT_NLINK) == 0)
 		return;
 
 	if (options.no_resolve) {
@@ -262,7 +264,7 @@ static void fio_createx(struct dbench_op *op)
 	ftable[i].handle = fnum;
 	ftable[i].fd = fd;
 
-	fstat(fd, &st);
+	fstatx(fd, &st, STAT_OMIT_NLINK);
 }
 
 static void fio_writex(struct dbench_op *op)
@@ -404,7 +406,7 @@ static void fio_qfileinfo(struct dbench_op *op)
 	int i = find_handle(op->child, handle);
 	(void)op->child;
 	(void)level;
-	fstat(ftable[i].fd, &st);
+	fstatx(ftable[i].fd, &st, STAT_OMIT_NLINK);
 }
 
 static void fio_findfirst(struct dbench_op *op)

@@ -30,13 +30,19 @@ gets(char *buf, int max)
 int
 stat(const char *n, struct stat *st)
 {
+  return statx(n, st, STAT_NO_FLAGS);
+}
+
+int
+statx(const char *n, struct stat *st, int flags)
+{
   int fd;
   int r;
 
   fd = open(n, O_RDONLY | O_ANYFD | O_CLOEXEC);
   if(fd < 0)
     return -1;
-  r = fstat(fd, st);
+  r = fstatx(fd, st, flags);
   close(fd);
   return r;
 }
