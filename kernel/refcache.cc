@@ -1,6 +1,7 @@
 #include "refcache.hh"
 #include "proc.hh"
 #include "kstream.hh"
+#include "bitset.hh"
 
 #include <atomic>
 #include <iterator>
@@ -314,18 +315,22 @@ retry:
   for (;;) {
     uint64_t count = 0;
     seqcount<uint32_t>::reader r[NCPU+1];
+    bitset<NCPU+1> cpus_;
     for (int i = 0; i < ncpu; i++) {
       auto way = refcache::mycache[i].hash_way(this);
       r[i] = way->seq.read_begin();
-      if (way->obj == this)
+      if (way->obj == this) {
         count += way->delta;
+        cpus_.set(i);
+      }
     }
 
     r[ncpu] = refcount_seq_.read_begin();
     count += refcount_;
+    cpus_.set(ncpu);
 
-    for (int i = 0; i < ncpu+1; i++)
-      if (r[i].need_retry())
+    for (auto cpu : cpus_)
+      if (r[cpu].need_retry())
         goto retry;
     return count;
   }
