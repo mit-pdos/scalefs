@@ -20,7 +20,6 @@
 
 #define STAT_OMIT_NLINK 0
 #define fstatx(a, b, c) fstat((a), (b))
-#define statx(a, b, c) stat((a), (b))
 
 #define SOCK_DGRAM_UNORDERED SOCK_DGRAM
 
