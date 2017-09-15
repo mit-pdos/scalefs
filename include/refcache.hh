@@ -453,11 +453,13 @@ namespace refcache {
           kstats::inc(&kstats::refcache_conflict_count);
         }
         // Take this entry
+        auto w = way->seq.write_begin();
         way->obj = obj;
       }
       // If the delta is getting close to overflowing, evict.
       if (way->delta == INT_MAX || way->delta == INT_MIN) {
         evict(way, false);
+        auto w = way->seq.write_begin();
         way->obj = obj;
       }
       return way;
