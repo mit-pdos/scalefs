@@ -195,15 +195,16 @@ cmain(u64 mbmagic, u64 mbaddr)
   initcpus();              // Requires initnuma, initpercpu,
                            // suggests initacpitables
 
-  initpic();       // interrupt controller
-  initiommu();             // Requires initlapic
+  initpageinfo();          // Requires initnuma
+
+  initpic();               // interrupt controller
+  initiommu();             // Requires initlapic (and initpageinfo if
+                           // heapprofile is enabled).
   initextpic();            // Requires initpic
   // Interrupt routing is now configured
 
   inituartcons();          // Requires interrupt routing
   initcga();
-
-  initpageinfo();          // Requires initnuma
 
   // Some global constructors require mycpu()->id (via myid()) which
   // we setup in inittls.  Some require dynamic allocation of large
