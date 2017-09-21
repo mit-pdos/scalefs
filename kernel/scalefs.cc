@@ -170,8 +170,8 @@ mfs_interface::sync_file_page(sref<inode> ip, char *p, size_t pos,
                               size_t nbytes, transaction *tr)
 {
   scoped_gc_epoch e;
-  // writeback = true, lazy_trans_update = true.
-  return writei(ip, p, pos, nbytes, tr, true, true);
+  // writeback = true, lazy_trans_update = true, dont_cache = true.
+  return writei(ip, p, pos, nbytes, tr, true, true, true);
 }
 
 void

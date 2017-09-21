@@ -1062,7 +1062,7 @@ readi(sref<inode> ip, char *dst, u32 off, u32 n)
 // correctness guarantees independent of fsync()'s concurrency strategy.
 int
 writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
-       bool writeback, bool lazy_trans_update)
+       bool writeback, bool lazy_trans_update, bool dont_cache)
 {
   scoped_gc_epoch e;
 
@@ -1093,7 +1093,10 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
         skip_disk_read = true;
 
       blocknum = bmap(ip, off/BSIZE, trans, !skip_disk_read, lazy_trans_update);
-      bp = buf::get(ip->dev, blocknum, skip_disk_read);
+
+      // Don't cache file data pages in the bufcache.
+      if (!dont_cache)
+        bp = buf::get(ip->dev, blocknum, skip_disk_read);
 
     } catch (out_of_blocks& e) {
       console.println("writei: out of blocks");
@@ -1103,7 +1106,7 @@ writei(sref<inode> ip, const char *src, u32 off, u32 n, transaction *trans,
       break;
     }
 
-    {
+    if (!dont_cache) {
       auto locked = bp->write();
       memmove(locked->data + off%BSIZE, src, m);
 
